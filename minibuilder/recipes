@@ -1,0 +1,65 @@
+recipe:
+areaSize 3
+minecraft:ender_pearl/0 1
+minecraft:redstone/0 1
+minecraft:obsidian/0
+minecraft:redstone_block/0
+blocks:
+111 111 111
+111 121 111
+111 111 111
+
+recipe:
+areaSize 3
+compactmachines3:wallbreakable/0 16
+minecraft:redstone/0 1
+minecraft:redstone/0
+minecraft:iron_block/0
+blocks:
+000 020 000
+000 010 000
+000 000 000
+
+recipe:
+areaSize 3
+compactmachines3:tunneltool/0 2
+minecraft:redstone/0 1
+minecraft:redstone/0
+compactmachines3:wallbreakable/0
+minecraft:hopper/0
+blocks:
+111 121 111
+000 030 000
+000 000 000
+
+recipe:
+areaSize 3
+compactmachines3:machine/0 1
+minecraft:ender_pearl/0 1
+compactmachines3:wallbreakable/0
+blocks:
+111 111 111
+111 101 111
+111 111 111
+
+recipe:
+areaSize 3
+compactmachines3:machine/1 1
+minecraft:ender_pearl/0 1
+compactmachines3:wallbreakable/0
+minecraft:iron_block/0
+blocks:
+111 111 111
+111 121 111
+111 111 111
+
+recipe:
+areaSize 3
+compactmachines3:machine/2 1
+minecraft:ender_pearl/0 1
+compactmachines3:wallbreakable/0
+minecraft:gold_block/0
+blocks:
+111 111 111
+111 121 111
+111 111 111
