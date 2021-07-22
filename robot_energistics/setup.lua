@@ -10,7 +10,7 @@ local tdebug = require("tdebug")
 
 local OUTPUT_FILENAME = "routing_data"
 
--- Deque class. Works like a queue or a stack.
+-- Deque class (like a deck of cards). Works like a queue or a stack.
 Deque = {}
 function Deque:new(obj)
   obj = obj or {}
@@ -92,16 +92,22 @@ local function getOppositeSide(side)
   end
 end
 
+-- Get transposer index and side number formatted as a string.
+local function formatConnection(transIdx, side)
+  return tostring(transIdx) .. ":" .. tostring(side) .. ","
+end
+
+-- Get transposer index and side number from a string (starting at init).
 local function parseConnections(connections, init)
-  local transposerID, side = string.match(connections, "(%d*):(%d*),", init)
-  return tonumber(transposerID), tonumber(side)
+  local transIdx, side = string.match(connections, "(%d*):(%d*),", init)
+  return tonumber(transIdx), tonumber(side)
 end
 
 local function buildRoutingTable(transposers, inventories)
   local routing = {}
   routing.storage = {}
-  routing.input = inventories.input
-  routing.output = inventories.output
+  routing.input = {}
+  routing.output = {}
   routing.transfer = {}
   routing.drone = {}
   
@@ -110,6 +116,7 @@ local function buildRoutingTable(transposers, inventories)
   for _, connection in ipairs(inventories.storage) do
     unvisited[connection] = true
   end
+  unvisited[inventories.input] = true    -- FIXME not sure about this one ############################################
   unvisited[inventories.output] = true
   for _, connection in ipairs(inventories.transfer) do
     unvisited[connection] = true
@@ -118,65 +125,133 @@ local function buildRoutingTable(transposers, inventories)
     unvisited[connection] = true
   end
   
-  local searchStack = {}
+  -- Create a stack for depth-first traversal, and add the inventories adjacent to the first transposer.
+  local searchStack = Deque:new()
+  local startTransIdx, startSide = parseConnections(inventories.input)
+  local inputItem = transposers[startTransIdx].getStackInSlot(startSide, 1)
+  local inputItemName = inputItem.name .. "/" .. math.floor(inputItem.damage)
   
+  -- Add connections to stack that are adjacent to transposer. The beginSide is added first (so it pops off last).
+  local function addAdjacentConnections(transIdx, beginSide)
+    searchStack:push_front(formatConnection(transIdx, beginSide))
+    for side = 0, 5 do
+      if transposers[transIdx].getInventorySize(side) and side ~= beginSide then
+        searchStack:push_front(formatConnection(transIdx, side))
+      end
+    end
+  end
+  addAdjacentConnections(startTransIdx, startSide)
+  
+  -- Find all connections (from unvisited) that can see the target item.
+  local function findItemConnections()
+    local itemConnections = {}
+    for connection, _ in pairs(unvisited) do
+      local transIdx, side = parseConnections(connection)
+      local item = transposers[transIdx].getStackInSlot(side, 1)
+      if item and item.name .. "/" .. math.floor(item.damage) == inputItemName then
+        itemConnections[#itemConnections + 1] = connection
+      end
+    end
+    return itemConnections
+  end
+  local lastItemConnections = findItemConnections()
+  
+  -- Get the type of inventory the connection belongs to, or nil if not found.
+  local function findInventoryType(connection)
+    for _, c in ipairs(inventories.storage) do
+      if connection == c then
+        return "storage"
+      end
+    end
+    if connection == inventories.input then
+      return "input"
+    end
+    if connection == inventories.output then
+      return "output"
+    end
+    for _, c in ipairs(inventories.transfer) do
+      if connection == c then
+        return "transfer"
+      end
+    end
+    for _, c in ipairs(inventories.drone) do
+      if connection == c then
+        return "drone"
+      end
+    end
+    return nil
+  end
+  
+  while not searchStack:empty() do
+    local connection = searchStack:front()
+    local transIdx, side = parseConnections(searchStack:front())
+    print("searchStack front:", searchStack:front())
+    searchStack:pop_front()
+    
+    local currentSide
+    for _, connection2 in ipairs(lastItemConnections) do
+      local transIdx2, side2 = parseConnections(connection2)
+      if transIdx2 == transIdx then
+        currentSide = side2
+        break
+      end
+    end
+    assert(currentSide)
+    local numTransferred = transposers[transIdx].transferItem(currentSide, side, 1, 1, 1)    -- FIXME assert that item was moved instead of shifting stuff around? ######################################
+    if numTransferred == 0 then
+      assert(transposers[transIdx].transferItem(side, side, 1, 1, 2) > 0)
+      assert(transposers[transIdx].transferItem(currentSide, side, 1, 1, 1) > 0)
+    end
+    
+    local invType = findInventoryType(connection)
+    
+    if unvisited[connection] then
+      lastItemConnections = findItemConnections()
+      --print("lastItemConnections = ")
+      --tdebug.printTable(lastItemConnections)
+      
+      local routingEntry = routing[invType]
+      local routingEntryIndex = #routingEntry + 1
+      
+      for _, connection2 in ipairs(lastItemConnections) do
+        -- Connections have now been visited, remove them from the set.
+        unvisited[connection2] = nil
+        
+        routingEntry[routingEntryIndex] = (routingEntry[routingEntryIndex] or "") .. connection2
+        
+        local transIdx2, side2 = parseConnections(connection2)
+        if transIdx2 ~= transIdx then
+          addAdjacentConnections(transIdx2, side2)
+          print("added adjacent connections for " .. connection2)
+        end
+      end
+    else
+      print("going back I guess")
+      local connectionsPacked
+      for _, connections in ipairs(routing[invType]) do
+        if string.find(connections, connection, 1, true) then
+          connectionsPacked = connections
+          break
+        end
+      end
+      print("connectionsPacked:", connectionsPacked)
+      
+      -- Unpack connectionsPacked and store them in lastItemConnections.
+      lastItemConnections = {}
+      for connection2 in string.gmatch(connectionsPacked, "%d*:%d*,") do
+        lastItemConnections[#lastItemConnections + 1] = connection2
+      end
+    end
+  end
+  
+  print("unvisited:")
+  tdebug.printTable(unvisited)
   
   return routing
 end
 
 -- Main function, does setup stuff.
 local function main()
-  d = Deque:new()
-  print("d:empty() = " .. tostring(d:empty()))
-  print("d:size() = " .. tostring(d:size()))
-  print("d:front() = " .. tostring(d:front()))
-  print("d:back() = " .. tostring(d:back()))
-  print("d:push_front('first')")
-  d:push_front("first")
-  print("d:push_back('second')")
-  d:push_back("second")
-  print("d:empty() = " .. tostring(d:empty()))
-  print("d:size() = " .. tostring(d:size()))
-  print("d:front() = " .. tostring(d:front()))
-  print("d:back() = " .. tostring(d:back()))
-  print("d:pop_front()")
-  d:pop_front()
-  print("d:pop_back()")
-  d:pop_back()
-  print("d:empty() = " .. tostring(d:empty()))
-  print("d:size() = " .. tostring(d:size()))
-  print("d:front() = " .. tostring(d:front()))
-  print("d:back() = " .. tostring(d:back()))
-  print()
-  
-  print("Queue test:")
-  q = Deque:new()
-  q:push_back("hello")
-  q:push_back("this")
-  q:push_back("is")
-  q:push_back("my")
-  q:push_back("queue")
-  while not q:empty() do
-    print(q:front())
-    q:pop_front()
-  end
-  print()
-  
-  print("Stack test:")
-  s = Deque:new()
-  s:push_front("greetings")
-  s:push_front("this")
-  s:push_front("is not")
-  s:push_front("a queue")
-  s:push_front("but a")
-  s:push_front("stack")
-  while not s:empty() do
-    print(s:front())
-    s:pop_front()
-  end
-  
-  os.exit()
-  
   local input
   local outputFile = io.open(OUTPUT_FILENAME, "r")
   if outputFile then
@@ -256,26 +331,22 @@ local function main()
     for side = 0, 5 do
       local itemName = findInventoryItemName(transposer, side, 1)
       if itemName then
-        local function formatInventoryData()
-          return tostring(i) .. ":" .. tostring(getOppositeSide(side)) .. ","
-        end
-        
         local invType = setupConfig[itemName]
         if itemName == "" then
           invType = "storage"
-          inventories.storage[#inventories.storage + 1] = formatInventoryData()
+          inventories.storage[#inventories.storage + 1] = formatConnection(i, side)
         elseif not invType then
           assert(false, "Found unrecognized item \"" .. itemName .. "\" in inventory.")
         elseif invType == "input" then
           assert(not inventories.input, "Found a second input inventory (there must be only one connected to a single transposer in network).")
-          inventories.input = formatInventoryData()
+          inventories.input = formatConnection(i, side)
         elseif invType == "output" then
           assert(not inventories.output, "Found a second output inventory (there must be only one connected to a single transposer in network).")
-          inventories.output = formatInventoryData()
+          inventories.output = formatConnection(i, side)
         elseif invType == "transfer" then
-          inventories.transfer[#inventories.transfer + 1] = formatInventoryData()
+          inventories.transfer[#inventories.transfer + 1] = formatConnection(i, side)
         elseif invType == "drone" then
-          inventories.drone[#inventories.drone + 1] = formatInventoryData()
+          inventories.drone[#inventories.drone + 1] = formatConnection(i, side)
         end
         
         io.write("Found a " .. transposer.getInventorySize(side) .. " slot " .. invType .. " inventory.\n")
@@ -304,8 +375,8 @@ local function main()
     
     -- Add line to file with the slot count, and connections the inventory has.
     local function writeConnectionsLine(connections)
-      local transposerID, side = parseConnections(connections, 1)
-      local invSize = transposers[transposerID].getInventorySize(getOppositeSide(side))
+      local transIdx, side = parseConnections(connections)
+      local invSize = transposers[transIdx].getInventorySize(side)
       
       outputFile:write("slots = " .. tostring(invSize) .. "; connections = " .. connections .. "\n")
     end
@@ -316,10 +387,14 @@ local function main()
     end
     
     outputFile:write("\ninput:\n")
-    writeConnectionsLine(routing.input)
+    for _, connections in ipairs(routing.input) do
+      writeConnectionsLine(connections)
+    end
     
     outputFile:write("\noutput:\n")
-    writeConnectionsLine(routing.output)
+    for _, connections in ipairs(routing.output) do
+      writeConnectionsLine(connections)
+    end
     
     outputFile:write("\ntransfer:\n")
     for _, connections in ipairs(routing.transfer) do
