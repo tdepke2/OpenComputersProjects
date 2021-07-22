@@ -1,5 +1,8 @@
 --[[
 
+Storage system:
+  * Build 
+
 TODO:
   * Use redstone I/O block and comparator on chest to set up auto-input to RE system.
 
@@ -104,6 +107,12 @@ local function extractItems(mainTransposer, side, transposers, item, amount)
     if not idx then
       break
     end
+    local size = 
+    
+    local transferAmount = math.min(size, amount)
+    size = size - transferAmount
+    amount = amount - transferAmount
+    item.total = item.total - transferAmount
   end
   
   print(findLastSlot(item.fullSlots))

@@ -1,0 +1,21 @@
+# TODO: Explain a bit about format here.
+
+transposers:
+1 = 491b5096-e586-40a8-b11d-405d776c2bfa
+2 = 5f165050-fe38-4936-a47e-c3fc9e8ef625
+3 = 7f6e85db-03ab-448c-9c8e-c277d84b6398
+4 = 1f476721-8dab-401c-89a5-d95efbcf00da
+5 = b5c3d5a3-4948-42d3-9b46-84fa320f662d
+6 = 4eeef53a-2b3e-49d0-8711-d934a3592f52
+
+storage:
+
+input:
+slots = 9; connections = 2:0,
+
+output:
+slots = 27; connections = 2:1,
+
+transfer:
+
+drone:
