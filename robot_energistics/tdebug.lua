@@ -8,7 +8,7 @@ function tdebug.printTable(t)
       if type(v) == "table" then
         print(string.format("%s%s: {", spacing, k))
         printTableHelper(v, spacing .. "  ")
-        print("}")
+        print(string.format("%s}", spacing))
       else
         print(string.format("%s%s: %s", spacing, k, v))
       end

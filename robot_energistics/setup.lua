@@ -1,14 +1,13 @@
 
--- TODO: Maybe integrate this into the client script and have it run if it doesn't find the data file??
+-- TODO: Maybe integrate this into the client script and have it run if it doesn't find the config file??
 
 local component = require("component")
 local event = require("event")
 local sides = require("sides")
+--local tdebug = require("tdebug")
 local text = require("text")
 
-local tdebug = require("tdebug")
-
-local OUTPUT_FILENAME = "routing_data"
+local OUTPUT_FILENAME = "routing.config"
 
 -- Deque class (like a deck of cards). Works like a queue or a stack.
 Deque = {}
@@ -103,6 +102,11 @@ local function parseConnections(connections, init)
   return tonumber(transIdx), tonumber(side)
 end
 
+-- Creates a new table for routing information. This is very similar to the
+-- inventories table. The routing table contains unique inventories with
+-- potentially multiple connections to them, whereas the inventories table
+-- contains unique transposers (can have duplicate inventories). This new table
+-- is more ideal for running graph search algorithms such as BFS.
 local function buildRoutingTable(transposers, inventories)
   local routing = {}
   routing.storage = {}
@@ -113,21 +117,15 @@ local function buildRoutingTable(transposers, inventories)
   
   -- Add all unvisited connections. Usually these each correspond to a unique inventory (except for transfer ones).
   local unvisited = {}
-  for _, connection in ipairs(inventories.storage) do
-    unvisited[connection] = true
-  end
-  unvisited[inventories.input] = true    -- FIXME not sure about this one ############################################
-  unvisited[inventories.output] = true
-  for _, connection in ipairs(inventories.transfer) do
-    unvisited[connection] = true
-  end
-  for _, connection in ipairs(inventories.drone) do
-    unvisited[connection] = true
+  for _, inventory in pairs(inventories) do
+    for _, connection in ipairs(inventory) do
+      unvisited[connection] = true
+    end
   end
   
-  -- Create a stack for depth-first traversal, and add the inventories adjacent to the first transposer.
+  -- Create a stack for depth-first traversal, this holds connections that need to be checked.
   local searchStack = Deque:new()
-  local startTransIdx, startSide = parseConnections(inventories.input)
+  local startTransIdx, startSide = parseConnections(inventories.input[1])
   local inputItem = transposers[startTransIdx].getStackInSlot(startSide, 1)
   local inputItemName = inputItem.name .. "/" .. math.floor(inputItem.damage)
   
@@ -156,38 +154,26 @@ local function buildRoutingTable(transposers, inventories)
   end
   local lastItemConnections = findItemConnections()
   
-  -- Get the type of inventory the connection belongs to, or nil if not found.
-  local function findInventoryType(connection)
-    for _, c in ipairs(inventories.storage) do
-      if connection == c then
-        return "storage"
-      end
-    end
-    if connection == inventories.input then
-      return "input"
-    end
-    if connection == inventories.output then
-      return "output"
-    end
-    for _, c in ipairs(inventories.transfer) do
-      if connection == c then
-        return "transfer"
-      end
-    end
-    for _, c in ipairs(inventories.drone) do
-      if connection == c then
-        return "drone"
+  -- Get the type of inventory the targetConnection belongs to, or nil if not found.
+  local function findInventoryType(targetConnection)
+    for invType, inventory in pairs(inventories) do
+      for _, connection in ipairs(inventory) do
+        if targetConnection == connection then
+          return invType
+        end
       end
     end
     return nil
   end
   
+  -- Start DFS to send the item to each inventory in the network.
   while not searchStack:empty() do
     local connection = searchStack:front()
     local transIdx, side = parseConnections(searchStack:front())
-    print("searchStack front:", searchStack:front())
+    io.write("Checking connection: " .. searchStack:front() .. "\n")
     searchStack:pop_front()
     
+    -- First, move the item into the inventory with the current connection.
     local currentSide
     for _, connection2 in ipairs(lastItemConnections) do
       local transIdx2, side2 = parseConnections(connection2)
@@ -197,15 +183,17 @@ local function buildRoutingTable(transposers, inventories)
       end
     end
     assert(currentSide)
-    local numTransferred = transposers[transIdx].transferItem(currentSide, side, 1, 1, 1)    -- FIXME assert that item was moved instead of shifting stuff around? ######################################
+    local numTransferred = transposers[transIdx].transferItem(currentSide, side, 1, 1, 1)
     if numTransferred == 0 then
-      assert(transposers[transIdx].transferItem(side, side, 1, 1, 2) > 0)
-      assert(transposers[transIdx].transferItem(currentSide, side, 1, 1, 1) > 0)
+      assert(transposers[transIdx].transferItem(side, side, 1, 1, 2) > 0, "Failed to move item stack from slot 1 to 2.")
+      assert(transposers[transIdx].transferItem(currentSide, side, 1, 1, 1) > 0, "Failed to transfer item between inventories.")
     end
     
+    -- Figure out the type of the inventory we landed in.
     local invType = findInventoryType(connection)
     
     if unvisited[connection] then
+      -- If this is a newly explored connection, check if we can branch further.
       lastItemConnections = findItemConnections()
       --print("lastItemConnections = ")
       --tdebug.printTable(lastItemConnections)
@@ -219,14 +207,22 @@ local function buildRoutingTable(transposers, inventories)
         
         routingEntry[routingEntryIndex] = (routingEntry[routingEntryIndex] or "") .. connection2
         
-        local transIdx2, side2 = parseConnections(connection2)
-        if transIdx2 ~= transIdx then
-          addAdjacentConnections(transIdx2, side2)
-          print("added adjacent connections for " .. connection2)
+        -- If this inventory can be used for transfers, and the item is visible
+        -- by other transposers, add their connections to search stack.
+        if invType == "transfer" then
+          local transIdx2, side2 = parseConnections(connection2)
+          if transIdx2 ~= transIdx then
+            io.write("  Found a transfer point, branching to " .. connection2 .. "\n")
+            addAdjacentConnections(transIdx2, side2)
+            --print("added adjacent connections for " .. connection2)
+          end
         end
       end
     else
-      print("going back I guess")
+      -- We have been to this connection before (so the item is moving back).
+      -- The lastItemConnections table is expected to be set for the next
+      -- iteration though, so use the routing table to figure it out.
+      io.write("  Closing branch.\n")
       local connectionsPacked
       for _, connections in ipairs(routing[invType]) do
         if string.find(connections, connection, 1, true) then
@@ -234,7 +230,7 @@ local function buildRoutingTable(transposers, inventories)
           break
         end
       end
-      print("connectionsPacked:", connectionsPacked)
+      --print("connectionsPacked:", connectionsPacked)
       
       -- Unpack connectionsPacked and store them in lastItemConnections.
       lastItemConnections = {}
@@ -244,19 +240,25 @@ local function buildRoutingTable(transposers, inventories)
     end
   end
   
-  print("unvisited:")
-  tdebug.printTable(unvisited)
+  -- Confirm no more unvisited connections.
+  assert(next(unvisited) == nil, "Failed to traverse entire storage system, check to make sure all transposers have a routable connection to each other.")
   
   return routing
 end
 
 -- Main function, does setup stuff.
 local function main()
+  io.write("Running setup for the storage network, remember not to change the network during\n")
+  io.write("this process or afterwards! Accidentally breaking a transposer and replacing it\n")
+  io.write("can also cause problems (the transposer UUID will change). If this happens or if\n")
+  io.write("the storage is in dire need of an upgrade, run the setup again or make changes\n")
+  io.write("to the configuration file manually.\n")
+  
   local input
   local outputFile = io.open(OUTPUT_FILENAME, "r")
   if outputFile then
     outputFile:close()
-    io.write("Data file \"" .. OUTPUT_FILENAME .. "\" already exists, are you sure you want to overwrite it? [Y/n] ")
+    io.write("\nConfig file \"" .. OUTPUT_FILENAME .. "\" already exists, are you sure you want to overwrite it? [Y/n] ")
     input = io.read()
     if string.lower(input) ~= "y" and string.lower(input) ~= "yes" then
       io.write("Setup canceled.\n")
@@ -265,16 +267,17 @@ local function main()
   end
   
   local setupConfig
-  --
+  -- Comment out below for interactive setup.
+  ----[[
   setupConfig = {}
   setupConfig["minecraft:wool/13"] = "input"
   setupConfig["minecraft:wool/14"] = "output"
   setupConfig["minecraft:redstone/0"] = "transfer"
   setupConfig["minecraft:stone/0"] = "drone"
-  --
+  --]]
   if not setupConfig then
     setupConfig = {}
-    io.write("Please select the four item types to use for inventory identification. Use the\n")
+    io.write("\nPlease select the four item types to use for inventory identification. Use the\n")
     io.write("format \"<mod name>:<item name>/<damage>\" for each (for example, this would be\n")
     io.write("minecraft:stone/0 for stone and minecraft:wool/13 for green wool).\n\n")
     
@@ -293,7 +296,7 @@ local function main()
     io.write("Drone (access point for drones): ")
     validateItemAdd(io.read(), "drone")
   else
-    io.write("Using these item types for inventory identification:\n")
+    io.write("\nUsing these item types for inventory identification:\n")
     for k, v in pairs(setupConfig) do
       io.write(k .. " -> " .. v .. "\n")
     end
@@ -319,11 +322,16 @@ local function main()
     transposerAddresses[#transposerAddresses + 1] = address
   end
   
-  -- Inventories are identified with the pattern "<transposer index>,<side number>".
+  -- Identify inventories by checking if the item in the first slot matches one
+  -- from the setupConfig list. If it does, we add that "connection" to the
+  -- table corresponding to its type. Note that a connection is defined as a
+  -- transposer/side number combo (the pattern "<transposer index>:<side number>,")
+  -- so the same inventory can show up more than once in this list if multiple
+  -- transposers can reach it.
   local inventories = {}
   inventories.storage = {}
-  inventories.input = nil
-  inventories.output = nil
+  inventories.input = {}
+  inventories.output = {}
   inventories.transfer = {}
   inventories.drone = {}
   
@@ -338,11 +346,11 @@ local function main()
         elseif not invType then
           assert(false, "Found unrecognized item \"" .. itemName .. "\" in inventory.")
         elseif invType == "input" then
-          assert(not inventories.input, "Found a second input inventory (there must be only one connected to a single transposer in network).")
-          inventories.input = formatConnection(i, side)
+          assert(#inventories.input == 0, "Found a second input inventory (there must be only one connected to a single transposer in network).")
+          inventories.input[#inventories.input + 1] = formatConnection(i, side)
         elseif invType == "output" then
-          assert(not inventories.output, "Found a second output inventory (there must be only one connected to a single transposer in network).")
-          inventories.output = formatConnection(i, side)
+          assert(#inventories.output == 0, "Found a second output inventory (there must be only one connected to a single transposer in network).")
+          inventories.output[#inventories.output + 1] = formatConnection(i, side)
         elseif invType == "transfer" then
           inventories.transfer[#inventories.transfer + 1] = formatConnection(i, side)
         elseif invType == "drone" then
@@ -355,18 +363,40 @@ local function main()
   end
   
   assert(#inventories.storage > 0, "No storage inventories found.")
-  assert(inventories.input, "No input inventory found.")
-  assert(inventories.output, "No output inventory found.")
+  assert(#inventories.input > 0, "No input inventory found.")
+  assert(#inventories.output > 0, "No output inventory found.")
+  
+  io.write("\nNow remove those first slot items EXCEPT for the one in the input inventory.\n")
+  io.write("You can skip this if you want, but there will be problems if the items fail to be moved to the second slot.\n")
+  io.write("Ready to continue? [Y/n] ")
+  input = io.read()
+  if string.lower(input) ~= "y" and string.lower(input) ~= "yes" then
+    io.write("Setup canceled.\n")
+    return
+  end
   
   io.write("\nBuilding routing table, this may take a while...\n")
   
   local routing = buildRoutingTable(transposers, inventories)
   
-  tdebug.printTable(routing)
+  --tdebug.printTable(routing)
   
   local outputFile = io.open(OUTPUT_FILENAME, "w")
   if outputFile then
-    outputFile:write("# TODO: Explain a bit about format here.\n\n")
+    outputFile:write("# This file was generated by \"setup.lua\".\n")
+    outputFile:write("# File contains the routing information for the storage network. This includes\n")
+    outputFile:write("# priorities of storage inventories. To change the priorites, look for the\n")
+    outputFile:write("# section labeled \"storage:\" and rearrange the lines to put higher-priority\n")
+    outputFile:write("# inventories at the top of the section (in the OpenOS editor, use Ctrl+K to cut\n")
+    outputFile:write("# and Ctrl+U to paste).\n\n")
+    outputFile:write("# Each entry for an inventory has a name (just to help identify it, it can be\n")
+    outputFile:write("# changed to whatever), and a list of connections. Each connection represents a\n")
+    outputFile:write("# transposer index from the \"transposers:\" section, and a side number (shown\n")
+    outputFile:write("# below for reference). The side refers to the side the transposer touches the\n")
+    outputFile:write("# inventory, not the side of the inventory itself. A transposer can be\n")
+    outputFile:write("# identified in the world by using the Analyzer on it and matching the UUID to\n")
+    outputFile:write("# the one in the transposers section.\n\n")
+    outputFile:write("# Side numbering: 0 = -y, 1 = +y, 2 = -z, 3 = +z, 4 = -x, 5 = +x\n\n")
     
     outputFile:write("transposers:\n")
     for i, address in ipairs(transposerAddresses) do
@@ -376,9 +406,9 @@ local function main()
     -- Add line to file with the slot count, and connections the inventory has.
     local function writeConnectionsLine(connections)
       local transIdx, side = parseConnections(connections)
-      local invSize = transposers[transIdx].getInventorySize(side)
+      local invName = transposers[transIdx].getInventoryName(side)
       
-      outputFile:write("slots = " .. tostring(invSize) .. "; connections = " .. connections .. "\n")
+      outputFile:write("\"" .. invName .. "\"; connections = " .. connections .. "\n")
     end
     
     outputFile:write("\nstorage:\n")
@@ -409,44 +439,7 @@ local function main()
     outputFile:close()
   end
   
-  --[[
-  The routing file:
-  
-  # My comment.
-  
-  transposers:
-  1 = <uuid>
-  2 = <uuid>
-  3 = <uuid>
-  ...
-  
-  storage:
-  slots = 27; connections = 1:1,4:5,
-  slots = 1; connections = 1:2,
-  ...
-  
-  input:
-  slots = 27; connections = 1:1,
-  
-  output:
-  slots = 27; connections = 2:1,
-  
-  ...
-  
-  
-  The routing table might look like:
-  
-  storage {
-    1: "<transposer ID>:<side>,"  -- Highest priority (insert here)
-    2: "<transposer ID>:<side>,"
-    3: "<transposer ID>:<side>,"  -- Lowest priority (extract here)
-  }
-  transfer {
-    1: "<transposer ID>:<side>,<transposer ID>:<side>,"
-    2: "<transposer ID>:<side>,<transposer ID>:<side>,<transposer ID>:<side>,"
-  }
-  input: "<transposer ID>:<side>,<transposer ID>:<side>,"
-  --]]
+  io.write("\nSetup completed, saved configuration file to \"" .. OUTPUT_FILENAME .. "\".\n")
 end
 
 main()
