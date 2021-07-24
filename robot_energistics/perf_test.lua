@@ -3,7 +3,7 @@
 
 local computer = require("computer")
 
-local NUM_VALUES = 1000
+local NUM_VALUES = 10000
 
 -- Get transposer index and side number formatted as a string.
 local function formatConnection(transIdx, side)
@@ -17,6 +17,16 @@ local function parseConnections(connections, init)
   return tonumber(transIdx), tonumber(side), length
 end
 
+-- Get transposer index and side number from a string (starting at init).
+local function parseConnections2(connections, init)
+  local transIdx = string.match(connections, "%d+", init)
+  if not transIdx then
+    return nil
+  end
+  local side = string.match(connections, "%d+", init + #transIdx + 1)
+  return tonumber(transIdx), tonumber(side), #transIdx + #side + 2
+end
+
 local function doStringTests()
   local timeStart = os.clock()
   local memStart = computer.freeMemory()
@@ -28,7 +38,7 @@ local function doStringTests()
   local sum1, sum2 = 0, 0
   local init = 1
   while true do
-    local a, b, c = parseConnections(arr, init)
+    local a, b, c = parseConnections2(arr, init)
     if not a then
       break
     end
@@ -64,9 +74,9 @@ end
 local function main()
   math.randomseed(computer.uptime())
   doStringTests()
-  doTableTests()
+  --doTableTests()
   doStringTests()
-  doTableTests()
+  --doTableTests()
   io.write("free mem: " .. computer.freeMemory() .. "\n")
 end
 

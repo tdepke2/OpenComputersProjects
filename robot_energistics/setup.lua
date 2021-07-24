@@ -1,6 +1,8 @@
 
 -- TODO: Maybe integrate this into the client script and have it run if it doesn't find the config file??
+-- TODO: Priority of container can be specified by adding more than one item. Maybe change it so that storage is marked with an item and transfer is left empty? or nothing empty?
 
+local common = require("common")
 local component = require("component")
 local event = require("event")
 local sides = require("sides")
@@ -8,55 +10,6 @@ local sides = require("sides")
 local text = require("text")
 
 local OUTPUT_FILENAME = "routing.config"
-
--- Deque class (like a deck of cards). Works like a queue or a stack.
-Deque = {}
-function Deque:new(obj)
-  obj = obj or {}
-  setmetatable(obj, self)
-  self.__index = self
-  self.backIndex = 1
-  self.length = 0
-  return obj
-end
-
-function Deque:empty()
-  return self.length == 0
-end
-
-function Deque:size()
-  return self.length
-end
-
-function Deque:front()
-  return self[self.backIndex + self.length - 1]
-end
-
-function Deque:back()
-  return self[self.backIndex]
-end
-
-function Deque:push_front(val)
-  self[self.backIndex + self.length] = val
-  self.length = self.length + 1
-end
-
-function Deque:push_back(val)
-  self.backIndex = self.backIndex - 1
-  self[self.backIndex] = val
-  self.length = self.length + 1
-end
-
-function Deque:pop_front()
-  self[self.backIndex + self.length - 1] = nil
-  self.length = self.length - 1
-end
-
-function Deque:pop_back()
-  self[self.backIndex] = nil
-  self.backIndex = self.backIndex + 1
-  self.length = self.length - 1
-end
 
 -- Verify string has item name format "<mod name>:<item name>/<damage>". Allows
 -- skipping the damage value (which then defaults to zero).
@@ -124,7 +77,7 @@ local function buildRoutingTable(transposers, inventories)
   end
   
   -- Create a stack for depth-first traversal, this holds connections that need to be checked.
-  local searchStack = Deque:new()
+  local searchStack = common.Deque:new()
   local startTransIdx, startSide = parseConnections(inventories.input[1])
   local inputItem = transposers[startTransIdx].getStackInSlot(startSide, 1)
   local inputItemName = inputItem.name .. "/" .. math.floor(inputItem.damage)
