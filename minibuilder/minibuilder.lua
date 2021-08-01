@@ -44,7 +44,7 @@ Setup:
 local SLEEP_DELAY_SECONDS = 2
 
 -- Whether the robot should send a redstone pulse when crafting completes.
--- Intended for usage with refined storage crafter in "restone pulse inserts
+-- Intended for usage with refined storage crafter in "redstone pulse inserts
 -- next set" mode.
 local REDSTONE_PULSE_ON_SUCCESS = true
 local REDSTONE_PULSE_SIDE = require("sides").left

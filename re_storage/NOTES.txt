@@ -1,0 +1,30 @@
+Keep In Mind:
+* Want to keep storage network separate from the auto-crafting stuff, so that it can be used independently.
+
+General Tasks:
+* Add some dynamic port assignment maybe (start with default port, and switch everybody to new port when they first chat).
+* Would be neat to have some security. When system first set up we could keep track of all addresses in a file and validate packets with these.
+
+Storage Tasks:
+* Storage auto imports with redstone comparator and redstone I/O.
+* Item formatted name should really use 'n' at end of name to indicate it has NBT and kept separate from other items.
+
+Crafting Tasks:
+
+Interface Tasks:
+* Better item display interface with easy selection.
+    * Should feature sorting.
+    * Scrolling if possible, else use a key combo with arrow keys instead.
+    * Select with arrow keys and enter.
+        * Maybe enter + number input for amount, shift-enter for 1, ctrl-enter for stack, ctrl-shift for all?
+    * If we have time, consider a color display for this as an option.
+        * Click and scroll to get what you want, nice.
+
+Bugs:
+
+
+
+New System Layout:
+* Storage server controls transposer network.
+* Crafting server controls auto-crafting jobs and drone flight plans.
+* Interface server presents the user interface.
