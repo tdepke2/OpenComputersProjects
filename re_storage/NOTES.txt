@@ -6,10 +6,14 @@ General Tasks:
 * Would be neat to have some security. When system first set up we could keep track of all addresses in a file and validate packets with these.
 
 Storage Tasks:
-* Storage auto imports with redstone comparator and redstone I/O.
+DONE    * Storage auto imports with redstone comparator and redstone I/O.
 * Item formatted name should really use 'n' at end of name to indicate it has NBT and kept separate from other items.
+* Item list sent to interface should use a simpler format, don't need to know insert/extract points in interface.
+* Storage needs to send item diffs when contents change.
+    * Maybe interface will need to do a "fake" pending update of contents and confirm when it gets the message (this could be bad idea)?
 
 Crafting Tasks:
+* Network module needs compressed version and testing with drones.
 
 Interface Tasks:
 * Better item display interface with easy selection.
@@ -21,7 +25,7 @@ Interface Tasks:
         * Click and scroll to get what you want, nice.
 
 Bugs:
-
+* Too many, thanks lua.
 
 
 New System Layout:

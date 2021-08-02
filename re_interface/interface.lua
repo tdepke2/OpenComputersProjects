@@ -16,37 +16,6 @@ local thread = require("thread")
 local wnet = require("wnet")
 
 local function main()
-  modem.open(COMMS_PORT)
-  
-  --wnet.debug = true
-  wnet.maxDataLength = 512
-  
-  --"b421d616-21a6-4b13-b843-5c121476abcb"
-  wnet.send(modem, nil, COMMS_PORT, "hello")
-  --sendMessage(modem, nil, COMMS_PORT, "1234567890abcdefgh")
-  local data = ""
-  for i = 1, 5000 do
-    data = data .. i
-  end
-  wnet.send(modem, nil, COMMS_PORT, data)
-  os.sleep(3)
-  wnet.send(modem, nil, COMMS_PORT, "1244567890abcdefgh")
-  os.sleep(3)
-  wnet.send(modem, nil, COMMS_PORT, "beans")--"hello again, I've returned")
-  
-  os.exit()
-  
-  for i = 1, 100 do
-    local _, _, senderAddress, port, _, packetType, data = event.pull("modem_message", nil, nil, COMMS_PORT)
-    assert(packetType == "my_numbers" and i == data)
-    print(i)
-  end
-  
-  print("done!")
-  os.exit()
-  
-  
-  
   -- Captures the interrupt signal to stop program.
   local interruptThread = thread.create(function()
     event.pull("interrupted")
@@ -57,20 +26,23 @@ local function main()
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
     modem.open(COMMS_PORT)
+    wnet.debug = true
     
     local attemptNumber = 1
     while not storageCtrlAddress do
       term.clearLine()
       io.write("Trying to contact storage controller on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
       
-      modem.broadcast(COMMS_PORT, "stor_discover")
-      local _, _, senderAddress, port, _, packetType, data1 = event.pull(2, "modem_message", nil, nil, COMMS_PORT)
-      
-      if packetType == "stor_item_list" then
-        storageItems = serialization.unserialize(data1)
-        storageCtrlAddress = senderAddress
+      wnet.send(modem, nil, COMMS_PORT, "stor_discover,")
+      local address, port, data = wnet.receive(2)
+      if address and port == COMMS_PORT then
+        local dataType = string.match(data, "[^,]*")
+        data = string.sub(data, #dataType + 2)
+        if dataType == "stor_item_list" then
+          storageItems = serialization.unserialize(data)
+          storageCtrlAddress = address
+        end
       end
-      
       attemptNumber = attemptNumber + 1
     end
     io.write("\nSuccess.\n")
@@ -83,6 +55,8 @@ local function main()
   if interruptThread:status() == "dead" then
     os.exit(1)
   end
+  
+  local exitSuccess = false
   
   -- Continuously get user input and send commands to storage controller.
   local commandThread = thread.create(function()
@@ -102,10 +76,12 @@ local function main()
         end
       elseif input[1] == "r" then    -- Request.
         --print("result = ", extractStorage(transposers, routing, storageItems, "output", 1, nil, input[2], tonumber(input[3])))
-        sendPacket(storageCtrlAddress, COMMS_PORT, "stor_extract", "beef")
+        input[2] = input[2] or ""
+        input[3] = input[3] or ""
+        wnet.send(modem, storageCtrlAddress, COMMS_PORT, "stor_extract," .. input[2] .. "," .. input[3])
       elseif input[1] == "a" then    -- Add.
         --print("result = ", insertStorage(transposers, routing, storageItems, "input", 1))
-        sendPacket(storageCtrlAddress, COMMS_PORT, "stor_insert")
+        wnet.send(modem, storageCtrlAddress, COMMS_PORT, "stor_insert,")
       elseif input[1] == "d" then
         print(" - items - ")
         tdebug.printTable(storageItems)
@@ -120,6 +96,13 @@ local function main()
   thread.waitForAny({interruptThread, commandThread})
   if interruptThread:status() == "dead" then
     os.exit(1)
+  end
+  
+  interruptThread:kill()
+  commandThread:kill()
+  
+  if not exitSuccess then
+    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
   end
 end
 
