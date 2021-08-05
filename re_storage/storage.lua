@@ -143,19 +143,19 @@ end
 -- can still resolve to the same identifier.
 local function getItemFullName(item)
   checkArg(1, item, "table")
-  return item.name .. "/" .. math.floor(item.damage)
+  return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
 end
 
 
 -- Register the item stack with the storageItems table. If updateFirstEmpty is
--- true then set storageItems.firstEmptyIndex/Slot to the next empty slot found.
+-- true then set storageItems.data.firstEmptyIndex/Slot to the next empty slot found.
 local function addStorageItems(transposers, routing, storageItems, invIndex, slot, item, amount, updateFirstEmpty)
   checkArg(1, transposers, "table", 2, routing, "table", 3, storageItems, "table", 4, invIndex, "number", 5, slot, "number", 6, item, "table", 7, amount, "number", 8, updateFirstEmpty, "boolean")
   --print("addStorageItems(", transposers, routing, storageItems, invIndex, slot, item, amount, updateFirstEmpty, ")")
   -- If updateFirstEmpty then find the first empty slot in storage system after the current invIndex and slot.
   if updateFirstEmpty then
-    storageItems.firstEmptyIndex = nil
-    storageItems.firstEmptySlot = nil
+    storageItems.data.firstEmptyIndex = nil
+    storageItems.data.firstEmptySlot = nil
     for invIndex2 = invIndex, #routing.storage do
       local transIndex, side = next(routing.storage[invIndex2])
       local itemIter = transposers[transIndex].getAllStacks(side)
@@ -164,12 +164,12 @@ local function addStorageItems(transposers, routing, storageItems, invIndex, slo
         --print("checking slot " .. slot2)
         if item2.size == 0 then
           --print("first empty changed to " .. invIndex2 .. ", " .. slot2)
-          storageItems.firstEmptyIndex = invIndex2
-          storageItems.firstEmptySlot = slot2
+          storageItems.data.firstEmptyIndex = invIndex2
+          storageItems.data.firstEmptySlot = slot2
           break
         end
       end
-      if storageItems.firstEmptyIndex then
+      if storageItems.data.firstEmptyIndex then
         break
       end
     end
@@ -180,14 +180,19 @@ local function addStorageItems(transposers, routing, storageItems, invIndex, slo
     return
   end
   
-  -- If item does not exist in table, add it. Otherwise update the existing entry.
+  -- Check if we need to cache the previous storage total.
   local fullName = getItemFullName(item)
+  if storageItems.data.changes and not storageItems.data.changes[fullName] then
+    storageItems.data.changes[fullName] = storageItems[fullName] and storageItems[fullName].total or 0
+  end
+  
+  -- If item does not exist in table, add it. Otherwise update the existing entry.
   if not storageItems[fullName] then
     --print("adding new storageItems entry")
     storageItems[fullName] = {}
     storageItems[fullName].maxDamage = math.floor(item.maxDamage)    -- Maximum damage this item can have.
     storageItems[fullName].maxSize = math.floor(item.maxSize)    -- Maximum stack size.
-    storageItems[fullName].id = item.id    -- Minecraft id of the item.
+    --storageItems[fullName].id = item.id    -- Minecraft id of the item.
     storageItems[fullName].label = item.label    -- Translated item name.
     storageItems[fullName].total = amount
     storageItems[fullName].insertIndex = invIndex    -- First available place to insert items (the partial stack, could be a cache or regular inventory).
@@ -225,14 +230,19 @@ local function removeStorageItems(transposers, routing, storageItems, invIndex, 
   -- Check if first empty slot has now moved to this invIndex/slot.
   local transIndex, side = next(routing.storage[invIndex])
   local itemsRemaining = transposers[transIndex].getSlotStackSize(side, slot)
-  if itemsRemaining == 0 and (not storageItems.firstEmptyIndex or invIndex < storageItems.firstEmptyIndex or (invIndex == storageItems.firstEmptyIndex and slot < storageItems.firstEmptySlot)) then
+  if itemsRemaining == 0 and (not storageItems.data.firstEmptyIndex or invIndex < storageItems.data.firstEmptyIndex or (invIndex == storageItems.data.firstEmptyIndex and slot < storageItems.data.firstEmptySlot)) then
     --print("first empty changed to " .. invIndex .. ", " .. slot)
-    storageItems.firstEmptyIndex = invIndex
-    storageItems.firstEmptySlot = slot
+    storageItems.data.firstEmptyIndex = invIndex
+    storageItems.data.firstEmptySlot = slot
+  end
+  
+  -- Check if we need to cache the previous storage total.
+  local fullName = getItemFullName(item)
+  if storageItems.data.changes and not storageItems.data.changes[fullName] then
+    storageItems.data.changes[fullName] = storageItems[fullName].total
   end
   
   -- Update total and check if we can remove the table entry.
-  local fullName = getItemFullName(item)
   storageItems[fullName].total = storageItems[fullName].total - amount
   if storageItems[fullName].total == 0 then    -- FIXME may want to change to <= after testing ####################################################
     --print("removing item entry for " .. fullName)
@@ -549,16 +559,16 @@ local function insertStorage(transposers, routing, storageItems, srcType, srcInd
   end
   
   -- Third, try to insert items at the firstEmptyIndex.
-  if storageItems.firstEmptyIndex then
-    --print("third try first empty at " .. storageItems.firstEmptyIndex .. ", " .. storageItems.firstEmptySlot)
-    assert(routeItems(transposers, routing, currType, currIndex, currSlot, "storage", storageItems.firstEmptyIndex, storageItems.firstEmptySlot, amount) == amount)
+  if storageItems.data.firstEmptyIndex then
+    --print("third try first empty at " .. storageItems.data.firstEmptyIndex .. ", " .. storageItems.data.firstEmptySlot)
+    assert(routeItems(transposers, routing, currType, currIndex, currSlot, "storage", storageItems.data.firstEmptyIndex, storageItems.data.firstEmptySlot, amount) == amount)
     
     if storageItems[srcFullName] then
-      storageItems[srcFullName].insertIndex = storageItems.firstEmptyIndex
-      storageItems[srcFullName].insertSlot = storageItems.firstEmptySlot
+      storageItems[srcFullName].insertIndex = storageItems.data.firstEmptyIndex
+      storageItems[srcFullName].insertSlot = storageItems.data.firstEmptySlot
     end
     
-    addStorageItems(transposers, routing, storageItems, storageItems.firstEmptyIndex, storageItems.firstEmptySlot, srcItem, amount, true)
+    addStorageItems(transposers, routing, storageItems, storageItems.data.firstEmptyIndex, storageItems.data.firstEmptySlot, srcItem, amount, true)
     
     return true, originalAmount
   end
@@ -597,7 +607,7 @@ local function extractStorage(transposers, routing, storageItems, destType, dest
   assert(destType == "input" or destType == "output" or destType == "drone")
   if not itemName then
     for itemName2, itemDetails in pairs(storageItems) do
-      if itemName2 ~= "firstEmptyIndex" and itemName2 ~= "firstEmptySlot" then
+      if itemName2 ~= "data" then
         itemName = itemName2
         break
       end
@@ -651,10 +661,10 @@ local function extractStorage(transposers, routing, storageItems, destType, dest
           local amountTransferred = math.floor(transposers[transIndex].transferItem(side, side, amount - item.size, slot, storageItems[itemName].extractSlot))
           if amountTransferred == item2.size then
             --print("special case: we created an empty slot at " .. slot)
-            if not storageItems.firstEmptyIndex or invIndex < storageItems.firstEmptyIndex or (invIndex == storageItems.firstEmptyIndex and slot < storageItems.firstEmptySlot) then
+            if not storageItems.data.firstEmptyIndex or invIndex < storageItems.data.firstEmptyIndex or (invIndex == storageItems.data.firstEmptyIndex and slot < storageItems.data.firstEmptySlot) then
               --print("first empty changed to " .. invIndex .. ", " .. slot)
-              storageItems.firstEmptyIndex = invIndex
-              storageItems.firstEmptySlot = slot
+              storageItems.data.firstEmptyIndex = invIndex
+              storageItems.data.firstEmptySlot = slot
             end
             if invIndex < storageItems[itemName].insertIndex or (invIndex == storageItems[itemName].insertIndex and slot < storageItems[itemName].insertSlot) then
               --print("insert point changed to " .. invIndex .. ", " .. slot)
@@ -725,70 +735,101 @@ local function extractStorage(transposers, routing, storageItems, destType, dest
 end
 
 
---[[
-Pulling from storage grabs the last slot item from the lowest priority container.
-  Can optimize by transferring items before the partial into the partial to match
-  the amount (up to the stack size), then route the partial to the destination.
+-- Strip off the unnecessary data in storageItems and send over the network to
+-- specified addresses.
+local function sendTrimmedStorageItems(addresses, storageItems)
+  local items = {}
+  for itemName, itemDetails in pairs(storageItems) do
+    if itemName ~= "data" then
+      items[itemName] = {}
+      items[itemName].label = itemDetails.label
+      items[itemName].total = itemDetails.total
+    end
+  end
+  items = serialization.serialize(items)
+  for address, _ in pairs(addresses) do
+    wnet.send(modem, address, COMMS_PORT, "stor_item_list," .. items)
+  end
+end
 
-Adding to storage places item in the first available slot, or first partial slot
-if it exists (of highest priority container).
-  We always send the full stack, and if not all of the items transfer then
-  transfer again from the nearby transfer buffer to the first empty slot.
 
-Ideally we should have only one partial stack for each item type, but this can
-change from user intervention or priority changes.
+-- Compiles the changes made to storageItems since the last call to this
+-- function, and sends the changes over network to the addresses.
+local function sendStorageItemsDiff(addresses, storageItems)
+  local itemsDiff = {}
+  for itemName, previousTotal in pairs(storageItems.data.changes) do
+    if storageItems[itemName] then
+      if storageItems[itemName].total ~= previousTotal then
+        itemsDiff[itemName] = {}
+        itemsDiff[itemName].label = storageItems[itemName].label
+        itemsDiff[itemName].total = storageItems[itemName].total
+      end
+    else
+      itemsDiff[itemName] = {}
+      itemsDiff[itemName].total = 0
+    end
+    storageItems.data.changes[itemName] = nil
+  end
+  if next(itemsDiff) ~= nil then
+    itemsDiff = serialization.serialize(itemsDiff)
+    for address, _ in pairs(addresses) do
+      wnet.send(modem, address, COMMS_PORT, "stor_item_diff," .. itemsDiff)
+    end
+  end
+end
 
 
-
-Request item from storage:
-  Look up the table entry for the item and see how much we have.
-  Find the storage with lowest priority that contains it, and get the slot/count.
-  Find the next available slot in output (should allow stacking )
-
-Add item to storage:
-  Look through storage and cache the first empty slot found, and stop at
---]]
-
+-- Main program starts here. Runs a few threads to do setup work, listen for
+-- packets, redstone events, etc.
 local function main()
+  local threadSuccess = false
   -- Captures the interrupt signal to stop program.
   local interruptThread = thread.create(function()
     event.pull("interrupted")
   end)
   
-  local transposers, routing, storageItems
+  local transposers, routing, storageItems, interfaceServerAddresses
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
+    modem.open(COMMS_PORT)
+    wnet.debug = true
+    interfaceServerAddresses = {}
+    
     transposers, routing = loadRoutingConfig(ROUTING_CONFIG_FILENAME)
     
-    print(" - routing - ")
-    tdebug.printTable(routing)
+    --print(" - routing - ")
+    --tdebug.printTable(routing)
     
     io.write("Running full inventory scan, please wait...\n")
     
     -- FIXME we probably want to run a similar process here for transfer and drone inventories to flush out the system. ##################################################
     storageItems = {}
+    storageItems.data = {}
     addStorageItems(transposers, routing, storageItems, 1, 1, nil, 0, true)    -- Update firstEmptyIndex/Slot.
     for invIndex = 1, #routing.storage do
-      print("found items: " .. scanInventory(transposers, routing, storageItems, "storage", invIndex))
+      io.write("  Found storage containing " .. scanInventory(transposers, routing, storageItems, "storage", invIndex) .. " items.\n")
     end
+    io.write("\n")
+    storageItems.data.changes = {}    -- Add changes table now to track changes in item totals.
     
-    print(" - items - ")
-    tdebug.printTable(storageItems)
+    --print(" - items - ")
+    --tdebug.printTable(storageItems)
+    
+    threadSuccess = true
   end)
   
   thread.waitForAny({interruptThread, setupThread})
   if interruptThread:status() == "dead" then
     os.exit(1)
+  elseif not threadSuccess then
+    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
+    os.exit(1)
   end
-  
-  local exitSuccess = false
+  threadSuccess = false
   
   -- Listens for incoming packets over the network and deals with them.
   local modemThread = thread.create(function()
-    modem.open(COMMS_PORT)
-    wnet.debug = true
-    
     io.write("Listening for commands on port " .. COMMS_PORT .. "...\n")
     while true do
       local address, port, data = wnet.receive()
@@ -796,11 +837,19 @@ local function main()
         local dataType = string.match(data, "[^,]*")
         data = string.sub(data, #dataType + 2)
         
+        --if string.find(dataType, "stor_", 1, true) then
+          -- assume this is an interface??? set interfaceServerAddresses
+        --end
+        
         if dataType == "stor_discover" then
-          wnet.send(modem, address, COMMS_PORT, "stor_item_list," .. serialization.serialize(storageItems))
+          interfaceServerAddresses[address] = true
+          sendTrimmedStorageItems(interfaceServerAddresses, storageItems)
         elseif dataType == "stor_insert" then
+          interfaceServerAddresses[address] = true
           print("result = ", insertStorage(transposers, routing, storageItems, "input", 1))
+          sendStorageItemsDiff(interfaceServerAddresses, storageItems)
         elseif dataType == "stor_extract" then
+          interfaceServerAddresses[address] = true
           local itemName = string.match(data, "[^,]*")
           local amount = string.match(data, "[^,]*", #itemName + 2)
           if itemName == "" then
@@ -808,6 +857,7 @@ local function main()
           end
           print("extract with item " .. tostring(itemName) .. " and amount " .. amount .. ".")
           print("result = ", extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, tonumber(amount)))
+          sendStorageItemsDiff(interfaceServerAddresses, storageItems)
         end
       end
     end
@@ -831,6 +881,7 @@ local function main()
           if next(item) ~= nil then
             local success, amountTransferred = insertStorage(transposers, routing, storageItems, "input", 1, slot)
             print("result = ", success, amountTransferred)
+            sendStorageItemsDiff(interfaceServerAddresses, storageItems)
             -- FIXME add back in to prevent starvation of other processes ###########################################################################################################
             --os.sleep(0.05)    -- Yield to let other threads do I/O with storage if they need to.
           end
@@ -845,20 +896,35 @@ local function main()
   thread.waitForAny({interruptThread, modemThread, inputSensorThread})
   if interruptThread:status() == "dead" then
     os.exit(1)
+  elseif not threadSuccess then
+    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
+    os.exit(1)
   end
   
   interruptThread:kill()
   modemThread:kill()
   inputSensorThread:kill()
-  
-  if not exitSuccess then
-    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-  end
 end
 
 main()
 
 --[[
+Pulling from storage grabs the last slot item from the lowest priority container.
+  We optimize by transferring items of the same type in the inventory into the
+  partial stack to match the amount (up to the stack size), then route the
+  partial/full stack to the destination.
+
+Adding to storage places item in the first available slot, or first partial slot
+if it exists (of highest priority container).
+  We always send the full stack, and if not all of the items transfer then we
+  attempt to transfer to the next occurrence and repeat until reaching the
+  extract slot. If there are still some left over, send the rest to the first
+  empty slot. The initial "attempt transfer to each occurrence" is only
+  performed the first time we try to transfer that item type.
+
+Ideally we should have only one partial stack for each item type, but this can
+change from user intervention or priority changes.
+
 
 transposers = {
   1: <transposer proxy>
@@ -915,12 +981,10 @@ routing = {
 }
 
 storageItems = {
-  firstEmptyIndex = <storage index>    -- First empty slot of highest-priority storage container.
-  firstEmptySlot = <slot number>
   <item full name>: {
     maxDamage: ...
     maxSize: ...
-    id: ...
+    id: ...    -- Not currently used.
     label: ...
     total: <total count>
     insertIndex: <storage index>    -- First available place to insert items (the partial stack, could be a cache or regular inventory). Try and insert here and remainder to the firstEmptyIndex/Slot.
@@ -930,6 +994,14 @@ storageItems = {
     extractSlot: <slot number>
   }
   ...
+  data: {
+    firstEmptyIndex = <storage index>    -- First empty slot of highest-priority storage container.
+    firstEmptySlot = <slot number>
+    changes: {    -- This table is left nonexistent until we need it (after first storage scan).
+      <item full name>: <previous total>    -- List of changes made to items that will need to be communicated over network.
+      ...
+    }
+  }
 }
 
 [a, b,  ,  , c]

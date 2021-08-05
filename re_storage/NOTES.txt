@@ -14,6 +14,8 @@ DONE    * Storage auto imports with redstone comparator and redstone I/O.
 
 Crafting Tasks:
 * Network module needs compressed version and testing with drones.
+* Seems like we will need to keep a secondary storage table that represents the "available" items, this is reported to interfaces and stuff.
+    * This could solve the issue of hiding away intermediate ingredients in crafting process.
 
 Interface Tasks:
 * Better item display interface with easy selection.
