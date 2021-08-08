@@ -1,0 +1,35 @@
+
+# the craft station acts like a special station, material numbers go on right side for slot index.
+station craft
+in <x> <y> <z> <north/south/east/west>
+
+station craft
+in <x> <y> <z> <north/south/east/west>
+
+craft:
+4 minecraft:planks
+with
+minecraft:log 1
+
+craft:
+4 minecraft:stick
+with
+minecraft:planks 1 4
+
+craft:
+4 minecraft:torch
+with
+minecraft:coal 1
+minecraft:stick 4
+
+craft:
+4 minecraft:torch
+with
+minecraft:coal/1 1
+minecraft:stick 4
+
+craft:
+1 minecraft:redstone_torch
+with
+minecraft:redstone 1
+minecraft:stick 4

@@ -421,7 +421,7 @@ local function routeItems(transposers, routing, srcType, srcIndex, srcSlot, dest
     
     --print(transIndex .. " -> " .. srcSide .. ", " .. sinkSide)
     amountTransferred = math.floor(transposers[transIndex].transferItem(srcSide, sinkSide, amount, firstConnection and srcSlot or 1, connectionStack:empty() and destSlot or 1))
-    firstConnection = false
+    
     
     -- Confirm that item moved, or if at the end lookup the inventory that the remaining items are now stuck in.
     if not connectionStack:empty() then
@@ -429,10 +429,11 @@ local function routeItems(transposers, routing, srcType, srcIndex, srcSlot, dest
     elseif amountTransferred ~= amount then
       for invName, side in pairs(routing.transposer[transIndex]) do
         if side == srcSide then
-          return amountTransferred, invName, 1
+          return amountTransferred, invName, firstConnection and srcSlot or 1
         end
       end
     end
+    firstConnection = false
   end
   
   return amountTransferred
@@ -500,6 +501,9 @@ local function insertStorage(transposers, routing, storageItems, srcType, srcInd
   end
   
   local srcItem = transposers[srcTransIndex].getStackInSlot(srcSide, srcSlot)
+  if not srcItem then
+    return false, 0
+  end
   local srcFullName = getItemFullName(srcItem)
   -- Clamp amount to the current and max stack size, and use the item count for the amount if not specified.
   amount = math.floor(math.min(amount or srcItem.size, srcItem.maxSize))
@@ -561,6 +565,7 @@ local function insertStorage(transposers, routing, storageItems, srcType, srcInd
   -- Third, try to insert items at the firstEmptyIndex.
   if storageItems.data.firstEmptyIndex then
     --print("third try first empty at " .. storageItems.data.firstEmptyIndex .. ", " .. storageItems.data.firstEmptySlot)
+    
     assert(routeItems(transposers, routing, currType, currIndex, currSlot, "storage", storageItems.data.firstEmptyIndex, storageItems.data.firstEmptySlot, amount) == amount)
     
     if storageItems[srcFullName] then
@@ -575,9 +580,9 @@ local function insertStorage(transposers, routing, storageItems, srcType, srcInd
   
   --print("routing stuck items back from " .. currType .. currIndex .. ":" .. currSlot)
   -- Route any stuck items back to where they came from.
-  local amountTransferred, currInvName
-  amountTransferred, currInvName, currSlot = routeItems(transposers, routing, currType, currIndex, currSlot, srcType, srcIndex, srcSlot)
-  if currInvName then
+  local currInvName
+  _, currInvName, currSlot = routeItems(transposers, routing, currType, currIndex, currSlot, srcType, srcIndex, srcSlot)
+  if currInvName and currIndex ~= srcIndex then
     currType = string.match(currInvName, "%a+")
     currIndex = tonumber(string.match(currInvName, "%d+"))
     
@@ -735,8 +740,20 @@ local function extractStorage(transposers, routing, storageItems, destType, dest
 end
 
 
+-- Send data over network to each address in the table (or broadcast if nil).
+local function sendToAddresses(addresses, data)
+  if addresses then
+    for address, _ in pairs(addresses) do
+      wnet.send(modem, address, COMMS_PORT, data)
+    end
+  else
+    wnet.send(modem, nil, COMMS_PORT, data)
+  end
+end
+
+
 -- Strip off the unnecessary data in storageItems and send over the network to
--- specified addresses.
+-- specified addresses (or broadcast if nil).
 local function sendTrimmedStorageItems(addresses, storageItems)
   local items = {}
   for itemName, itemDetails in pairs(storageItems) do
@@ -747,14 +764,13 @@ local function sendTrimmedStorageItems(addresses, storageItems)
     end
   end
   items = serialization.serialize(items)
-  for address, _ in pairs(addresses) do
-    wnet.send(modem, address, COMMS_PORT, "stor_item_list," .. items)
-  end
+  sendToAddresses(addresses, "craftinter_item_list," .. items)
 end
 
 
 -- Compiles the changes made to storageItems since the last call to this
--- function, and sends the changes over network to the addresses.
+-- function, and sends the changes over network to the addresses (or broadcast
+-- if nil).
 local function sendStorageItemsDiff(addresses, storageItems)
   local itemsDiff = {}
   for itemName, previousTotal in pairs(storageItems.data.changes) do
@@ -772,9 +788,7 @@ local function sendStorageItemsDiff(addresses, storageItems)
   end
   if next(itemsDiff) ~= nil then
     itemsDiff = serialization.serialize(itemsDiff)
-    for address, _ in pairs(addresses) do
-      wnet.send(modem, address, COMMS_PORT, "stor_item_diff," .. itemsDiff)
-    end
+    sendToAddresses(addresses, "craftinter_item_diff," .. itemsDiff)
   end
 end
 
@@ -815,6 +829,9 @@ local function main()
     
     --print(" - items - ")
     --tdebug.printTable(storageItems)
+    
+    -- Report system started to other listening devices (so they can re-discover the storage).
+    wnet.send(modem, nil, COMMS_PORT, "craftinter_stor_started,")
     
     threadSuccess = true
   end)
@@ -858,11 +875,14 @@ local function main()
           print("extract with item " .. tostring(itemName) .. " and amount " .. amount .. ".")
           print("result = ", extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, tonumber(amount)))
           sendStorageItemsDiff(interfaceServerAddresses, storageItems)
+        elseif dataType == "stor_debug" then
+          tdebug.printTable(storageItems)
         end
       end
     end
   end)
   
+  -- Occasionally checks for redstone signal from I/O block and imports items from input into storage.
   local inputSensorThread = thread.create(function()
     io.write("Input sensor waiting for redstone event...\n")
     while true do
@@ -882,8 +902,7 @@ local function main()
             local success, amountTransferred = insertStorage(transposers, routing, storageItems, "input", 1, slot)
             print("result = ", success, amountTransferred)
             sendStorageItemsDiff(interfaceServerAddresses, storageItems)
-            -- FIXME add back in to prevent starvation of other processes ###########################################################################################################
-            --os.sleep(0.05)    -- Yield to let other threads do I/O with storage if they need to.
+            os.sleep(0)    -- Yield to let other threads do I/O with storage if they need to.
           end
           item = itemIter()
           slot = slot + 1

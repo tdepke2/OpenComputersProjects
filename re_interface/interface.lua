@@ -33,7 +33,7 @@ end
 
 local Gui = {}
 
-function Gui:new(obj, storageItems)
+function Gui:new(obj, storageItems, storageServerAddress)
   obj = obj or {}
   setmetatable(obj, self)
   self.__index = self
@@ -181,6 +181,7 @@ function Gui:new(obj, storageItems)
   self.button.labelType.val = 1
   
   self:setStorageItems(storageItems)
+  self.storageServerAddress = storageServerAddress
   
   return obj
 end
@@ -642,7 +643,7 @@ function Gui:handleTouch(screenAddress, x, y, button, playerName)
         local itemIndex = (self.button.sortDir.val == 1 and 1 or #self.filteredItems) + self.scrollBar.scroll * self.area.numItemColumns * self.button.sortDir.val
         itemIndex = itemIndex + ((y - itemArea.y) * self.area.numItemColumns + (i - 1)) * self.button.sortDir.val
         if self.filteredItems[itemIndex] then
-          wnet.send(modem, storageServerAddress, COMMS_PORT, "stor_extract," .. self.filteredItems[itemIndex] .. ",")
+          wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor_extract," .. self.filteredItems[itemIndex] .. ",")
         end
       end
     end
@@ -679,7 +680,7 @@ local function main()
       if address and port == COMMS_PORT then
         local dataType = string.match(data, "[^,]*")
         data = string.sub(data, #dataType + 2)
-        if dataType == "stor_item_list" then
+        if dataType == "craftinter_item_list" then
           storageItems = serialization.unserialize(data)
           storageServerAddress = address
         end
@@ -691,7 +692,7 @@ local function main()
     print(" - items - ")
     tdebug.printTable(storageItems)
     
-    gui = Gui:new(nil, storageItems)
+    gui = Gui:new(nil, storageItems, storageServerAddress)
     gui:draw()
     
     threadSuccess = true
@@ -714,7 +715,7 @@ local function main()
         local dataType = string.match(data, "[^,]*")
         data = string.sub(data, #dataType + 2)
         
-        if dataType == "stor_item_diff" then
+        if dataType == "craftinter_item_diff" then
           -- Apply the items diff to storageItems to keep the table synced up.
           local itemsDiff = serialization.unserialize(data)
           for itemName, diff in pairs(itemsDiff) do
@@ -731,6 +732,15 @@ local function main()
             end
           end
           gui:updateSortingKeys()
+        elseif dataType == "craftinter_stor_started" then
+          -- If we get a broadcast that storage started, it must have just rebooted and we need to discover new storageItems.
+          wnet.send(modem, address, COMMS_PORT, "stor_discover,")
+        elseif dataType == "craftinter_item_list" then
+          -- New item list, update storageItems and GUI.
+          storageItems = serialization.unserialize(data)
+          storageServerAddress = address
+          gui:setStorageItems(storageItems)
+          gui.storageServerAddress = address
         end
       end
     end

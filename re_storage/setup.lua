@@ -1,13 +1,22 @@
 
 -- TODO: Maybe integrate this into the client script and have it run if it doesn't find the config file??
--- TODO: Priority of container can be specified by adding more than one item. Maybe change it so that storage is marked with an item and transfer is left empty? or nothing empty?
 
 local common = require("common")
 local component = require("component")
 local event = require("event")
 local sides = require("sides")
---local tdebug = require("tdebug")
+local tdebug = require("tdebug")
 local text = require("text")
+
+local setupConfig
+-- Comment out below for interactive setup.
+--
+setupConfig = {}
+setupConfig["minecraft:cobblestone/0"] = "storage"
+setupConfig["minecraft:iron_ingot/0"] = "input"
+setupConfig["minecraft:gold_ingot/0"] = "output"
+setupConfig["minecraft:redstone/0"] = "drone"
+--
 
 local OUTPUT_FILENAME = "routing.config"
 
@@ -23,14 +32,14 @@ local function stringToItemName(s)
 end
 
 -- Search an inventory for item in specified slot. Returns nil if not inventory,
--- item name if found, or empty string if empty.
+-- item name and count if found, or empty string if empty.
 local function findInventoryItemName(transposer, side, slotNum)
   if not transposer.getInventorySize(side) then
     return nil
   end
   local item = transposer.getStackInSlot(side, slotNum)
   if item then
-    return item.name .. "/" .. math.floor(item.damage)
+    return item.name .. "/" .. math.floor(item.damage), math.floor(item.size)
   end
   return ""
 end
@@ -138,7 +147,7 @@ local function buildRoutingTable(transposers, inventories)
     assert(currentSide)
     local numTransferred = transposers[transIdx].transferItem(currentSide, side, 1, 1, 1)
     if numTransferred == 0 then
-      assert(transposers[transIdx].transferItem(side, side, 1, 1, 2) > 0, "Failed to move item stack from slot 1 to 2.")
+      assert(transposers[transIdx].transferItem(side, side, math.huge, 1, 2) > 0, "Failed to move item stack from slot 1 to 2.")
       assert(transposers[transIdx].transferItem(currentSide, side, 1, 1, 1) > 0, "Failed to transfer item between inventories.")
     end
     
@@ -219,15 +228,6 @@ local function main()
     end
   end
   
-  local setupConfig
-  -- Comment out below for interactive setup.
-  ----[[
-  setupConfig = {}
-  setupConfig["minecraft:wool/13"] = "input"
-  setupConfig["minecraft:wool/14"] = "output"
-  setupConfig["minecraft:redstone/0"] = "transfer"
-  setupConfig["minecraft:stone/0"] = "drone"
-  --]]
   if not setupConfig then
     setupConfig = {}
     io.write("\nPlease select the four item types to use for inventory identification. Use the\n")
@@ -240,12 +240,12 @@ local function main()
       assert(not setupConfig[s], "Item type must be unique.")
       setupConfig[s] = itemType
     end
+    io.write("Storage (bulk storage for items): ")
+    validateItemAdd(io.read(), "storage")
     io.write("Input (dump items into the network): ")
     validateItemAdd(io.read(), "input")
     io.write("Output (request items from the network): ")
     validateItemAdd(io.read(), "output")
-    io.write("Transfer (buffer between transposers): ")
-    validateItemAdd(io.read(), "transfer")
     io.write("Drone (access point for drones): ")
     validateItemAdd(io.read(), "drone")
   else
@@ -255,9 +255,10 @@ local function main()
     end
   end
   
-  io.write("\nNext, add one of those items to the FIRST slot of each inventory in the network\n")
-  io.write("corresponding to its type. The inventories for bulk storage should have an empty\n")
-  io.write("first slot.\n")
+  io.write("\nNext, add at least one of those items to the FIRST slot of each inventory in the\n")
+  io.write("network corresponding to its type. The number of items in the slot will effect\n")
+  io.write("the priority of the inventory, with more items meaning higher priority. The\n")
+  io.write("transfer inventories for routing items should have an empty first slot.\n")
   io.write("Ready to continue? [Y/n] ")
   input = io.read()
   if string.lower(input) ~= "y" and string.lower(input) ~= "yes" then
@@ -288,29 +289,39 @@ local function main()
   inventories.transfer = {}
   inventories.drone = {}
   
+  -- Also keep track of priority (item count in first slot) for later. We match
+  -- each connection to the corresponding priority for storage and drone
+  -- inventories.
+  local inventoryPriority = {}
+  
   for i, transposer in ipairs(transposers) do
     for side = 0, 5 do
-      local itemName = findInventoryItemName(transposer, side, 1)
+      local itemName, itemCount = findInventoryItemName(transposer, side, 1)
       if itemName then
         local invType = setupConfig[itemName]
         if itemName == "" then
-          invType = "storage"
-          inventories.storage[#inventories.storage + 1] = formatConnection(i, side)
+          invType = "transfer"
+          inventories.transfer[#inventories.transfer + 1] = formatConnection(i, side)
         elseif not invType then
           assert(false, "Found unrecognized item \"" .. itemName .. "\" in inventory.")
+        elseif invType == "storage" then
+          inventories.storage[#inventories.storage + 1] = formatConnection(i, side)
         elseif invType == "input" then
           assert(#inventories.input == 0, "Found a second input inventory (there must be only one connected to a single transposer in network).")
           inventories.input[#inventories.input + 1] = formatConnection(i, side)
         elseif invType == "output" then
           assert(#inventories.output == 0, "Found a second output inventory (there must be only one connected to a single transposer in network).")
           inventories.output[#inventories.output + 1] = formatConnection(i, side)
-        elseif invType == "transfer" then
-          inventories.transfer[#inventories.transfer + 1] = formatConnection(i, side)
         elseif invType == "drone" then
           inventories.drone[#inventories.drone + 1] = formatConnection(i, side)
         end
         
-        io.write("Found a " .. transposer.getInventorySize(side) .. " slot " .. invType .. " inventory.\n")
+        io.write("Found a " .. text.padLeft(tostring(math.floor(transposer.getInventorySize(side))), 5) .. " slot " .. text.padLeft(invType, 8) .. " inventory ")
+        if invType == "storage" or invType == "drone" then
+          io.write("with priority " .. text.padLeft(tostring(itemCount), 2) .. " ")
+          inventoryPriority[formatConnection(i, side)] = itemCount
+        end
+        io.write("(" .. transposer.getInventoryName(side) .. ").\n")
       end
     end
   end
@@ -320,7 +331,8 @@ local function main()
   assert(#inventories.output > 0, "No output inventory found.")
   
   io.write("\nNow remove those first slot items EXCEPT for the one in the input inventory.\n")
-  io.write("You can skip this if you want, but there will be problems if the items fail to be moved to the second slot.\n")
+  io.write("You can skip this step in most cases, but there will be problems if the items\n")
+  io.write("fail to be moved to the second slot (single-slot inventories better be empty).\n")
   io.write("Ready to continue? [Y/n] ")
   input = io.read()
   if string.lower(input) ~= "y" and string.lower(input) ~= "yes" then
@@ -333,6 +345,25 @@ local function main()
   local routing = buildRoutingTable(transposers, inventories)
   
   --tdebug.printTable(routing)
+  
+  -- Use insertion sort to reorder a category in the routing table to match the priorities in inventoryPriority.
+  local function sortPriority(routingType)
+    local i = 2
+    while i <= #routingType do
+      local connections = routingType[i]
+      local priority = inventoryPriority[string.match(connections, "%d*:%d*,")]
+      local j = i - 1
+      while j > 0 and inventoryPriority[string.match(routingType[j], "%d*:%d*,")] < priority do
+        routingType[j + 1] = routingType[j]
+        j = j - 1
+      end
+      routingType[j + 1] = connections
+      i = i + 1
+    end
+  end
+  
+  sortPriority(routing.storage)
+  sortPriority(routing.drone)
   
   local outputFile = io.open(OUTPUT_FILENAME, "w")
   if outputFile then
