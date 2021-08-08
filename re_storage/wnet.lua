@@ -4,7 +4,7 @@ Network wrapper with very simple interface.
 Supports debugging of packet transfer, data messages that do not fit in a single
 packet, and guarantees data integrity on receiving end. Much like UDP in
 networking, it does not support reliable transfer (packets may be lost, and this
-can cause pending packets to be dropped). There are no "ack"s sent back to the
+can cause pending packets to be dropped). There are no ACKs sent back to the
 sender to notify that the message was received. The simplicity of this protocol
 allows it to fit onto a 4kB EEPROM for programming drones and such (see the
 compressed version at bottom).
@@ -23,7 +23,7 @@ wnet.debug = false
 wnet.maxPacketLife = 5
 
 -- The string can be up to the max packet size, minus a bit to make sure the packet can send.
-wnet.maxDataLength = computer.getDeviceInfo()[component.modem.address].capacity - 64
+wnet.maxDataLength = computer.getDeviceInfo()[component.modem.address].capacity - 32
 
 wnet.packetNumber = 1
 wnet.packetBuffer = {}
@@ -75,7 +75,7 @@ end
 -- data if received.
 function wnet.receive(timeout)
   local eventType, _, senderAddress, senderPort, _, sequence, data = event.pull(timeout, "modem_message")
-  if not eventType then
+  if not (eventType and type(sequence) == "string" and type(data) == "string" and string.find(sequence, "^%d+")) then
     return nil
   end
   senderPort = math.floor(senderPort)
@@ -137,7 +137,7 @@ function wnet.receive(timeout)
     
     -- Don't have enough packets yet, wait for more.
     eventType, _, senderAddress, senderPort, _, sequence, data = event.pull(timeout, "modem_message")
-    if not eventType then
+    if not (eventType and type(sequence) == "string" and type(data) == "string" and string.find(sequence, "^%d+")) then
       return nil
     end
     senderPort = math.floor(senderPort)
@@ -149,8 +149,67 @@ end
 
 return wnet
 
---[[
--- Compressed version of wnet to fit on EEPROM.
 
+-- Compressed version of wnet to fit on EEPROM. This only takes up about 1,500
+-- bytes. Note that the wnet.receive() function now takes an event table instead
+-- of a timeout, this is to prevent the receive() from tossing out non-modem
+-- events from computer.pullSignal(). To catch network packets do the following
+-- in the drone code within a loop:
+-- 
+-- local ev = {computer.pullSignal()}
+-- local address, port, data = wnet.receive(ev)
+-- if port == <my port> then
+--   Do stuff with data...
+-- end
+-- 
+-- Compressed wnet starts here:
+--[[
+
+local modem = component.proxy(component.list("modem")())
+
+-- See wnet.lua for uncompressed version.
+wnet={}
+wnet.life=5
+wnet.len=computer.getDeviceInfo()[modem.address].capacity-32
+wnet.n=1
+wnet.b={}
+function wnet.send(m,a,p,d)
+  local c=math.ceil(#d/wnet.len)
+  for i=1,c do
+    if a then
+      m.send(a,p,wnet.n..(i==1 and"/"..c or""),string.sub(d,(i-1)*wnet.len+1,i*wnet.len))
+    else
+      m.broadcast(p,wnet.n..(i==1 and"/"..c or""),string.sub(d,(i-1)*wnet.len+1,i*wnet.len))
+    end
+    wnet.n=wnet.n+1
+  end
+end
+function wnet.receive(ev)
+  local e,a,p,s,d=ev[1],ev[3],ev[4],ev[6],ev[7]
+  if not(e and e=="modem_message"and type(s)=="string"and type(d)=="string"and string.find(s,"^%d+"))then return nil end
+  p=math.floor(p)
+  wnet.b[a..":"..p..","..s]={computer.uptime(),d}
+  for k,v in pairs(wnet.b) do
+    local ka,kp,kn = string.match(k,"([%w-]+):(%d+),(%d+)")
+    kn=tonumber(kn)
+    local kc=tonumber(string.match(k,"/(%d+)"))
+    if computer.uptime()>v[1]+wnet.life then
+      wnet.b[k]=nil
+    elseif kc and(kc==1 or wnet.b[ka..":"..kp..","..(kn+kc-1)])then
+      d=""
+      for i=1,kc do
+        if not wnet.b[ka..":"..kp..","..(kn+i-1)..(i==1 and"/"..kc or"")]then d=nil break end
+      end
+      if d then
+        for i=1,kc do
+          local k2=ka..":"..kp..","..(kn+i-1)..(i==1 and"/"..kc or"")
+          d=d..wnet.b[k2][2]
+          wnet.b[k2]=nil
+        end
+        return ka,tonumber(kp),d
+      end
+    end
+  end
+end
 
 --]]

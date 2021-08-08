@@ -1,25 +1,33 @@
+Development Notes and Story Tracking (I am too lazy to set up a Jira board right now).
+
+--------------------------------------------------------------------------------
 Keep In Mind:
 * Want to keep storage network separate from the auto-crafting stuff, so that it can be used independently.
 
+--------------------------------------------------------------------------------
 General Tasks:
 * Add some dynamic port assignment maybe (start with default port, and switch everybody to new port when they first chat).
 * Would be neat to have some security. When system first set up we could keep track of all addresses in a file and validate packets with these.
     * This could also be a performance issue, may want to use broadcasts when communicating with interfaces.
-* wnet needs some adjustments to handle invalid data format (drop these packets).
+DONE    * wnet needs some adjustments to handle invalid data format (drop these packets).
 
+--------------------------------------------------------------------------------
 Storage Tasks:
 DONE    * Storage auto imports with redstone comparator and redstone I/O.
+* May want to add optional feature to import constantly, the redstone sensor is cool but not really needed.
 DONE    * Item formatted name should really use 'n' at end of name to indicate it has NBT and kept separate from other items.
 DONE    * Item list sent to interface should use a simpler format, don't need to know insert/extract points in interface.
 DONE    * Storage needs to send item diffs when contents change.
             * Maybe interface will need to do a "fake" pending update of contents and confirm when it gets the message (this could be bad idea)?
             * More likely not, doesn't work well with multiple users.
 
+--------------------------------------------------------------------------------
 Crafting Tasks:
-* Network module needs compressed version and testing with drones.
+DONE    * Network module needs compressed version and testing with drones.
 * Seems like we will need to keep a secondary storage table that represents the "available" items, this is reported to interfaces and stuff.
     * This could solve the issue of hiding away intermediate ingredients in crafting process.
 
+--------------------------------------------------------------------------------
 Interface Tasks:
 DONE    * Better item display interface with easy selection.
             * Should feature sorting.
@@ -37,11 +45,12 @@ DONE    * Better item display interface with easy selection.
 * Need to display craftable items along with the rest, crafting system will need some work first.
     * Press left-alt to hide totals and display a 'C' for craftables.
 
+--------------------------------------------------------------------------------
 Bugs:
 * Too many, thanks lua.
 * Got a very strange "process library exception handler crashed: table: <table ID>" when pulling an item out of input inventory (that was unable to insert into storage cuz full).
 
-
+--------------------------------------------------------------------------------
 New System Layout:
 * Storage server controls transposer network.
 * Crafting server controls auto-crafting jobs and drone flight plans.
