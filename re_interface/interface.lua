@@ -17,6 +17,7 @@ local text = require("text")
 local thread = require("thread")
 local wnet = require("wnet")
 
+-- Checks if given point lies within the bounds (inclusive).
 local function isPointInRectangle(xPoint, yPoint, x, y, width, height)
   return xPoint >= x and xPoint < x + width and yPoint >= y and yPoint < y + height
 end
@@ -33,7 +34,7 @@ end
 
 local Gui = {}
 
-function Gui:new(obj, storageItems, storageServerAddress)
+function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingServerAddress)
   obj = obj or {}
   setmetatable(obj, self)
   self.__index = self
@@ -47,6 +48,7 @@ function Gui:new(obj, storageItems, storageServerAddress)
   self.LAZY_DRAW_INTERVAL = 0.05
   
   self.drawAreaItemRequested = false
+  self.keyShowCraftingPressed = false
   
   self.palette = {}
   self.palette.bg = 0
@@ -180,8 +182,11 @@ function Gui:new(obj, storageItems, storageServerAddress)
   self.button.labelType.height = 3
   self.button.labelType.val = 1
   
-  self:setStorageItems(storageItems)
+  self.storageItems = storageItems
   self.storageServerAddress = storageServerAddress
+  self.recipeItems = recipeItems
+  self.craftingServerAddress = craftingServerAddress
+  self:rebuildSortingKeys()
   
   return obj
 end
@@ -372,12 +377,28 @@ function Gui:drawAreaItem(force)
     
     -- If entry corresponds to an item (it's not a blank one near the end) then add it to textTable2 for drawing. Otherwise we just add a blank line.
     if itemIndex >= 1 and itemIndex <= #self.filteredItems then
+      -- Find the display name. Usually corresponds to a storageItems entry except if we have zero of that item and it's craftable.
       local itemName = self.filteredItems[itemIndex]
-      local displayName = (self.button.labelType.val == 1 and self.storageItems[itemName].label .. (string.sub(itemName, #itemName) == "n" and " (+NBT)" or "") or itemName)
+      local label, total
+      if self.storageItems[itemName] then
+        label = self.storageItems[itemName].label
+        total = self.storageItems[itemName].total
+      else
+        label = self.recipeItems[itemName]
+        total = 0
+      end
+      local displayName = (self.button.labelType.val == 1 and label .. (string.sub(itemName, #itemName) == "n" and " (+NBT)" or "") or itemName)
       fgColor = self.palette["mod" .. (djb2StringHash(string.match(itemName, "[^:]+")) % 6 + 1)]
       
-      -- Append to the totalsLine with the item count and some spacing.
-      local totalFormatted = self.storageItems[itemName].total < 1000000 and string.format("%5d", self.storageItems[itemName].total) or "######"
+      -- Append to the totalsLine with the item count and some spacing. If the item is craftable and we have zero total or a key is held, show the "craft" symbol.
+      local totalFormatted
+      if total > 0 and not self.keyShowCraftingPressed then
+        totalFormatted = total < 1000000 and string.format("%5d", total) or "######"
+      elseif not self.recipeItems[itemName] then
+        totalFormatted = "     "
+      else
+        totalFormatted = "Craft"
+      end
       totalsLine = totalsLine .. text.padRight(totalFormatted, x ~= self.area.numItemColumns - 1 and self.area["item" .. x + 2].x - itemArea.x or itemArea.width)
       
       -- Add item label to the text table (layer 2).
@@ -428,21 +449,26 @@ function Gui:draw()
   self:drawScrollBar()
 end
 
-function Gui:getSortingKeyName(itemName)
+function Gui:getSortingKeyName(itemName, label, total)
   if self.button.sortType.val == 1 then    -- Sort by name.
-    return self.storageItems[itemName].label .. "," .. itemName
+    return label .. "," .. itemName
   elseif self.button.sortType.val == 2 then    -- Sort by ID.
     return itemName
   else    -- Sort by quantity.
     -- Really neat idea to sort string numbers http://notebook.kulchenko.com/algorithms/alphanumeric-natural-sorting-for-humans-in-lua
-    return string.format("%03d%s", #tostring(self.storageItems[itemName].total), tostring(self.storageItems[itemName].total)) .. "," .. itemName
+    return string.format("%03d%s", #tostring(total), tostring(total)) .. "," .. itemName
   end
 end
 
 function Gui:rebuildSortingKeys()
   self.sortingKeys = {}
   for itemName, itemDetails in pairs(self.storageItems) do
-    self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName)
+    self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName, self.storageItems[itemName].label, self.storageItems[itemName].total)
+  end
+  for itemName, itemLabel in pairs(self.recipeItems) do
+    if not self.storageItems[itemName] then
+      self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName, itemLabel, 0)
+    end
   end
   self:updateSortingKeys()
 end
@@ -452,12 +478,22 @@ function Gui:setStorageItems(storageItems)
   self:rebuildSortingKeys()
 end
 
-function Gui:addSortingKey(itemName)
-  self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName)
+function Gui:setRecipeItems(recipeItems)
+  self.recipeItems = recipeItems
+  self:rebuildSortingKeys()
 end
 
-function Gui:removeSortingKey(itemName)
-  local keyName = self:getSortingKeyName(itemName)
+function Gui:addedStorageItem(itemName)
+  if not self.recipeItems[itemName] then
+    self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName, self.storageItems[itemName].label, self.storageItems[itemName].total)
+  end
+end
+
+function Gui:removedStorageItem(itemName)
+  if self.recipeItems[itemName] then
+    return
+  end
+  local keyName = self:getSortingKeyName(itemName, self.storageItems[itemName].label, self.storageItems[itemName].total)
   
   -- Search for the key in sortingKeys and remove it (replace with last element).
   for i, v in ipairs(self.sortingKeys) do
@@ -493,7 +529,7 @@ function Gui:updateFilteredItemsUnsafe()
       if string.find(string.lower(itemName), filterString, 1, plainMatch) then
         self.filteredItems[#self.filteredItems + 1] = itemName
       end
-    elseif string.find(string.lower(self.storageItems[itemName].label), filterString, 1, plainMatch) then
+    elseif string.find(string.lower(self.storageItems[itemName] and self.storageItems[itemName].label or self.recipeItems[itemName]), filterString, 1, plainMatch) then
       self.filteredItems[#self.filteredItems + 1] = itemName
     end
   end
@@ -556,6 +592,18 @@ end
 
 function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
   --print("handleKeyDown", keyboardAddress, char, code, playerName)
+  if keyboard.isControl(char) then
+    if code == keyboard.keys.lmenu then
+      if not self.keyShowCraftingPressed then
+        self:drawAreaItem()
+      end
+      self.keyShowCraftingPressed = true
+    elseif code == keyboard.keys.tab then
+      self.textBox.selected = not self.textBox.selected
+      self:drawTextBox()
+    end
+  end
+  
   if self.textBox.selected then
     if keyboard.isControl(char) then
       if code == keyboard.keys.back then
@@ -584,9 +632,6 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
         self:setTextBoxCursor(math.min(self.textBox.cursor + 1, #self.textBox.contents + 1))
       elseif code == keyboard.keys["end"] then
         self:setTextBoxCursor(#self.textBox.contents + 1)
-      elseif code == keyboard.keys.tab then
-        self.textBox.selected = false
-        self:drawTextBox()
       end
     else
       self.textBox.contents = string.sub(self.textBox.contents, 1, self.textBox.cursor - 1) .. string.char(char) .. string.sub(self.textBox.contents, self.textBox.cursor)
@@ -604,9 +649,6 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
         self.scrollBar.scroll = self.scrollBar.maxScroll
         self:drawScrollBar()
         self:drawAreaItem()
-      elseif code == keyboard.keys.tab then
-        self.textBox.selected = true
-        self:drawTextBox()
       end
     elseif char == string.byte("p") then
       self:toggleButtonFilterType()
@@ -622,6 +664,14 @@ end
 
 function Gui:handleKeyUp(keyboardAddress, char, code, playerName)
   --print("handleKeyUp", keyboardAddress, char, code, playerName)
+  if keyboard.isControl(char) then
+    if code == keyboard.keys.lmenu then
+      if self.keyShowCraftingPressed then
+        self:drawAreaItem()
+      end
+      self.keyShowCraftingPressed = false
+    end
+  end
 end
 
 function Gui:handleTouch(screenAddress, x, y, button, playerName)
@@ -656,6 +706,8 @@ function Gui:handleScroll(screenAddress, x, y, direction, playerName)
   self:drawAreaItem()
 end
 
+
+
 local function main()
   local threadSuccess = false
   -- Captures the interrupt signal to stop program.
@@ -663,21 +715,26 @@ local function main()
     event.pull("interrupted")
   end)
   
-  local storageServerAddress, storageItems, gui
+  local storageItems, storageServerAddress, recipeItems, craftingServerAddress, gui
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
     modem.open(COMMS_PORT)
     wnet.debug = false
     
+    -- Contact the storage server.
     local attemptNumber = 1
+    local lastAttemptTime = 0
     while not storageServerAddress do
-      term.clearLine()
-      io.write("Trying to contact storage controller on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
-      
-      wnet.send(modem, nil, COMMS_PORT, "stor_discover,")
-      local address, port, data = wnet.receive(2)
-      if address and port == COMMS_PORT then
+      if computer.uptime() >= lastAttemptTime + 2 then
+        lastAttemptTime = computer.uptime()
+        term.clearLine()
+        io.write("Trying to contact storage server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
+        wnet.send(modem, nil, COMMS_PORT, "stor_discover,")
+        attemptNumber = attemptNumber + 1
+      end
+      local address, port, data = wnet.receive(0.1)
+      if port == COMMS_PORT then
         local dataType = string.match(data, "[^,]*")
         data = string.sub(data, #dataType + 2)
         if dataType == "craftinter_item_list" then
@@ -685,14 +742,36 @@ local function main()
           storageServerAddress = address
         end
       end
-      attemptNumber = attemptNumber + 1
+    end
+    io.write("\nSuccess.\n")
+    
+    -- Contact the crafting server.
+    attemptNumber = 1
+    lastAttemptTime = 0
+    while not craftingServerAddress do
+      if computer.uptime() >= lastAttemptTime + 2 then
+        lastAttemptTime = computer.uptime()
+        term.clearLine()
+        io.write("Trying to contact crafting server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
+        wnet.send(modem, nil, COMMS_PORT, "craft_discover,")
+        attemptNumber = attemptNumber + 1
+      end
+      local address, port, data = wnet.receive(0.1)
+      if port == COMMS_PORT then
+        local dataType = string.match(data, "[^,]*")
+        data = string.sub(data, #dataType + 2)
+        if dataType == "inter_recipe_list" then
+          recipeItems = serialization.unserialize(data)
+          craftingServerAddress = address
+        end
+      end
     end
     io.write("\nSuccess.\n")
     
     print(" - items - ")
     tdebug.printTable(storageItems)
     
-    gui = Gui:new(nil, storageItems, storageServerAddress)
+    gui = Gui:new(nil, storageItems, storageServerAddress, recipeItems, craftingServerAddress)
     gui:draw()
     
     threadSuccess = true
@@ -720,7 +799,7 @@ local function main()
           local itemsDiff = serialization.unserialize(data)
           for itemName, diff in pairs(itemsDiff) do
             if diff.total == 0 then
-              gui:removeSortingKey(itemName)
+              gui:removedStorageItem(itemName)
               storageItems[itemName] = nil
             elseif storageItems[itemName] then
               storageItems[itemName].total = diff.total
@@ -728,7 +807,7 @@ local function main()
               storageItems[itemName] = {}
               storageItems[itemName].label = diff.label
               storageItems[itemName].total = diff.total
-              gui:addSortingKey(itemName)
+              gui:addedStorageItem(itemName)
             end
           end
           gui:updateSortingKeys()
@@ -741,6 +820,10 @@ local function main()
           storageServerAddress = address
           gui:setStorageItems(storageItems)
           gui.storageServerAddress = address
+        elseif dataType == "inter_craft_started" then
+          -- TODO #######################################################################################################################################################################
+        elseif dataType == "inter_recipe_list" then
+          
         end
       end
     end
@@ -780,7 +863,7 @@ local function main()
   end)
   
   --[[
-  -- Continuously get user input and send commands to storage controller.
+  -- Continuously get user input and send commands to storage server.
   local commandThread = thread.create(function()
     while true do
       io.write("> ")

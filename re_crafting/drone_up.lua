@@ -35,7 +35,7 @@ local function moveTo(x, y, z, threshold, resetOnFail)
       drone.move(-x + pos.x, -y + pos.y, -z + pos.z)
       if resetOnFail then
         while drone.getOffset() >= threshold do
-          computer.pullSignal(0.1)
+          coroutine.yield()
         end
       end
       return false
@@ -47,7 +47,7 @@ local function moveTo(x, y, z, threshold, resetOnFail)
     offsetHistory[offsetIndex] = offset
     offsetIndex = offsetIndex % #offsetHistory + 1
     
-    computer.pullSignal(0.1)
+    coroutine.yield()
   end
   
   pos.x = x
@@ -56,11 +56,34 @@ local function moveTo(x, y, z, threshold, resetOnFail)
   return true
 end
 
-computer.beep(500, 0.1)
-computer.beep(300, 0.1)
-computer.beep(500, 0.1)
+local function main()
+  computer.beep(600, 0.05)
+  computer.beep(800, 0.05)
+  
+  local flightThread = coroutine.create(function()
+    --while true do
+      moveTo(5123, 46, 6)
+      moveTo(5123, 42, 6)
+    --end
+  end)
+  
+  while true do
+    local ev = {computer.pullSignal(0.05)}
+    
+    if coroutine.status(flightThread) == "dead" then
+      break
+    end
+    local status, msg = coroutine.resume(flightThread)
+    if not status then
+      computer.beep(300, 0.2)
+      computer.beep(300, 0.2)
+      wnet.send(modem, nil, COMMS_PORT, "drone_runtime_error," .. msg)
+      break
+    end
+  end
+  
+  computer.beep(800, 0.05)
+  computer.beep(600, 0.05)
+end
 
-wnet.send(modem, nil, COMMS_PORT, "Here have some datas")
-
-moveTo(5123, 46, 6)
-moveTo(5123, 42, 6)
+main()

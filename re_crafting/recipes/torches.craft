@@ -1,35 +1,37 @@
 
 # the craft station acts like a special station, material numbers go on right side for slot index.
 station craft
-in <x> <y> <z> <north/south/east/west>
+    in 0 0 -1 down
+end
 
 station craft
-in <x> <y> <z> <north/south/east/west>
+    in 0 0 -2 down
+end
 
 craft:
-4 minecraft:planks
+4 minecraft:planks "Oak Wood Planks"
 with
 minecraft:log 1
 
 craft:
-4 minecraft:stick
+4 minecraft:stick "Stick"
 with
 minecraft:planks 1 4
 
 craft:
-4 minecraft:torch
+4 minecraft:torch "Torch"
 with
 minecraft:coal 1
 minecraft:stick 4
 
 craft:
-4 minecraft:torch
+4 minecraft:torch "Torch"
 with
 minecraft:coal/1 1
 minecraft:stick 4
 
 craft:
-1 minecraft:redstone_torch
+1 minecraft:redstone_torch  "Redstone Torch"
 with
 minecraft:redstone 1
 minecraft:stick 4

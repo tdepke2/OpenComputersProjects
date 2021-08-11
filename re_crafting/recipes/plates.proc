@@ -1,23 +1,28 @@
 
 # station can have a different output point, a path to get back to storage, and an average time per unit.
 # the measured average time per unit is tracked in separate file.
+#station <station name>
+#    in <x> <y> <z> <down/up/north/south/west/east>
+#    [out <x> <y> <z> <down/up/north/south/west/east>]
+#    [path <x> <y> <z>]
+#    [time <average seconds for 1 unit>]
+#    # sequential crafts one at a time
+#    # bulk crafts in groups and waits for completion until sending different type
+#    [type sequential/bulk]
+#end
+
 station metal_press
-in <x> <y> <z> <north/south/east/west>
-[out <x> <y> <z> <north/south/east/west>]
-[path <x> <y> <z>]
-[time <average seconds for 1 unit>]
-# sequential crafts one at a time
-# bulk crafts in groups and waits for completion until sending different type
-[type sequential/bulk]
+    in 0 0 0 down
+end
 
 # copper plate
 metal_press:
-1 immersiveengineering:metal/30
+1 immersiveengineering:metal/30 "Copper Plate"
 with
 1 immersiveengineering:metal/0
 
 # lead plate
 metal_press:
-1 immersiveengineering:metal/32
+1 immersiveengineering:metal/32 "Lead Plate"
 with
 1 immersiveengineering:metal/2

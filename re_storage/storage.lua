@@ -121,7 +121,6 @@ local function loadRoutingConfig(filename)
   -- Open file and for each line trim whitespace, skip empty lines, and lines beginning with comment symbol '#'. Parse the rest.
   local file = io.open(filename, "r")
   local lineNum = 1
-  local parserStage = 1
   for line in file:lines() do
     line = text.trim(line)
     if line ~= "" and string.byte(line, 1) ~= string.byte("#", 1) then
@@ -802,13 +801,13 @@ local function main()
     event.pull("interrupted")
   end)
   
-  local transposers, routing, storageItems, interfaceServerAddresses
+  local transposers, routing, storageItems, craftInterServerAddresses
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
     modem.open(COMMS_PORT)
     wnet.debug = true
-    interfaceServerAddresses = {}
+    craftInterServerAddresses = {}
     
     transposers, routing = loadRoutingConfig(ROUTING_CONFIG_FILENAME)
     
@@ -855,18 +854,21 @@ local function main()
         data = string.sub(data, #dataType + 2)
         
         --if string.find(dataType, "stor_", 1, true) then
-          -- assume this is an interface??? set interfaceServerAddresses
+          -- assume this is an interface??? set craftInterServerAddresses
         --end
         
         if dataType == "stor_discover" then
-          interfaceServerAddresses[address] = true
-          sendTrimmedStorageItems(interfaceServerAddresses, storageItems)
+          -- Device is searching for this storage server, respond with storage items list.
+          craftInterServerAddresses[address] = true
+          sendTrimmedStorageItems({[address]=true}, storageItems)
         elseif dataType == "stor_insert" then
-          interfaceServerAddresses[address] = true
+          -- Device requested to insert items into the network.
+          craftInterServerAddresses[address] = true
           print("result = ", insertStorage(transposers, routing, storageItems, "input", 1))
-          sendStorageItemsDiff(interfaceServerAddresses, storageItems)
+          sendStorageItemsDiff(craftInterServerAddresses, storageItems)
         elseif dataType == "stor_extract" then
-          interfaceServerAddresses[address] = true
+          -- Device has requested to extract items from network.
+          craftInterServerAddresses[address] = true
           local itemName = string.match(data, "[^,]*")
           local amount = string.match(data, "[^,]*", #itemName + 2)
           if itemName == "" then
@@ -874,7 +876,7 @@ local function main()
           end
           print("extract with item " .. tostring(itemName) .. " and amount " .. amount .. ".")
           print("result = ", extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, tonumber(amount)))
-          sendStorageItemsDiff(interfaceServerAddresses, storageItems)
+          sendStorageItemsDiff(craftInterServerAddresses, storageItems)
         elseif dataType == "stor_debug" then
           tdebug.printTable(storageItems)
         end
@@ -901,7 +903,7 @@ local function main()
           if next(item) ~= nil then
             local success, amountTransferred = insertStorage(transposers, routing, storageItems, "input", 1, slot)
             print("result = ", success, amountTransferred)
-            sendStorageItemsDiff(interfaceServerAddresses, storageItems)
+            sendStorageItemsDiff(craftInterServerAddresses, storageItems)
             os.sleep(0)    -- Yield to let other threads do I/O with storage if they need to.
           end
           item = itemIter()
