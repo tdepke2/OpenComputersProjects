@@ -483,12 +483,16 @@ function Gui:setRecipeItems(recipeItems)
   self:rebuildSortingKeys()
 end
 
+-- Modify storage keys to reflect new item added to storage. Do nothing if key
+-- already exists from a recipe.
 function Gui:addedStorageItem(itemName)
   if not self.recipeItems[itemName] then
     self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName, self.storageItems[itemName].label, self.storageItems[itemName].total)
   end
 end
 
+-- Modify storage keys to reflect item going away from storage. Again, we skip
+-- if a recipe exists for the item.
 function Gui:removedStorageItem(itemName)
   if self.recipeItems[itemName] then
     return
@@ -674,6 +678,14 @@ function Gui:handleKeyUp(keyboardAddress, char, code, playerName)
   end
 end
 
+function Gui:requestItem(itemName)
+  if self.recipeItems[itemName] and (self.keyShowCraftingPressed or not self.storageItems[itemName]) then
+    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_check_recipe," .. itemName .. ",")
+  else
+    wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor_extract," .. itemName .. ",")
+  end
+end
+
 function Gui:handleTouch(screenAddress, x, y, button, playerName)
   --print("handleTouch", screenAddress, x, y, button, playerName)
   x = math.floor(x)
@@ -693,7 +705,7 @@ function Gui:handleTouch(screenAddress, x, y, button, playerName)
         local itemIndex = (self.button.sortDir.val == 1 and 1 or #self.filteredItems) + self.scrollBar.scroll * self.area.numItemColumns * self.button.sortDir.val
         itemIndex = itemIndex + ((y - itemArea.y) * self.area.numItemColumns + (i - 1)) * self.button.sortDir.val
         if self.filteredItems[itemIndex] then
-          wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor_extract," .. self.filteredItems[itemIndex] .. ",")
+          self:requestItem(self.filteredItems[itemIndex])
         end
       end
     end

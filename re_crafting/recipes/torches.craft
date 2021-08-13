@@ -31,7 +31,67 @@ minecraft:coal/1 1
 minecraft:stick 4
 
 craft:
-1 minecraft:redstone_torch  "Redstone Torch"
+1 minecraft:redstone_torch "Redstone Torch"
 with
 minecraft:redstone 1
 minecraft:stick 4
+
+
+
+# crafting 1 stuff:impossible with 0 available -> not possible
+# crafting 5 stuff:impossible with 0 available -> not possible
+# crafting 1 stuff:nou with 0 available -> not possible
+# crafting 1 stuff:nou with 1 stuff:impossible available -> get 1 stuff:nou, 1 stuff:impossible
+# crafting 100 stuff:nou with 1 stuff:impossible available -> get 100 stuff:nou, 1 stuff:impossible
+# 
+craft:
+1 stuff:impossible "impossible"
+1 stuff:nou "no u"
+with
+stuff:impossible 1
+
+
+# crafting 1 stuff:recurse with 0 available -> not possible
+# crafting 1 stuff:recurse with 1 stuff:recurse available -> not possible
+# crafting 1 stuff:recurse with 2 stuff:recurse available -> get 3 stuff:recurse, 1 stuff:metoo
+# crafting 6 stuff:recurse with 2 stuff:recurse available -> get 6 stuff:recurse, 4 stuff:metoo
+# 
+craft:
+3 stuff:recurse "recurse"
+1 stuff:metoo "me too"
+with
+stuff:recurse 1 2
+
+
+# crafting 1 stuff:recurse2 with 0 available -> not possible
+# crafting 1 stuff:recurse2 with 1 stuff:recurse2 available -> not possible
+# crafting 1 stuff:recurse2 with 2 stuff:recurse2 available -> not possible
+# crafting 1 stuff:recurse2 with 2 stuff:recurse2, 1 stuff:methree available -> get 3 stuff:recurse
+# crafting 6 stuff:recurse2 with 2 stuff:recurse2 available -> not possible, need 4 stuff:methree
+# 
+craft:
+3 stuff:recurse2 "recurse 2"
+with
+stuff:recurse2 1 2
+stuff:methree 3
+
+
+# crafting 1 stuff:cycle1 with 0 available -> not possible
+# crafting 1 stuff:chain with 0 available -> not possible
+# crafting 5 stuff:chain with 1 stuff:cycle1 available -> get 5 stuff:chain, 1 stuff:cycle1
+# 
+craft:
+1 stuff:cycle1 "cycle 1"
+1 stuff:chain "chain"
+with
+stuff:cycle2 1
+
+craft:
+1 stuff:cycle2 "cycle 2"
+with
+stuff:cycle3 1
+
+craft:
+1 stuff:cycle3 "cycle 3"
+with
+stuff:cycle1 1
