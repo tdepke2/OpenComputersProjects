@@ -47,6 +47,8 @@ local function stringToInteger(s, minVal)
   return x
 end
 
+-- Parse a recipe file containing information about crafting stations and the
+-- recipes made there (item inputs and outputs).
 local function loadRecipes(stations, recipes, filename)
   checkArg2(1, stations, "table", 2, recipes, "table", 3, filename, "string")
   
@@ -238,16 +240,38 @@ local function verifyRecipes(stations, recipes)
   end
 end
 
+-- Searches for the sequence of recipes and their amounts needed to craft the
+-- target item. This uses a recursive algorithm that walks the dependency graph
+-- and tries each applicable recipe for the currently needed item one at a time.
+-- Returns a string status ("ok", "missing", etc), two table arrays containing
+-- the sequence of recipe indices and the amount of each recipe to craft, and a
+-- third table that matches required items to their amounts (using negative
+-- values for output items).
+-- Currently this algorithm is not perfect, auto-crafting has been proven to be
+-- NP-hard so there is no perfect solution that exists (see
+-- https://squiddev.github.io/ae-sat/). Recipes that are recursive (an item is
+-- crafted with itself, or a chain like A->B, B->C, C->A) and recipes that
+-- should be split to make the item (need 8 torches but only have 1 coal and 1
+-- charcoal) can not be solved properly right now.
+-- 
+-- FIXME if have time, improve this to handle the above drawbacks. ##############################################################################
 local function solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   checkArg2(1, stations, "table", 2, recipes, "table", 3, storageItems, "table", 4, itemName, "string", 5, amount, "number")
   local defaultZeroMeta = {__index = function() return 0 end}
   local requiredItems = {}
   setmetatable(requiredItems, defaultZeroMeta)
-  local remainingRecipes = {[itemName]=amount}
-  setmetatable(remainingRecipes, defaultZeroMeta)
   
+  -- Sequence of recipe name, index, and amount we need to craft to make the item.
+  -- Beginning of array is the requested item and end of array is the item at the bottom of the dependency chain.
+  local craftNames = {itemName}
+  local craftIndices = {}
+  local craftAmounts = {amount}
   
-  local bestCraftingAmount = math.huge    -- Best minimum number of items to craft found thus far.
+  local resultStatus, resultIndices, resultBatches, resultItems
+  
+  --local bestCraftingTotal = math.huge    -- Best minimum number of items to craft found thus far.
+  local numMissingItems = 0
+  local bestMissingItems = math.huge
   
   --local recipeStack = common.Deque:new()
   --while not recipeStack:empty() do
@@ -256,17 +280,19 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
   
   print("crafting " .. amount .. " of " .. itemName)
   
-  local function recursiveBuild(spacing)
-    spacing = spacing or ""
-    print(spacing .. "recursiveBuild()")
-    local recipeName, recipeAmount = next(remainingRecipes)
-    for _, idx in ipairs(recipes[recipeName]) do
-      print(spacing .. "trying recipe " .. idx .. " for " .. recipeName)
+  --local MIX = false
+  
+  local function recursiveSolve(spacing, index)
+    assert(index < 50, "recipe too complex or not possible")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
+    print(spacing .. "recursiveSolve(" .. index .. ")")
+    for _, recipeIndex in ipairs(recipes[craftNames[index]]) do
+      print(spacing .. "trying recipe " .. recipeIndex .. " for " .. craftNames[index])
+      craftIndices[index] = recipeIndex
       
-      -- If there are multiple recipe options, make a backup copy of requiredItems/remainingRecipes first and restore them later.
-      local requiredItems2, remainingRecipes2
-      if #recipes[recipeName] > 1 then
-        print(spacing .. "multiple recipes, making copy of tables...")
+      -- If there are multiple recipe options, make a backup copy of requiredItems, length of craftNames, and numMissingItems to restore later.
+      local requiredItems2, lastCraftNamesLength, numMissingItems2
+      if #recipes[craftNames[index]] > 1 then
+        print(spacing .. "multiple recipes, making copy of table...")
         
         requiredItems2 = requiredItems
         requiredItems = {}
@@ -275,27 +301,46 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
         end
         setmetatable(requiredItems, defaultZeroMeta)
         
-        remainingRecipes2 = remainingRecipes
-        remainingRecipes = {}
-        for k, v in pairs(remainingRecipes2) do
-          remainingRecipes[k] = v
-        end
-        setmetatable(remainingRecipes, defaultZeroMeta)
+        lastCraftNamesLength = #craftNames
+        numMissingItems2 = numMissingItems
       end
       
       -- Compute amount multiplier as the number of items we need to craft over the number of items we get from the recipe (rounded up).
-      local mult = math.ceil(recipeAmount / recipes[idx].out[recipeName])
+      local mult = math.ceil(craftAmounts[index] / recipes[recipeIndex].out[craftNames[index]])
       
-      -- For each recipe input, add the items to requiredItems and to remainingRecipes as well if we need to craft more of them.
-      for _, input in ipairs(recipes[idx].inp) do
+      --[[
+      -- If mixing, scale the multiplier down to the limiting input in recipe first.
+      if MIX then
+        for _, input in ipairs(recipes[recipeIndex].inp) do
+          local inputName = input[1]
+          local recipeAmount = (recipes[recipeIndex].station and input[2] or #input - 1)
+          local availableAmount = math.max((storageItems[inputName] and storageItems[inputName].total or 0) - requiredItems[inputName], 0)
+          
+          if mult * recipeAmount > availableAmount and recipes[inputName] then
+            mult = math.floor(availableAmount / recipeAmount)
+          end
+        end
+      end
+      --]]
+      
+      -- For each recipe input, add the items to requiredItems and to craftNames/craftAmounts as well if we need to craft more of them.
+      for _, input in ipairs(recipes[recipeIndex].inp) do
         local inputName = input[1]
-        local addAmount = mult * (recipes[idx].station and input[2] or #input - 1)
-        local availableAmount = (storageItems[inputName] and storageItems[inputName].total or 0) - requiredItems[inputName]
+        local addAmount = mult * (recipes[recipeIndex].station and input[2] or #input - 1)
+        local availableAmount = math.max((storageItems[inputName] and storageItems[inputName].total or 0) - requiredItems[inputName], 0)
         
-        -- Add the addAmount minus positive component of availableAmount to remainingRecipes if we need more than what's available and the recipe is known.
-        if addAmount > availableAmount and recipes[inputName] then
-          print(spacing .. "craft " .. addAmount - math.max(availableAmount, 0) .. " more of " .. inputName)
-          remainingRecipes[inputName] = remainingRecipes[inputName] + addAmount - math.max(availableAmount, 0)
+        -- Check if we need more than what's available.
+        if addAmount > availableAmount then
+          if recipes[inputName] then
+            -- Add the addAmount minus availableAmount to craftNames/craftAmounts if the recipe is known.
+            print(spacing .. "craft " .. addAmount - availableAmount .. " more of " .. inputName)
+            craftNames[#craftNames + 1] = inputName
+            craftAmounts[#craftAmounts + 1] = addAmount - availableAmount
+          else
+            -- Recipe not known so this item will prevent crafting, add to numMissingItems.
+            print(spacing .. "missing " .. addAmount - availableAmount .. " of " .. inputName)
+            numMissingItems = numMissingItems + addAmount - availableAmount
+          end
         end
         
         print(spacing .. "require " .. addAmount .. " more of " .. inputName)
@@ -303,7 +348,7 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
       end
       
       -- For each recipe output, remove from requiredItems.
-      for outputName, amount in pairs(recipes[idx].out) do
+      for outputName, amount in pairs(recipes[recipeIndex].out) do
         print(spacing .. "add " .. -mult * amount .. " of output " .. outputName)
         requiredItems[outputName] = requiredItems[outputName] - mult * amount
         if requiredItems[outputName] == 0 then
@@ -312,47 +357,146 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
       end
       
       -- If no more recipes remaining, solution found. Otherwise we do recursive call.
-      remainingRecipes[recipeName] = nil
-      if next(remainingRecipes) == nil then
-        print(spacing .. "found solution")
-        print("requiredItems:")
+      if not craftNames[index + 1] then
+        print(spacing .. "found solution, numMissingItems = " .. numMissingItems)
+        print("requiredItems and craftNames/craftIndices/craftAmounts:")
         tdebug.printTable(requiredItems)
-        local totalCraftingAmount = 0
-        for k, v in pairs(requiredItems) do
-          totalCraftingAmount = totalCraftingAmount + math.max(v - (storageItems[k] and storageItems[k].total or 0), 0)
+        for i = 1, #craftNames do
+          print(craftNames[i] .. " index " .. craftIndices[i] .. " amount " .. craftAmounts[i])
         end
-        print("totalCraftingAmount = " .. totalCraftingAmount)
-        if totalCraftingAmount < bestCraftingAmount then
+        
+        --[[
+        -- Determine the total number of items to craft and compare with the best found so far.
+        local craftingTotal = 0
+        for k, v in pairs(requiredItems) do
+          craftingTotal = craftingTotal + math.max(v - (storageItems[k] and storageItems[k].total or 0), 0)
+        end
+        print("craftingTotal = " .. craftingTotal)
+        --]]
+        -- Check if the total number of missing items is a new low, and update the result if so.
+        if numMissingItems < bestMissingItems then
           print("new best found!!!")
-          bestCraftingAmount = totalCraftingAmount
+          bestMissingItems = numMissingItems
+          if numMissingItems == 0 then
+            resultStatus = "ok"
+          else
+            resultStatus = "missing"
+          end
+          
+          -- Build the result of recipe indices and batch amounts from craftNames/craftIndices/craftAmounts.
+          -- We iterate the craft stuff in reverse and push to the result array, if another instance of the same recipe pops up then we combine it with the previous one.
+          resultIndices = {}
+          resultBatches = {}
+          local indicesMapping = {}
+          local j = 1
+          for i = #craftNames, 1, -1 do
+            local recipeIndex = craftIndices[i]
+            -- Compute the multiplier exactly as we did before.
+            local mult = math.ceil(craftAmounts[i] / recipes[recipeIndex].out[craftNames[i]])
+            
+            -- If this recipe index not discovered yet, add it to the end and update mapping. Otherwise we just add the mult to the existing entry.
+            if not indicesMapping[recipeIndex] then
+              resultIndices[j] = recipeIndex
+              resultBatches[j] = mult
+              indicesMapping[recipeIndex] = j
+            else
+              resultBatches[indicesMapping[recipeIndex]] = resultBatches[indicesMapping[recipeIndex]] + mult
+            end
+            j = j + 1
+          end
+          
+          -- Save the current requiredItems corresponding to the result.
+          resultItems = {}
+          for k, v in pairs(requiredItems) do
+            resultItems[k] = v
+          end
         end
       else
-        recursiveBuild(spacing .. "  ")
+        recursiveSolve(spacing .. "  ", index + 1)
       end
       
-      -- Restore state of requiredItems and remainingRecipes.
-      print(spacing .. "end of recipe loop, restore state")
-      if #recipes[recipeName] > 1 then
+      -- Restore state of requiredItems, craftNames/craftAmounts, and numMissingItems.
+      print(spacing .. "end of recipe, restore state")
+      if requiredItems2 then
         requiredItems = requiredItems2
-        remainingRecipes = remainingRecipes2
-      else
-        remainingRecipes[recipeName] = recipeAmount
+        for i = lastCraftNamesLength + 1, #craftNames do
+          craftNames[i] = nil
+          craftIndices[i] = nil
+          craftAmounts[i] = nil
+        end
+        numMissingItems = numMissingItems2
+        
+        --[[
+        for i = #craftNames, lastCraftNamesLength + 1, -1 do
+          
+        end
+        --]]
       end
     end
   end
-  recursiveBuild()
+  local status, err = pcall(recursiveSolve, "", 1)
+  if not status then
+    return err
+  end
   
-  print("done, requiredItems:")
-  tdebug.printTable(requiredItems)
-  print("remainingRecipes:")
-  tdebug.printTable(remainingRecipes)
+  print("done.")
+  return resultStatus, resultIndices, resultBatches, resultItems
 end
 
 --[[
 
+crafting algorithm v2:
+requiredItems = {}
+craftNames = {itemName}
+craftIndices = {}
+craftAmounts = {amount}
+resultIndices = {}
+resultBatches = {}
+
+get current targetItem/targetAmount from craftNames/craftAmounts at current index
+  for each recipe that makes targetItem do
+    set craftIndices at current index to the recipe index
+    if more than one recipe available
+      make backup copy of requiredItems to restore later
+      make copy of craftNames length
+    
+    multiplier = round_up(targetAmount / recipeAmount)
+    
+    for each recipe input do
+      let addAmount be multiplier * inputAmount
+      add input to craftNames/craftAmounts if addAmount > actualStorageAmount - requiredItems[input] and we have recipe for input
+        this new amount is addAmount - max(actualStorageAmount - requiredItems[input], 0)
+      add input to requiredItems with amount addAmount
+    
+    for each recipe output do
+      add output to requiredItems with amount -1 * multiplier * recipeAmount
+      if requiredItems[output] is zero, remove the entry
+    
+    if next index goes out of bounds of craftNames, we are done
+      check if new best and save it
+    else
+      do recursive call with next index
+    
+    time to restore if we did the backup step at beginning of loop
+      reset requiredItems to the backup
+      remove extra entries added to craftNames/craftIndices/craftAmounts before this loop ran
+
+goal:
+want 3 tables, requiredItems, resultIndices, and resultBatches
+requiredItems =   {torch=-16, coal=4, stick=0, planks=-2, log=1}
+resultIndices = {<planks>, <stick>, <torch>}
+resultBatches = {       1,       1,       4}
+
 edge cases:
 crafting requested for a non-craftable item?
-recipe impossible to craft? (crafting 1 of x requires 1 of x not possible, but crafting 4 of x with 1 of x may be possible)
+recipe impossible to craft? (crafting 1 of x requires 1 of x not possible, but crafting 4 of x with 1 of x may be possible).
+can recipes be mixed to craft the item? with torch example, if we have 2 coal and 2 charcoal we can make 16 torches.
+  currently this case will not work with the algorithm.
+
+new algorithm idea:
+make a memoization table of recipe ratios
+8 stick from 1 log
+1 stick from 1/8 log? (probably doesn't work, what if we had 2 ways to get planks from log? now we can't say that 1/8 log from this recipe and 7/8 from another recipe really add up)
 
 ex:
 16 torch
@@ -366,6 +510,63 @@ ex:
         Found a potential solution.
   no coal, try charcoal recipe
   ...
+
+ex:
+20 nou with 1 impossible
+{}
+{nou}
+{ 20}
+  try nou recipe
+  need 20 impossible, only have 1
+  get 1 nou, 1 impossible
+  {nou=-1, imp=0}
+  {nou, imp}
+  { 20,   1}
+  craft 1 impossible
+    try impossible recipe
+    get 1 nou, 1 impossible
+    craft 1 impossible
+      try impossible recipe
+      ...
+
+ex:
+16 torch, have 1 coal, have 3 charcoal
+{}
+{torch}
+{   16}
+  {torch=-4, coal=1, stick=1}
+  {torch, stick}
+  {   16,     1}
+    {torch=-4, coal=1, stick=-3, planks=2}
+    {torch, stick, planks}
+    {   16,     1,      2}
+      {torch=-4, coal=1, stick=-3, planks=-2, log=1}
+      {torch, stick, planks}
+      {   16,     1,      2}
+  {torch=-16, coal=1, stick=-3, planks=-2, log=1, charcoal=3}
+  {torch, torch, stick, planks}
+  {   12,     4,     1,      2}
+
+when we get multiple recipes we can try: mix of them, then only first/second/etc.
+
+ex:
+5 chain, have 1 cycle1
+inp {}
+out {}
+cra {chain}
+amo {    5}
+  inp {cycle2=5}
+  out {cycle1=5, chain=5}
+  cra {chain, cycle2}
+  amo {    5,      5}
+    inp {cycle2=5, cycle3=5}
+    out {cycle1=5, chain=5, cycle2=5}
+    cra {chain, cycle2, cycle3}
+    amo {    5,      5,      5}
+      inp {cycle2=5, cycle3=5, cycle1=5}
+      out {cycle1=5, chain=5, cycle2=5, cycle3=5}
+      cra {chain, cycle2, cycle3, cycle1}
+      amo {    5,      5,      5,      5}
 
 requiredItems = {}
 remainingRecipes = {[itemName]=amount}
@@ -432,8 +633,8 @@ targetItem = torch 16
     input = stick
 
 new idea instead of remainingRecipes:
-recipeItems   = {torch, charcoal, stick, log, planks, log}  (log made from wood essence)
-recipeAmounts = {   16,        4,     4,   4,      2,   1}
+craftNames   = {torch, charcoal, stick, log, planks, log}  (log made from wood essence)
+craftAmounts = {   16,        4,     4,   4,      2,   1}
 now run collation over tables to find crafting steps required. can also group itemName and amount together if needed.
   by collation, we risk creating a scenario where the item needs itself to craft and we don't have all the required amount, need to handle this by confirming we have all ingredients.
 we iterate tables in reverse to find the sequence of steps to run in parallel.
@@ -496,7 +697,21 @@ local function main()
     end
     io.write("\nSuccess.\n")
     
-    solveDependencyGraph(stations, recipes, storageItems, "minecraft:torch/0", 16)
+    local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, "minecraft:torch/0", 16)
+    
+    --storageItems["stuff:impossible/0"] = {}
+    --storageItems["stuff:impossible/0"].label = "impossible"
+    --storageItems["stuff:impossible/0"].total = 1
+    --local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, "stuff:nou/0", 100)
+    
+    print("status = " .. status)
+    if status == "ok" or status == "missing" then
+      print("recipeIndices/recipeBatches and requiredItems")
+      for i = 1, #recipeIndices do
+        print(recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") -> " .. recipeBatches[i])
+      end
+      tdebug.printTable(requiredItems)
+    end
     
     threadSuccess = true
   end)

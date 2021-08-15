@@ -8,6 +8,8 @@ station craft
     in 0 0 -2 down
 end
 
+# crafting 16 minecraft:torch with 1 coal and 3 charcoal (without charcoal recipe) -> get 16 torch
+# 
 craft:
 4 minecraft:planks "Oak Wood Planks"
 with
@@ -35,7 +37,6 @@ craft:
 with
 minecraft:redstone 1
 minecraft:stick 4
-
 
 
 # crafting 1 stuff:impossible with 0 available -> not possible
@@ -95,3 +96,21 @@ craft:
 1 stuff:cycle3 "cycle 3"
 with
 stuff:cycle1 1
+
+
+# crafting 1 stuff:iron_alloy with 0 available -> not possible
+# crafting 1 stuff:iron_alloy with 2 stuff:iron_alloy available -> not possible
+# crafting 1 stuff:iron_alloy with 1 stuff:slag available -> not possible
+# crafting 1 stuff:iron_alloy with 2 stuff:iron_alloy and 1 stuff:slag available -> get 3 stuff:iron_alloy
+# crafting 10 stuff:iron_alloy with 2 stuff:iron_alloy available -> not possible, need 8 stuff:slag
+# 
+craft:
+3 stuff:iron_alloy "iron alloy"
+with
+stuff:iron_alloy 1 2
+stuff:slag 3
+
+
+# (a or !b or !c) and (a or !b or c) -> require 1 a only
+# (a or !b or !d) and (!a or b or !c) and (b or !c or d) -> require b and !d only
+

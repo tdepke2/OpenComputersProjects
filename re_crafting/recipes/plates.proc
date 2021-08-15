@@ -15,14 +15,21 @@ station metal_press
     in 0 0 0 down
 end
 
-# copper plate
+station furnace
+    in 0 5 0 right
+end
+
 metal_press:
 1 immersiveengineering:metal/30 "Copper Plate"
 with
 1 immersiveengineering:metal/0
 
-# lead plate
 metal_press:
 1 immersiveengineering:metal/32 "Lead Plate"
 with
 1 immersiveengineering:metal/2
+
+furnace:
+1 minecraft:coal/1 "Charcoal"
+with
+1 minecraft:log
