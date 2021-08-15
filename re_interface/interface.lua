@@ -515,30 +515,71 @@ function Gui:updateSortingKeys()
   self:drawAreaItem()
 end
 
+-- Helper function for updateFilteredItems(). May throw exception if text box
+-- contents has a malformed string pattern.
 function Gui:updateFilteredItemsUnsafe()
-  local filterString = string.lower(text.trim(self.textBox.contents))
+  local filterStrings = {string.lower(text.trim(self.textBox.contents))}
+  
   local useInternalName = false
-  if string.sub(filterString, 1, 1) == "#" then
-    filterString = string.sub(filterString, 2)
+  local useModName = false
+  if string.sub(filterStrings[1], 1, 1) == "&" then
+    -- If filter text is prefixed with an '&' symbol, we filter by internal name.
+    filterStrings[1] = string.sub(filterStrings[1], 2)
     useInternalName = true
+  elseif string.sub(filterStrings[1], 1, 1) == "@" then
+    -- If filter text is prefixed with an '@' symbol, we filter the first filter text by mod name.
+    filterStrings[1] = string.sub(filterStrings[1], 2)
+    useModName = true
   end
+  
+  -- If filter type button is set to fixed, match the text exactly (no pattern matching). Otherwise we split the filter text at spaces.
   local plainMatch = false
   if self.button.filterType.val == 2 then
     plainMatch = true
+  else
+    filterStrings = text.tokenize(filterStrings[1])
   end
   
+  -- Iterate through each sorting key and add the item name to self.filteredItems if it matches the filter.
   for _, keyName in ipairs(self.sortingKeys) do
     local itemName = string.match(keyName, "[^,]+$") or keyName
+    local findString
     if useInternalName then
-      if string.find(string.lower(itemName), filterString, 1, plainMatch) then
+      findString = string.lower(itemName)
+    elseif useModName then
+      findString = string.lower(string.match(itemName, "[^:]+"))
+    else
+      findString = string.lower(self.storageItems[itemName] and self.storageItems[itemName].label or self.recipeItems[itemName])
+    end
+    
+    -- For plainMatch we match the string exactly, otherwise we match against each filter string in the array.
+    if plainMatch then
+      if string.find(findString, filterStrings[1], 1, true) then
         self.filteredItems[#self.filteredItems + 1] = itemName
       end
-    elseif string.find(string.lower(self.storageItems[itemName] and self.storageItems[itemName].label or self.recipeItems[itemName]), filterString, 1, plainMatch) then
-      self.filteredItems[#self.filteredItems + 1] = itemName
+    else
+      local foundMatch = true
+      for i, filterString in ipairs(filterStrings) do
+        -- Switch back to external names if on second filter text. This matches JEI search behavior a bit better.
+        if i == 2 and useModName then
+          findString = string.lower(self.storageItems[itemName] and self.storageItems[itemName].label or self.recipeItems[itemName])
+        end
+        
+        if not string.find(findString, filterString) then
+          foundMatch = false
+          break
+        end
+      end
+      if foundMatch then
+        self.filteredItems[#self.filteredItems + 1] = itemName
+      end
     end
   end
 end
 
+-- Updates the self.filteredItems table in the case that the text box contents
+-- changed. If the updateFilteredItemsUnsafe() call throws an exception then the
+-- resulting self.filteredItems may be empty or incomplete (this is fine).
 function Gui:updateFilteredItems()
   -- If pattern matching in string.find() throws an exception, suppress it and continue.
   self.filteredItems = {}
