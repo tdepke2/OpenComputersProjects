@@ -32,6 +32,25 @@ local function djb2StringHash(s)
   return h
 end
 
+-- Wrapper for gpu.setBackground() that prevents the direct (slow) GPU call if
+-- background already set to the desired color.
+local function gpuSetBackground(color, isPaletteIndex)
+  isPaletteIndex = isPaletteIndex or false
+  local currColor, currIsPalette = gpu.getBackground()
+  if color ~= currColor or isPaletteIndex ~= currIsPalette then
+    gpu.setBackground(color, isPaletteIndex)
+  end
+end
+
+-- Same as gpuSetBackground() but for foreground color.
+local function gpuSetForeground(color, isPaletteIndex)
+  isPaletteIndex = isPaletteIndex or false
+  local currColor, currIsPalette = gpu.getForeground()
+  if color ~= currColor or isPaletteIndex ~= currIsPalette then
+    gpu.setForeground(color, isPaletteIndex)
+  end
+end
+
 local Gui = {}
 
 function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingServerAddress)
@@ -45,9 +64,13 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   self.TOP_ROW_HEIGHT = 4
   self.BOTTOM_ROW_HEIGHT = 3
   
+  -- Lazy draw used to batch drawing tasks and limit draw rate for performance.
+  -- The self.drawRequest table acts like a queue of draw calls (important to
+  -- keep the draw calls in the order they arrive).
   self.LAZY_DRAW_INTERVAL = 0.05
+  self.drawRequest = {}
   
-  self.drawAreaItemRequested = false
+  -- Press alt key to show craftable items only (hide amounts).
   self.keyShowCraftingPressed = false
   
   self.palette = {}
@@ -188,11 +211,28 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   self.craftingServerAddress = craftingServerAddress
   self:rebuildSortingKeys()
   
+  -- Flush draw queue so that things don't draw out-of-order in the first call to Gui:draw().
+  self.drawRequest = {}
+  
   return obj
 end
 
-function Gui:drawButtonFilterType()
-  gpu.setBackground(self.palette.button, true)
+-- Queue a draw function call to self.drawRequest array. Drawable functions in
+-- the GUI use this internally to enable the lazy drawing.
+function Gui:addDrawRequest(drawFunc)
+  for _, v in ipairs(self.drawRequest) do
+    if drawFunc == v then
+      return
+    end
+  end
+  self.drawRequest[#self.drawRequest + 1] = drawFunc
+end
+
+-- Draw button for choosing pattern matching or fixed matching in search box.
+function Gui:drawButtonFilterType(force)
+  if not force then self:addDrawRequest(Gui.drawButtonFilterType) return end
+  gpuSetBackground(self.palette.button, true)
+  gpuSetForeground(self.palette.fg, true)
   gpu.fill(self.button.filterType.x, self.button.filterType.y, self.button.filterType.width, self.button.filterType.height, " ")
   if self.button.filterType.val == 1 then
     gpu.set(self.button.filterType.x, self.button.filterType.y + 1, "Patter")
@@ -202,8 +242,11 @@ function Gui:drawButtonFilterType()
   gpu.set(self.button.filterType.x + 1, self.button.filterType.y + 2, "[P]")
 end
 
-function Gui:drawButtonSortDir()
-  gpu.setBackground(self.palette.button, true)
+-- Draw button for choosing the sorting direction.
+function Gui:drawButtonSortDir(force)
+  if not force then self:addDrawRequest(Gui.drawButtonSortDir) return end
+  gpuSetBackground(self.palette.button, true)
+  gpuSetForeground(self.palette.fg, true)
   gpu.fill(self.button.sortDir.x, self.button.sortDir.y, self.button.sortDir.width, self.button.sortDir.height, " ")
   if self.button.sortDir.val == 1 then
     gpu.set(self.button.sortDir.x + 2, self.button.sortDir.y + 1, "/\\")
@@ -213,8 +256,12 @@ function Gui:drawButtonSortDir()
   gpu.set(self.button.sortDir.x + 1, self.button.sortDir.y + 2, "[D]")
 end
 
-function Gui:drawButtonSortType()
-  gpu.setBackground(self.palette.button, true)
+-- Draw button for choosing the sorting behavior (by name, by internal ID, or by
+-- quantity).
+function Gui:drawButtonSortType(force)
+  if not force then self:addDrawRequest(Gui.drawButtonSortType) return end
+  gpuSetBackground(self.palette.button, true)
+  gpuSetForeground(self.palette.fg, true)
   gpu.fill(self.button.sortType.x, self.button.sortType.y, self.button.sortType.width, self.button.sortType.height, " ")
   if self.button.sortType.val == 1 then
     gpu.set(self.button.sortType.x + 1, self.button.sortType.y + 1, "Name")
@@ -226,8 +273,12 @@ function Gui:drawButtonSortType()
   gpu.set(self.button.sortType.x + 1, self.button.sortType.y + 2, "[S]")
 end
 
-function Gui:drawButtonLabelType()
-  gpu.setBackground(self.palette.button, true)
+-- Draw button for choosing the format item names will use when displayed in the
+-- item list (external or internal names).
+function Gui:drawButtonLabelType(force)
+  if not force then self:addDrawRequest(Gui.drawButtonLabelType) return end
+  gpuSetBackground(self.palette.button, true)
+  gpuSetForeground(self.palette.fg, true)
   gpu.fill(self.button.labelType.x, self.button.labelType.y, self.button.labelType.width, self.button.labelType.height, " ")
   if self.button.labelType.val == 1 then
     gpu.set(self.button.labelType.x, self.button.labelType.y + 1, "Extern")
@@ -237,8 +288,10 @@ function Gui:drawButtonLabelType()
   gpu.set(self.button.labelType.x + 1, self.button.labelType.y + 2, "[L]")
 end
 
-function Gui:drawAreaLeft()
-  gpu.setBackground(self.palette.bg2, true)
+-- Draw left pane.
+function Gui:drawAreaLeft(force)
+  if not force then self:addDrawRequest(Gui.drawAreaLeft) return end
+  gpuSetBackground(self.palette.bg2, true)
   gpu.fill(self.area.left.x, self.area.left.y, self.area.left.width, self.area.left.height, " ")
   self:drawButtonFilterType()
   self:drawButtonSortDir()
@@ -246,39 +299,49 @@ function Gui:drawAreaLeft()
   self:drawButtonLabelType()
 end
 
-function Gui:drawAreaRight()
-  gpu.setBackground(self.palette.crafting, true)
+-- Draw right pane.
+function Gui:drawAreaRight(force)
+  if not force then self:addDrawRequest(Gui.drawAreaRight) return end
+  gpuSetBackground(self.palette.crafting, true)
   gpu.fill(self.area.right.x, self.area.right.y, self.area.right.width, self.area.right.height, " ")
 end
 
-function Gui:drawTextBox()
-  gpu.setBackground(0x000000)
+-- Draw the search box for the main items list.
+function Gui:drawTextBox(force)
+  if not force then self:addDrawRequest(Gui.drawTextBox) return end
+  gpuSetBackground(0x000000)
+  gpuSetForeground(self.palette.fg, true)
   gpu.fill(self.textBox.x, self.textBox.y, self.textBox.width, 1, " ")
   gpu.set(self.textBox.x, self.textBox.y, string.sub(self.textBox.contents, self.textBox.scroll + 1, self.textBox.scroll + self.textBox.width))
   if self.textBox.selected then
-    gpu.setBackground(0xFFFFFF)
-    gpu.setForeground(0x000000)
+    gpuSetBackground(self.palette.fg, true)
+    gpuSetForeground(0x000000)
     gpu.set(self.textBox.x + self.textBox.cursor - 1 - self.textBox.scroll, self.textBox.y, self.textBox.cursor <= #self.textBox.contents and string.sub(self.textBox.contents, self.textBox.cursor, self.textBox.cursor) or " ")
-    gpu.setBackground(0x000000)
-    gpu.setForeground(0xFFFFFF)
   end
 end
 
-function Gui:drawAreaTop()
-  gpu.setBackground(self.palette.bg, true)
+-- Draw top pane.
+function Gui:drawAreaTop(force)
+  if not force then self:addDrawRequest(Gui.drawAreaTop) return end
+  gpuSetBackground(self.palette.bg, true)
+  gpuSetForeground(self.palette.fg, true)
   gpu.fill(self.area.top.x, self.area.top.y, self.area.top.width, self.area.top.height, " ")
   gpu.set(self.area.top.x + 1, self.area.top.y + 1, "Storage Network")
   self:drawTextBox()
 end
 
-function Gui:drawAreaBottom()
-  gpu.setBackground(self.palette.bg, true)
+-- Draw bottom pane.
+function Gui:drawAreaBottom(force)
+  if not force then self:addDrawRequest(Gui.drawAreaBottom) return end
+  gpuSetBackground(self.palette.bg, true)
   gpu.fill(self.area.bottom.x, self.area.bottom.y, self.area.bottom.width, self.area.bottom.height, " ")
 end
 
-function Gui:drawScrollBar()
-  gpu.setBackground(0x000000)
-  gpu.setForeground(0xFFFFFF)
+-- Draw the scroll bar for the main items list.
+function Gui:drawScrollBar(force)
+  if not force then self:addDrawRequest(Gui.drawScrollBar) return end
+  gpuSetBackground(0x000000)
+  gpuSetForeground(0xFFFFFF)
   local barLength = math.max(self.scrollBar.height - self.scrollBar.maxScroll, 1)
   local barText
   if barLength > 1 then
@@ -295,49 +358,40 @@ end
 -- once, then switch colors. It also helps to group text into the largest chunk
 -- possible to minimize calls to gpu.set() as this call is only about twice as
 -- fast as gpu.setBackground() and gpu.setForeground().
-function Gui:drawTextTable(textTable)
-  local bgColor = gpu.getBackground()
-  local fgColor = gpu.getForeground()
+function Gui:displayTextTable(textTable)
   for bg, fgGroup in pairs(textTable) do
-    if bg ~= bgColor then
-      gpu.setBackground(bg, true)
-      bgColor = bg
-    end
+    gpuSetBackground(bg, true)
     for fg, strGroup in pairs(fgGroup) do
-      if fg ~= fgColor then
-        gpu.setForeground(fg, true)
-        fgColor = fg
-      end
+      gpuSetForeground(fg, true)
       for _, str in ipairs(strGroup) do
         gpu.set(str[1], str[2], str[3])
       end
     end
   end
-  
-  --[[
-  Data format looks like the following.
-  
-  textTable: {
-    <bg>: {
-      <fg>: {
-        1: {
-          1: <x>
-          2: <y>
-          3: <string>
-        }
-        2: {
-          1: <x>
-          2: <y>
-          3: <string>
-        }
-        ...
+end
+--[[
+Data format for textTable looks like the following.
+
+textTable: {
+  <bg>: {
+    <fg>: {
+      1: {
+        1: <x>
+        2: <y>
+        3: <string>
+      }
+      2: {
+        1: <x>
+        2: <y>
+        3: <string>
       }
       ...
     }
     ...
   }
-  --]]
-end
+  ...
+}
+--]]
 
 -- Draw the item table with the list of all items in the network. Depending on
 -- the graphics card this may be a single column or multiple column table. This
@@ -346,10 +400,7 @@ end
 -- external thread). Setting force to true overrides this behavior and the table
 -- will draw immediately.
 function Gui:drawAreaItem(force)
-  if not force then
-    self.drawAreaItemRequested = true
-    return
-  end
+  if not force then self:addDrawRequest(Gui.drawAreaItem) return end
   
   
   
@@ -420,9 +471,9 @@ function Gui:drawAreaItem(force)
   end
   
   -- Draw the text that was added to the tables for each layer, then draw any separators between tables.
-  self:drawTextTable(textTable1)
-  self:drawTextTable(textTable2)
-  gpu.setBackground(self.palette.bg, true)
+  self:displayTextTable(textTable1)
+  self:displayTextTable(textTable2)
+  gpuSetBackground(self.palette.bg, true)
   for i = 1, self.area.numItemColumns - 1 do
     for j = self.area["item" .. i].x + self.area["item" .. i].width, self.area["item" .. i + 1].x - 1 do
       gpu.set(j, self.area.item1.y, string.rep(" ", self.area.item1.height), true)
@@ -436,9 +487,12 @@ function Gui:drawAreaItem(force)
   io.write("took " .. timeEnd - timeStart .. "s")
 end
 
+-- Draw full GUI. Only needs to be called once to clear the screen and draw all
+-- components, updates to each component on the screen can be re-drawn
+-- independently.
 function Gui:draw()
   term.clear()
-  gpu.setBackground(self.palette.bg, true)
+  gpuSetBackground(self.palette.bg, true)
   local width, height = term.getViewport()
   gpu.fill(1, 1, width, height, " ")
   self:drawAreaLeft()
@@ -447,8 +501,11 @@ function Gui:draw()
   self:drawAreaBottom()
   self:drawAreaItem()
   self:drawScrollBar()
+  --self:updateScrollBar(0)
 end
 
+-- Find the sorting key name for given item. These are used in the
+-- self.sortingKeys table to sort the item list.
 function Gui:getSortingKeyName(itemName, label, total)
   if self.button.sortType.val == 1 then    -- Sort by name.
     return label .. "," .. itemName
@@ -460,6 +517,8 @@ function Gui:getSortingKeyName(itemName, label, total)
   end
 end
 
+-- Create/replace the self.sortingKeys table with new sorting keys. Combines
+-- both storage items and recipe items.
 function Gui:rebuildSortingKeys()
   self.sortingKeys = {}
   for itemName, itemDetails in pairs(self.storageItems) do
@@ -473,11 +532,15 @@ function Gui:rebuildSortingKeys()
   self:updateSortingKeys()
 end
 
+-- Assign new self.storageItems contents. Rebuilds sorting keys. It's more
+-- efficient to use addedStorageItem() and removedStorageItem() if only a few
+-- items changed in storage.
 function Gui:setStorageItems(storageItems)
   self.storageItems = storageItems
   self:rebuildSortingKeys()
 end
 
+-- Assign new self.recipeItems contents. Rebuilds sorting keys.
 function Gui:setRecipeItems(recipeItems)
   self.recipeItems = recipeItems
   self:rebuildSortingKeys()
@@ -509,6 +572,7 @@ function Gui:removedStorageItem(itemName)
   end
 end
 
+-- Re-sort the sorting keys and update filters.
 function Gui:updateSortingKeys()
   table.sort(self.sortingKeys)
   self:updateFilteredItems()
@@ -581,9 +645,8 @@ end
 -- changed. If the updateFilteredItemsUnsafe() call throws an exception then the
 -- resulting self.filteredItems may be empty or incomplete (this is fine).
 function Gui:updateFilteredItems()
-  -- If pattern matching in string.find() throws an exception, suppress it and continue.
   self.filteredItems = {}
-  pcall(function() self:updateFilteredItemsUnsafe() end)
+  pcall(Gui.updateFilteredItemsUnsafe, self)
   self:updateScrollBar(0)
 end
 
@@ -908,9 +971,9 @@ local function main()
   local guiLazyDrawThread = thread.create(function()
     while true do
       os.sleep(gui.LAZY_DRAW_INTERVAL)
-      if gui.drawAreaItemRequested then
-        gui:drawAreaItem(true)
-        gui.drawAreaItemRequested = false
+      for i, v in ipairs(gui.drawRequest) do
+        v(gui, true)
+        gui.drawRequest[i] = nil
       end
     end
   end)
