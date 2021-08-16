@@ -36,14 +36,15 @@ DONE    * Better item display interface with easy selection.
                 * Maybe enter + number input for amount, shift-enter for 1, ctrl-enter for stack, ctrl-shift for all?
             * If we have time, consider a color display for this as an option.
                 * Click and scroll to get what you want, nice.
-* May be a good idea to convert all GUI draw calls to the lazy system (so we can have redundant draw calls without a problem).
+DONE    * May be a good idea to convert all GUI draw calls to the lazy system (so we can have redundant draw calls without a problem).
 * Scroll bar should be clickable and same for search bar.
 * When clicking item to request, left/right-click prompts input of amount in the search bar (press enter to confirm or enter with empty string to cancel).
     * Shift + left-click grabs one stack, shift + right-click grabs half stack, middle-click grabs one.
+    * Middle click doesn't work cuz it doesn't report screen coordinates, right-click grabs one instead.
 * Log should display at bottom of GUI and report success/fail of item requests.
     * Maybe also display item insert events and crafting completion?
-* Need to display craftable items along with the rest, crafting system will need some work first.
-    * Press left-alt to hide totals and display a 'C' for craftables.
+DONE    * Need to display craftable items along with the rest, crafting system will need some work first.
+            * Press left-alt to hide totals and display a 'C' for craftables.
 
 --------------------------------------------------------------------------------
 Bugs:

@@ -758,6 +758,7 @@ local function sendTrimmedStorageItems(addresses, storageItems)
   for itemName, itemDetails in pairs(storageItems) do
     if itemName ~= "data" then
       items[itemName] = {}
+      items[itemName].maxSize = itemDetails.maxSize
       items[itemName].label = itemDetails.label
       items[itemName].total = itemDetails.total
     end
@@ -776,6 +777,7 @@ local function sendStorageItemsDiff(addresses, storageItems)
     if storageItems[itemName] then
       if storageItems[itemName].total ~= previousTotal then
         itemsDiff[itemName] = {}
+        itemsDiff[itemName].maxSize = storageItems[itemName].maxSize
         itemsDiff[itemName].label = storageItems[itemName].label
         itemsDiff[itemName].total = storageItems[itemName].total
       end

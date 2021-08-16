@@ -11,29 +11,29 @@ end
 # crafting 16 minecraft:torch with 1 coal and 3 charcoal (without charcoal recipe) -> get 16 torch
 # 
 craft:
-4 minecraft:planks "Oak Wood Planks"
+4 minecraft:planks "Oak Wood Planks" 64
 with
 minecraft:log 1
 
 craft:
-4 minecraft:stick "Stick"
+4 minecraft:stick "Stick" 64
 with
 minecraft:planks 1 4
 
 craft:
-4 minecraft:torch "Torch"
+4 minecraft:torch "Torch" 64
 with
 minecraft:coal 1
 minecraft:stick 4
 
 craft:
-4 minecraft:torch "Torch"
+4 minecraft:torch "Torch" 64
 with
 minecraft:coal/1 1
 minecraft:stick 4
 
 craft:
-1 minecraft:redstone_torch "Redstone Torch"
+1 minecraft:redstone_torch "Redstone Torch" 64
 with
 minecraft:redstone 1
 minecraft:stick 4
@@ -46,8 +46,8 @@ minecraft:stick 4
 # crafting 100 stuff:nou with 1 stuff:impossible available -> get 100 stuff:nou, 1 stuff:impossible
 # 
 craft:
-1 stuff:impossible "impossible"
-1 stuff:nou "no u"
+1 stuff:impossible "impossible" 64
+1 stuff:nou "no u" 64
 with
 stuff:impossible 1
 
@@ -58,8 +58,8 @@ stuff:impossible 1
 # crafting 6 stuff:recurse with 2 stuff:recurse available -> get 6 stuff:recurse, 4 stuff:metoo
 # 
 craft:
-3 stuff:recurse "recurse"
-1 stuff:metoo "me too"
+3 stuff:recurse "recurse" 64
+1 stuff:metoo "me too" 64
 with
 stuff:recurse 1 2
 
@@ -71,7 +71,7 @@ stuff:recurse 1 2
 # crafting 6 stuff:recurse2 with 2 stuff:recurse2 available -> not possible, need 4 stuff:methree
 # 
 craft:
-3 stuff:recurse2 "recurse 2"
+3 stuff:recurse2 "recurse 2" 64
 with
 stuff:recurse2 1 2
 stuff:methree 3
@@ -82,18 +82,18 @@ stuff:methree 3
 # crafting 5 stuff:chain with 1 stuff:cycle1 available -> get 5 stuff:chain, 1 stuff:cycle1
 # 
 craft:
-1 stuff:cycle1 "cycle 1"
-1 stuff:chain "chain"
+1 stuff:cycle1 "cycle 1" 64
+1 stuff:chain "chain" 64
 with
 stuff:cycle2 1
 
 craft:
-1 stuff:cycle2 "cycle 2"
+1 stuff:cycle2 "cycle 2" 64
 with
 stuff:cycle3 1
 
 craft:
-1 stuff:cycle3 "cycle 3"
+1 stuff:cycle3 "cycle 3" 64
 with
 stuff:cycle1 1
 
@@ -105,7 +105,7 @@ stuff:cycle1 1
 # crafting 10 stuff:iron_alloy with 2 stuff:iron_alloy available -> not possible, need 8 stuff:slag
 # 
 craft:
-3 stuff:iron_alloy "iron alloy"
+3 stuff:iron_alloy "iron alloy" 64
 with
 stuff:iron_alloy 1 2
 stuff:slag 3

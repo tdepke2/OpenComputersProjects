@@ -97,13 +97,14 @@ local function loadRecipes(stations, recipes, filename)
       if tokens[1] == "with" then
         assert(not tokens[2], "Unexpected data after \"with\".")
         parseState = "re_inp"
-      else    -- <count> <item name> "<item label>"
+      else    -- <count> <item name> "<item label>" <max stack size>
         local itemLabel = string.match(line, "\"(.*)\"")
         assert(itemLabel, "Expected \'<count> <item name> \"<item label>\"\'.")
         assert(not recipeEntry.out[stringToItemName(tokens[2])], "Duplicate output item name \"" .. stringToItemName(tokens[2]) .. "\".")
         recipeEntry.out[stringToItemName(tokens[2])] = stringToInteger(tokens[1], 1)
         recipes[stringToItemName(tokens[2])] = recipes[stringToItemName(tokens[2])] or {}
         local itemNameEntry = recipes[stringToItemName(tokens[2])]
+        itemNameEntry.maxSize = stringToInteger(tokens[#tokens], 1)
         itemNameEntry.label = itemLabel
         itemNameEntry[#itemNameEntry + 1] = #recipes
       end
@@ -220,6 +221,7 @@ recipes: {
   }
   ...
   <item name>: {
+    maxSize: <max stack size>
     label: <item label>
     1: <recipe index>
     ...
@@ -257,6 +259,10 @@ end
 -- FIXME if have time, improve this to handle the above drawbacks. ##############################################################################
 local function solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   checkArg2(1, stations, "table", 2, recipes, "table", 3, storageItems, "table", 4, itemName, "string", 5, amount, "number")
+  if not recipes[itemName] then
+    return "No recipe found for \"" .. itemName .. "\"."
+  end
+  
   local defaultZeroMeta = {__index = function() return 0 end}
   local requiredItems = {}
   setmetatable(requiredItems, defaultZeroMeta)
@@ -283,7 +289,7 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
   --local MIX = false
   
   local function recursiveSolve(spacing, index)
-    assert(index < 50, "recipe too complex or not possible")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
+    assert(index < 50, "Recipe too complex or not possible.")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
     print(spacing .. "recursiveSolve(" .. index .. ")")
     for _, recipeIndex in ipairs(recipes[craftNames[index]]) do
       print(spacing .. "trying recipe " .. recipeIndex .. " for " .. craftNames[index])
@@ -700,6 +706,7 @@ local function main()
     local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, "minecraft:torch/0", 16)
     
     --storageItems["stuff:impossible/0"] = {}
+    --storageItems["stuff:impossible/0"].maxSize = 64
     --storageItems["stuff:impossible/0"].label = "impossible"
     --storageItems["stuff:impossible/0"].total = 1
     --local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, "stuff:nou/0", 100)
@@ -743,6 +750,7 @@ local function main()
               storageItems[itemName].total = diff.total
             else
               storageItems[itemName] = {}
+              storageItems[itemName].maxSize = diff.maxSize
               storageItems[itemName].label = diff.label
               storageItems[itemName].total = diff.total
             end
@@ -760,16 +768,30 @@ local function main()
           local recipeItems = {}
           for k, v in pairs(recipes) do
             if type(k) == "string" then
-              recipeItems[k] = v.label
+              recipeItems[k] = {}
+              recipeItems[k].maxSize = v.maxSize
+              recipeItems[k].label = v.label
             end
           end
           wnet.send(modem, address, COMMS_PORT, "inter_recipe_list," .. serialization.serialize(recipeItems))
         elseif dataType == "craft_check_recipe" then
+          -- Interface is requesting to craft an item, compute the recipe dependencies and reserve a ticket for the operation if successful.
           interfaceServerAddresses[address] = true
           local itemName = string.match(data, "[^,]*")
           local amount = string.match(data, "[^,]*", #itemName + 2)
-          print("crafting item " .. itemName .. " and amount " .. amount .. ".")
-          print("result = ", tonumber(amount))
+          
+          local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, 16)
+          
+          print("status = " .. status)
+          if status == "ok" or status == "missing" then
+            print("recipeIndices/recipeBatches and requiredItems")
+            for i = 1, #recipeIndices do
+              print(recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") -> " .. recipeBatches[i])
+            end
+            tdebug.printTable(requiredItems)
+          end
+          
+          
         end
       end
     end

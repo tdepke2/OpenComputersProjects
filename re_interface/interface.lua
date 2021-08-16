@@ -169,6 +169,11 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   self.textBox.scroll = 0
   self.textBox.contents = ""
   
+  -- In searchMode, self.textBox.searchContents matches edits made to self.textBox.contents.
+  -- Otherwise, the search contents stays how it is to allow text box to be used for other things.
+  self.textBox.searchMode = true
+  self.textBox.searchContents = ""
+  
   self.scrollBar = {}
   self.scrollBar.x = self.area["item" .. self.area.numItemColumns].x + self.area["item" .. self.area.numItemColumns].width + 1
   self.scrollBar.y = self.area.item1.y
@@ -435,7 +440,7 @@ function Gui:drawAreaItem(force)
         label = self.storageItems[itemName].label
         total = self.storageItems[itemName].total
       else
-        label = self.recipeItems[itemName]
+        label = self.recipeItems[itemName].label
         total = 0
       end
       local displayName = (self.button.labelType.val == 1 and label .. (string.sub(itemName, #itemName) == "n" and " (+NBT)" or "") or itemName)
@@ -522,11 +527,11 @@ end
 function Gui:rebuildSortingKeys()
   self.sortingKeys = {}
   for itemName, itemDetails in pairs(self.storageItems) do
-    self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName, self.storageItems[itemName].label, self.storageItems[itemName].total)
+    self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName, itemDetails.label, itemDetails.total)
   end
-  for itemName, itemLabel in pairs(self.recipeItems) do
+  for itemName, itemDetails in pairs(self.recipeItems) do
     if not self.storageItems[itemName] then
-      self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName, itemLabel, 0)
+      self.sortingKeys[#self.sortingKeys + 1] = self:getSortingKeyName(itemName, itemDetails.label, 0)
     end
   end
   self:updateSortingKeys()
@@ -576,13 +581,12 @@ end
 function Gui:updateSortingKeys()
   table.sort(self.sortingKeys)
   self:updateFilteredItems()
-  self:drawAreaItem()
 end
 
 -- Helper function for updateFilteredItems(). May throw exception if text box
 -- contents has a malformed string pattern.
 function Gui:updateFilteredItemsUnsafe()
-  local filterStrings = {string.lower(text.trim(self.textBox.contents))}
+  local filterStrings = {string.lower(text.trim(self.textBox.searchContents))}
   
   local useInternalName = false
   local useModName = false
@@ -613,7 +617,7 @@ function Gui:updateFilteredItemsUnsafe()
     elseif useModName then
       findString = string.lower(string.match(itemName, "[^:]+"))
     else
-      findString = string.lower(self.storageItems[itemName] and self.storageItems[itemName].label or self.recipeItems[itemName])
+      findString = string.lower(self.storageItems[itemName] and self.storageItems[itemName].label or self.recipeItems[itemName].label)
     end
     
     -- For plainMatch we match the string exactly, otherwise we match against each filter string in the array.
@@ -626,7 +630,7 @@ function Gui:updateFilteredItemsUnsafe()
       for i, filterString in ipairs(filterStrings) do
         -- Switch back to external names if on second filter text. This matches JEI search behavior a bit better.
         if i == 2 and useModName then
-          findString = string.lower(self.storageItems[itemName] and self.storageItems[itemName].label or self.recipeItems[itemName])
+          findString = string.lower(self.storageItems[itemName] and self.storageItems[itemName].label or self.recipeItems[itemName].label)
         end
         
         if not string.find(findString, filterString) then
@@ -648,13 +652,22 @@ function Gui:updateFilteredItems()
   self.filteredItems = {}
   pcall(Gui.updateFilteredItemsUnsafe, self)
   self:updateScrollBar(0)
+  self:drawAreaItem()
+end
+
+function Gui:updateTextBox()
+  if self.textBox.searchMode then
+    self.textBox.searchContents = self.textBox.contents
+    self:updateFilteredItems()
+  end
+  self:drawTextBox()
 end
 
 function Gui:clearTextBox()
   self.textBox.cursor = 1
   self.textBox.scroll = 0
   self.textBox.contents = ""
-  self:drawTextBox()
+  self:updateTextBox()
 end
 
 function Gui:setTextBoxCursor(position)
@@ -677,7 +690,6 @@ function Gui:toggleButtonFilterType()
   self.button.filterType.val = (self.button.filterType.val % 2) + 1
   self:drawButtonFilterType()
   self:updateFilteredItems()
-  self:drawAreaItem()
 end
 
 function Gui:toggleButtonSortDir()
@@ -714,38 +726,32 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
   
   if self.textBox.selected then
     if keyboard.isControl(char) then
-      if code == keyboard.keys.back then
+      if code == keyboard.keys.back then    -- Backspace removes characters in front of cursor.
         if self.textBox.cursor > 1 then
           self.textBox.contents = string.sub(self.textBox.contents, 1, self.textBox.cursor - 2) .. string.sub(self.textBox.contents, self.textBox.cursor)
           self:setTextBoxCursor(self.textBox.cursor - 1)
-          self:updateFilteredItems()
-          self:drawAreaItem()
+          self:updateTextBox()
         end
-      elseif code == keyboard.keys.delete then
+      elseif code == keyboard.keys.delete then    -- Delete removes characters after cursor.
         self.textBox.contents = string.sub(self.textBox.contents, 1, self.textBox.cursor - 1) .. string.sub(self.textBox.contents, self.textBox.cursor + 1)
-        self:drawTextBox()
-        self:updateFilteredItems()
-        self:drawAreaItem()
+        self:updateTextBox()
       elseif code == keyboard.keys.enter or code == keyboard.keys.numpadenter then
         print("enter")
-      elseif code == keyboard.keys.home then
+      elseif code == keyboard.keys.home then    -- Home moves cursor to beginning.
         self:setTextBoxCursor(1)
-      elseif code == keyboard.keys.lcontrol then
+      elseif code == keyboard.keys.lcontrol then    -- Left control clears the text box.
         self:clearTextBox()
-        self:updateFilteredItems()
-        self:drawAreaItem()
-      elseif code == keyboard.keys.left then
+      elseif code == keyboard.keys.left then    -- Left moves cursor left.
         self:setTextBoxCursor(math.max(self.textBox.cursor - 1, 1))
-      elseif code == keyboard.keys.right then
+      elseif code == keyboard.keys.right then    -- Right moves cursor right.
         self:setTextBoxCursor(math.min(self.textBox.cursor + 1, #self.textBox.contents + 1))
-      elseif code == keyboard.keys["end"] then
+      elseif code == keyboard.keys["end"] then    -- End moves cursor to the end of text.
         self:setTextBoxCursor(#self.textBox.contents + 1)
       end
-    else
+    else    -- Non-control key typed in text box, insert the character.
       self.textBox.contents = string.sub(self.textBox.contents, 1, self.textBox.cursor - 1) .. string.char(char) .. string.sub(self.textBox.contents, self.textBox.cursor)
       self:setTextBoxCursor(self.textBox.cursor + 1)
-      self:updateFilteredItems()
-      self:drawAreaItem()
+      self:updateTextBox()
     end
   else
     if keyboard.isControl(char) then
@@ -782,11 +788,48 @@ function Gui:handleKeyUp(keyboardAddress, char, code, playerName)
   end
 end
 
-function Gui:requestItem(itemName)
-  if self.recipeItems[itemName] and (self.keyShowCraftingPressed or not self.storageItems[itemName]) then
-    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_check_recipe," .. itemName .. ",")
+-- 
+function Gui:requestItem(itemName, button)
+  local amount
+  if not keyboard.isShiftDown() then
+    -- If user left clicks item without pressing shift key, we need to prompt for the desired amount in search box.
+    -- A right click (or middle click, if we could actually catch that signal with the screen coords, oof) requests one item.
+    if button == 0 then
+      self.textBox.searchMode = false
+      self:clearTextBox()
+      
+      
+      
+      
+      return
+    elseif button == 1 or button == 2 then
+      amount = 1
+    else
+      return
+    end
+  elseif button ~= 0 and button ~= 1 then
+    return
+  end
+  
+  -- If crafting button held down or we don't have any of the item in storage, send a crafting request to crafting server. Otherwise send storage extract request.
+  if (self.keyShowCraftingPressed or not self.storageItems[itemName]) and self.recipeItems[itemName] then
+    if not amount then
+      if button == 0 then
+        amount = self.recipeItems[itemName].maxSize
+      else
+        amount = math.ceil(self.recipeItems[itemName].maxSize / 2)
+      end
+    end
+    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_check_recipe," .. itemName .. "," .. amount)
   else
-    wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor_extract," .. itemName .. ",")
+    if not amount then
+      if button == 0 then
+        amount = math.min(self.storageItems[itemName].maxSize, self.storageItems[itemName].total)
+      else
+        amount = math.ceil(math.min(self.storageItems[itemName].maxSize, self.storageItems[itemName].total) / 2)
+      end
+    end
+    wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor_extract," .. itemName .. "," .. amount)
   end
 end
 
@@ -794,6 +837,7 @@ function Gui:handleTouch(screenAddress, x, y, button, playerName)
   --print("handleTouch", screenAddress, x, y, button, playerName)
   x = math.floor(x)
   y = math.floor(y)
+  button = math.floor(button)
   if isPointInRectangle(x, y, self.button.filterType.x, self.button.filterType.y, self.button.filterType.width, self.button.filterType.height) then
     self:toggleButtonFilterType()
   elseif isPointInRectangle(x, y, self.button.sortDir.x, self.button.sortDir.y, self.button.sortDir.width, self.button.sortDir.height) then
@@ -809,7 +853,7 @@ function Gui:handleTouch(screenAddress, x, y, button, playerName)
         local itemIndex = (self.button.sortDir.val == 1 and 1 or #self.filteredItems) + self.scrollBar.scroll * self.area.numItemColumns * self.button.sortDir.val
         itemIndex = itemIndex + ((y - itemArea.y) * self.area.numItemColumns + (i - 1)) * self.button.sortDir.val
         if self.filteredItems[itemIndex] then
-          self:requestItem(self.filteredItems[itemIndex])
+          self:requestItem(self.filteredItems[itemIndex], button)
         end
       end
     end
@@ -921,6 +965,7 @@ local function main()
               storageItems[itemName].total = diff.total
             else
               storageItems[itemName] = {}
+              storageItems[itemName].maxSize = diff.maxSize
               storageItems[itemName].label = diff.label
               storageItems[itemName].total = diff.total
               gui:addedStorageItem(itemName)
