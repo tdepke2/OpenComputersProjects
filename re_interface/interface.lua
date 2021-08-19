@@ -58,9 +58,9 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   setmetatable(obj, self)
   self.__index = self
   
-  self.ITEM_LABEL_WIDTH = 45
+  self.ITEM_LABEL_WIDTH = 40 --45 FIXME #########################################################
   self.LEFT_COLUMN_WIDTH = 8
-  self.RIGHT_COLUMN_WIDTH = 25
+  self.RIGHT_COLUMN_WIDTH = 26
   self.TOP_ROW_HEIGHT = 4
   self.BOTTOM_ROW_HEIGHT = 3
   
@@ -160,6 +160,12 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
     self.area["item" .. i].height = self.area.bottom.y - self.area["item" .. i].y
   end
   
+  self.area.craftingItem = {}
+  self.area.craftingItem.x = self.area.right.x + 1
+  self.area.craftingItem.y = self.area.item1.y
+  self.area.craftingItem.width = self.area.right.width - 3
+  self.area.craftingItem.height = self.area.item1.height
+  
   self.textBox = {}
   self.textBox.x = self.area.top.x + 17
   self.textBox.y = self.area.top.y + 1
@@ -170,9 +176,11 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   self.textBox.contents = ""
   
   -- In searchMode, self.textBox.searchContents matches edits made to self.textBox.contents.
-  -- Otherwise, the search contents stays how it is to allow text box to be used for other things.
+  -- Otherwise, the search contents stays how it is to allow text box to be used for other things (like entering amount of item to request).
   self.textBox.searchMode = true
   self.textBox.searchContents = ""
+  self.textBox.requestedItem = ""
+  self.textBox.requestedCrafting = false
   
   self.scrollBar = {}
   self.scrollBar.x = self.area["item" .. self.area.numItemColumns].x + self.area["item" .. self.area.numItemColumns].width + 1
@@ -180,6 +188,13 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   self.scrollBar.height = self.area.item1.height
   self.scrollBar.scroll = 0
   self.scrollBar.maxScroll = 0
+  
+  self.craftingScrollBar = {}
+  self.craftingScrollBar.x = self.area.craftingItem.x + self.area.craftingItem.width
+  self.craftingScrollBar.y = self.area.craftingItem.y
+  self.craftingScrollBar.height = self.area.craftingItem.height
+  self.craftingScrollBar.scroll = 0
+  self.craftingScrollBar.maxScroll = 0
   
   self.button = {}
   self.button.filterType = {}
@@ -210,6 +225,34 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   self.button.labelType.height = 3
   self.button.labelType.val = 1
   
+  self.button.lastPage = {}
+  self.button.lastPage.x = self.area.right.x + 1
+  self.button.lastPage.y = self.area.right.y + 2
+  self.button.lastPage.width = 8
+  self.button.lastPage.height = 1
+  
+  self.button.nextPage = {}
+  self.button.nextPage.x = self.area.right.x + self.area.right.width - 1 - 8
+  self.button.nextPage.y = self.area.right.y + 2
+  self.button.nextPage.width = 8
+  self.button.nextPage.height = 1
+  
+  self.button.start = {}
+  self.button.start.x = self.area.right.x + 1
+  self.button.start.y = self.area.right.y + self.area.right.height - 1 - 1
+  self.button.start.width = 8
+  self.button.start.height = 1
+  
+  self.button.cancel = {}
+  self.button.cancel.x = self.area.right.x + self.area.right.width - 1 - 8
+  self.button.cancel.y = self.area.right.y + self.area.right.height - 1 - 1
+  self.button.cancel.width = 8
+  self.button.cancel.height = 1
+  
+  self.crafting = {}
+  self.crafting.pendingCraftRequest = {}
+  self.crafting.activeCraftRequests = {}
+  
   self.storageItems = storageItems
   self.storageServerAddress = storageServerAddress
   self.recipeItems = recipeItems
@@ -221,6 +264,47 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   
   return obj
 end
+
+-- Drawing text in columns with alternating background colors is taxing on the
+-- GPU to switch backgrounds/foregrounds so frequently. We can optimize by
+-- drawing all of the text with the same color background and foreground at
+-- once, then switch colors. It also helps to group text into the largest chunk
+-- possible to minimize calls to gpu.set() as this call is only about twice as
+-- fast as gpu.setBackground() and gpu.setForeground().
+function Gui:renderTextTable(textTable)
+  for bg, fgGroup in pairs(textTable) do
+    gpuSetBackground(bg, true)
+    for fg, strGroup in pairs(fgGroup) do
+      gpuSetForeground(fg, true)
+      for _, str in ipairs(strGroup) do
+        gpu.set(str[1], str[2], str[3])
+      end
+    end
+  end
+end
+--[[
+Data format for textTable looks like the following.
+
+textTable: {
+  <bg>: {
+    <fg>: {
+      1: {
+        1: <x>
+        2: <y>
+        3: <string>
+      }
+      2: {
+        1: <x>
+        2: <y>
+        3: <string>
+      }
+      ...
+    }
+    ...
+  }
+  ...
+}
+--]]
 
 -- Queue a draw function call to self.drawRequest array. Drawable functions in
 -- the GUI use this internally to enable the lazy drawing.
@@ -304,11 +388,115 @@ function Gui:drawAreaLeft(force)
   self:drawButtonLabelType()
 end
 
+function Gui:drawButtonLastPage(force)
+  if not force then self:addDrawRequest(Gui.drawButtonLastPage) return end
+  gpuSetBackground(self.palette.button, true)
+  gpuSetForeground(self.palette.fg, true)
+  gpu.set(self.button.lastPage.x, self.button.lastPage.y, "   <<   ")
+end
+
+function Gui:drawButtonNextPage(force)
+  if not force then self:addDrawRequest(Gui.drawButtonNextPage) return end
+  gpuSetBackground(self.palette.button, true)
+  gpuSetForeground(self.palette.fg, true)
+  gpu.set(self.button.nextPage.x, self.button.nextPage.y, "   >>   ")
+end
+
+function Gui:drawButtonStart(force)
+  if not force then self:addDrawRequest(Gui.drawButtonStart) return end
+  gpuSetBackground(self.palette.button, true)
+  gpuSetForeground(self.palette.fg, true)
+  gpu.set(self.button.start.x, self.button.start.y, " Start  ")
+end
+
+function Gui:drawButtonCancel(force)
+  if not force then self:addDrawRequest(Gui.drawButtonCancel) return end
+  gpuSetBackground(self.palette.button, true)
+  gpuSetForeground(self.palette.fg, true)
+  gpu.set(self.button.cancel.x, self.button.cancel.y, " Cancel ")
+end
+
+-- Draw item table for the crafting pane. The drawing is deferred to
+-- Gui:renderTextTable() for performance reasons.
+function Gui:drawAreaCraftingItem(force)
+  if not force then self:addDrawRequest(Gui.drawAreaCraftingItem) return end
+  
+  local textTable = {}
+  textTable[self.palette.item1] = {}
+  textTable[self.palette.item2] = {}
+  textTable[self.palette.mod1] = {}
+  local itemIndex = 1 + self.craftingScrollBar.scroll
+  local bgColor, fgColor
+  
+  local _, craftProgress = next(self.crafting.pendingCraftRequest)
+  if not craftProgress then
+    craftProgress = {}
+  end
+  
+  -- The item list for a crafting operation should be relatively small, so we just rebuild the sorting keys each draw call.
+  local sortingKeys = {}
+  local i = 1
+  for k, _ in pairs(craftProgress) do
+    sortingKeys[i] = k
+    i = i + 1
+  end
+  table.sort(sortingKeys)
+  
+  -- Iterate through each entry in table, corresponds to item index (except we only advance the index at odd values of i).
+  local itemArea = self.area.craftingItem
+  for i = 0, self.area.craftingItem.height - 1 do
+    bgColor = (i + self.craftingScrollBar.scroll) % 2 == 0 and self.palette.item1 or self.palette.item2
+    local textLine
+    
+    -- If entry corresponds to an item (it's not a blank one near the end) then set textLine for drawing. Otherwise we just add a blank line.
+    if itemIndex >= 1 and itemIndex <= #sortingKeys then
+      local itemName = sortingKeys[itemIndex]
+      
+      -- If i is even, we display only the item name with its mod color. Otherwise we display the amount required/missing/craft for the item.
+      if i % 2 == 0 then
+        fgColor = self.palette["mod" .. (djb2StringHash(string.match(itemName, "[^:]+")) % 6 + 1)]
+        textLine = string.sub(itemName, 1, itemArea.width)
+      else
+        fgColor = self.palette.fg
+        textLine = "-"
+        local amountNeeded = craftProgress[itemName].inp - craftProgress[itemName].out
+        if amountNeeded > 0 then
+          textLine = textLine .. " R " .. amountNeeded
+        end
+        if craftProgress[itemName].out == 0 and amountNeeded > craftProgress[itemName].hav then
+          bgColor = self.palette.mod1
+          textLine = textLine .. " M " .. amountNeeded - craftProgress[itemName].hav
+        elseif craftProgress[itemName].out > 0 then
+          textLine = textLine .. " C " .. craftProgress[itemName].out
+        end
+        itemIndex = itemIndex + 1
+      end
+    else
+      fgColor = self.palette.fg
+      textLine = string.rep(" ", itemArea.width)
+    end
+    
+    if not textTable[bgColor][fgColor] then textTable[bgColor][fgColor] = {} end
+    textTable[bgColor][fgColor][#textTable[bgColor][fgColor] + 1] = {itemArea.x, itemArea.y + i, text.padRight(textLine, itemArea.width)}
+  end
+  
+  -- Draw the text that was added to the table.
+  self:renderTextTable(textTable)
+end
+
 -- Draw right pane.
 function Gui:drawAreaRight(force)
   if not force then self:addDrawRequest(Gui.drawAreaRight) return end
   gpuSetBackground(self.palette.crafting, true)
+  gpuSetForeground(self.palette.fg, true)
   gpu.fill(self.area.right.x, self.area.right.y, self.area.right.width, self.area.right.height, " ")
+  gpu.set(self.area.right.x + 1, self.area.right.y + 1, "Status and Crafting")
+  self:drawButtonLastPage()
+  self:drawButtonNextPage()
+  self:drawButtonStart()
+  self:drawButtonCancel()
+  self:drawAreaCraftingItem()
+  self:drawCraftingScrollBar()
 end
 
 -- Draw the search box for the main items list.
@@ -332,6 +520,9 @@ function Gui:drawAreaTop(force)
   gpuSetForeground(self.palette.fg, true)
   gpu.fill(self.area.top.x, self.area.top.y, self.area.top.width, self.area.top.height, " ")
   gpu.set(self.area.top.x + 1, self.area.top.y + 1, "Storage Network")
+  if not self.textBox.searchMode then
+    gpu.set(self.area.top.x + 1, self.area.top.y + 2, "Enter amount for item \"" .. string.sub(self.textBox.requestedItem, 1, self.area.top.width - 27) .. "\".")
+  end
   self:drawTextBox()
 end
 
@@ -342,61 +533,31 @@ function Gui:drawAreaBottom(force)
   gpu.fill(self.area.bottom.x, self.area.bottom.y, self.area.bottom.width, self.area.bottom.height, " ")
 end
 
+-- Generic drawing for a scroll bar.
+function Gui:renderScrollBar(scrollBar)
+  gpuSetBackground(0x000000)
+  gpuSetForeground(0xFFFFFF)
+  local barLength = math.max(scrollBar.height - scrollBar.maxScroll, 1)
+  local barText
+  if barLength > 1 then
+    barText = text.padRight(string.rep(" ", scrollBar.scroll) .. string.rep("\u{2588}", barLength), scrollBar.height)
+  else
+    barText = text.padRight(string.rep(" ", math.floor(scrollBar.scroll / (scrollBar.maxScroll + 1) * scrollBar.height)) .. "\u{2588}", scrollBar.height)
+  end
+  gpu.set(scrollBar.x, scrollBar.y, barText, true)
+end
+
 -- Draw the scroll bar for the main items list.
 function Gui:drawScrollBar(force)
   if not force then self:addDrawRequest(Gui.drawScrollBar) return end
-  gpuSetBackground(0x000000)
-  gpuSetForeground(0xFFFFFF)
-  local barLength = math.max(self.scrollBar.height - self.scrollBar.maxScroll, 1)
-  local barText
-  if barLength > 1 then
-    barText = text.padRight(string.rep(" ", self.scrollBar.scroll) .. string.rep("\u{2588}", barLength), self.scrollBar.height)
-  else
-    barText = text.padRight(string.rep(" ", math.floor(self.scrollBar.scroll / (self.scrollBar.maxScroll + 1) * self.scrollBar.height)) .. "\u{2588}", self.scrollBar.height)
-  end
-  gpu.set(self.scrollBar.x, self.scrollBar.y, barText, true)
+  self:renderScrollBar(self.scrollBar)
 end
 
--- Drawing text in columns with alternating background colors is taxing on the
--- GPU to switch backgrounds/foregrounds so frequently. We can optimize by
--- drawing all of the text with the same color background and foreground at
--- once, then switch colors. It also helps to group text into the largest chunk
--- possible to minimize calls to gpu.set() as this call is only about twice as
--- fast as gpu.setBackground() and gpu.setForeground().
-function Gui:displayTextTable(textTable)
-  for bg, fgGroup in pairs(textTable) do
-    gpuSetBackground(bg, true)
-    for fg, strGroup in pairs(fgGroup) do
-      gpuSetForeground(fg, true)
-      for _, str in ipairs(strGroup) do
-        gpu.set(str[1], str[2], str[3])
-      end
-    end
-  end
+-- Draw the scroll bar for the crafting items (if visible).
+function Gui:drawCraftingScrollBar(force)
+  if not force then self:addDrawRequest(Gui.drawCraftingScrollBar) return end
+  self:renderScrollBar(self.craftingScrollBar)
 end
---[[
-Data format for textTable looks like the following.
-
-textTable: {
-  <bg>: {
-    <fg>: {
-      1: {
-        1: <x>
-        2: <y>
-        3: <string>
-      }
-      2: {
-        1: <x>
-        2: <y>
-        3: <string>
-      }
-      ...
-    }
-    ...
-  }
-  ...
-}
---]]
 
 -- Draw the item table with the list of all items in the network. Depending on
 -- the graphics card this may be a single column or multiple column table. This
@@ -476,8 +637,8 @@ function Gui:drawAreaItem(force)
   end
   
   -- Draw the text that was added to the tables for each layer, then draw any separators between tables.
-  self:displayTextTable(textTable1)
-  self:displayTextTable(textTable2)
+  self:renderTextTable(textTable1)
+  self:renderTextTable(textTable2)
   gpuSetBackground(self.palette.bg, true)
   for i = 1, self.area.numItemColumns - 1 do
     for j = self.area["item" .. i].x + self.area["item" .. i].width, self.area["item" .. i + 1].x - 1 do
@@ -488,8 +649,8 @@ function Gui:drawAreaItem(force)
   
   
   local timeEnd = computer.uptime()
-  term.clearLine()
-  io.write("took " .. timeEnd - timeStart .. "s")
+  --term.clearLine()
+  --io.write("took " .. timeEnd - timeStart .. "s") FIXME ####################################################################################
 end
 
 -- Draw full GUI. Only needs to be called once to clear the screen and draw all
@@ -506,7 +667,6 @@ function Gui:draw()
   self:drawAreaBottom()
   self:drawAreaItem()
   self:drawScrollBar()
-  --self:updateScrollBar(0)
 end
 
 -- Find the sorting key name for given item. These are used in the
@@ -681,9 +841,19 @@ function Gui:setTextBoxCursor(position)
 end
 
 function Gui:updateScrollBar(direction)
-  self.scrollBar.maxScroll = math.max(math.floor(math.ceil(#self.filteredItems / self.area.numItemColumns) - self.area.item1.height), 0)
+  self.scrollBar.maxScroll = math.max(math.floor(math.ceil(#self.filteredItems / self.area.numItemColumns) - self.scrollBar.height), 0)
   self.scrollBar.scroll = math.min(math.max(self.scrollBar.scroll - math.floor(direction), 0), self.scrollBar.maxScroll)
   self:drawScrollBar()
+end
+
+function Gui:updateCraftingScrollBar(direction)
+  local numRows = 0
+  for _, _ in pairs(self.crafting.pendingCraftRequest) do
+    numRows = numRows + 2
+  end
+  self.craftingScrollBar.maxScroll = math.max(math.floor(numRows - self.craftingScrollBar.height), 0)
+  self.craftingScrollBar.scroll = math.min(math.max(self.craftingScrollBar.scroll - math.floor(direction), 0), self.craftingScrollBar.maxScroll)
+  self:drawCraftingScrollBar()
 end
 
 function Gui:toggleButtonFilterType()
@@ -710,6 +880,29 @@ function Gui:toggleButtonLabelType()
   self:drawAreaItem()
 end
 
+function Gui:toggleButtonLastPage()
+  
+end
+
+function Gui:toggleButtonNextPage()
+  
+end
+
+function Gui:toggleButtonStart()
+  local ticket = next(self.crafting.pendingCraftRequest)
+  if ticket and string.find(ticket, "^id") then
+    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_recipe_start," .. ticket)
+    self.crafting.pendingCraftRequest[ticket] = nil
+    
+    self:updateCraftingScrollBar(0)
+    self:drawAreaCraftingItem()
+  end
+end
+
+function Gui:toggleButtonCancel()
+  
+end
+
 function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
   --print("handleKeyDown", keyboardAddress, char, code, playerName)
   if keyboard.isControl(char) then
@@ -724,7 +917,7 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
     end
   end
   
-  if self.textBox.selected then
+  if self.textBox.selected then    -- Text box key handling.
     if keyboard.isControl(char) then
       if code == keyboard.keys.back then    -- Backspace removes characters in front of cursor.
         if self.textBox.cursor > 1 then
@@ -735,8 +928,24 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
       elseif code == keyboard.keys.delete then    -- Delete removes characters after cursor.
         self.textBox.contents = string.sub(self.textBox.contents, 1, self.textBox.cursor - 1) .. string.sub(self.textBox.contents, self.textBox.cursor + 1)
         self:updateTextBox()
-      elseif code == keyboard.keys.enter or code == keyboard.keys.numpadenter then
-        print("enter")
+      elseif code == keyboard.keys.enter or code == keyboard.keys.numpadenter then    -- Enter submits an item request if available and restores the search mode.
+        if not self.textBox.searchMode then
+          local amount = tonumber(self.textBox.contents)
+          if amount then
+            if self.textBox.requestedCrafting then
+              wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_check_recipe," .. self.textBox.requestedItem .. "," .. amount)
+            else
+              wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor_extract," .. self.textBox.requestedItem .. "," .. amount)
+            end
+          end
+          
+          self.textBox.contents = self.textBox.searchContents
+          self.textBox.searchMode = true
+          self.textBox.requestedItem = ""
+          self:drawAreaTop()
+          self:setTextBoxCursor(#self.textBox.contents + 1)
+          self:updateTextBox()
+        end
       elseif code == keyboard.keys.home then    -- Home moves cursor to beginning.
         self:setTextBoxCursor(1)
       elseif code == keyboard.keys.lcontrol then    -- Left control clears the text box.
@@ -753,24 +962,24 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
       self:setTextBoxCursor(self.textBox.cursor + 1)
       self:updateTextBox()
     end
-  else
+  else    -- Regular key handling.
     if keyboard.isControl(char) then
-      if code == keyboard.keys.home then
+      if code == keyboard.keys.home then    -- Home scrolls item list to top.
         self.scrollBar.scroll = 0
         self:drawScrollBar()
         self:drawAreaItem()
-      elseif code == keyboard.keys["end"] then
+      elseif code == keyboard.keys["end"] then    -- End scrolls item list to bottom.
         self.scrollBar.scroll = self.scrollBar.maxScroll
         self:drawScrollBar()
         self:drawAreaItem()
       end
-    elseif char == string.byte("p") then
+    elseif char == string.byte("p") then    -- Press 'p' to toggle filter type.
       self:toggleButtonFilterType()
-    elseif char == string.byte("d") then
+    elseif char == string.byte("d") then    -- Press 'd' to toggle sort direction.
       self:toggleButtonSortDir()
-    elseif char == string.byte("s") then
+    elseif char == string.byte("s") then    -- Press 's' to toggle sort type.
       self:toggleButtonSortType()
-    elseif char == string.byte("l") then
+    elseif char == string.byte("l") then    -- Press 'l' to toggle label type.
       self:toggleButtonLabelType()
     end
   end
@@ -788,19 +997,28 @@ function Gui:handleKeyUp(keyboardAddress, char, code, playerName)
   end
 end
 
--- 
+-- Used by Gui:handleTouch() to determine the request type for the clicked item
+-- in the items list. A left click will prompt for the amount and right click
+-- will request one of the item. A shift left or right click requests a stack or
+-- half stack respectively. This function also determines if the item will come
+-- from storage or request it to be crafted.
 function Gui:requestItem(itemName, button)
+  local requestedCrafting = false
+  if (self.keyShowCraftingPressed or not self.storageItems[itemName]) and self.recipeItems[itemName] then
+    requestedCrafting = true
+  end
+  
   local amount
   if not keyboard.isShiftDown() then
     -- If user left clicks item without pressing shift key, we need to prompt for the desired amount in search box.
     -- A right click (or middle click, if we could actually catch that signal with the screen coords, oof) requests one item.
     if button == 0 then
       self.textBox.searchMode = false
+      self.textBox.requestedItem = itemName
+      self.textBox.requestedCrafting = requestedCrafting
+      self.textBox.selected = true
+      self:drawAreaTop()
       self:clearTextBox()
-      
-      
-      
-      
       return
     elseif button == 1 or button == 2 then
       amount = 1
@@ -812,7 +1030,7 @@ function Gui:requestItem(itemName, button)
   end
   
   -- If crafting button held down or we don't have any of the item in storage, send a crafting request to crafting server. Otherwise send storage extract request.
-  if (self.keyShowCraftingPressed or not self.storageItems[itemName]) and self.recipeItems[itemName] then
+  if requestedCrafting then
     if not amount then
       if button == 0 then
         amount = self.recipeItems[itemName].maxSize
@@ -846,6 +1064,14 @@ function Gui:handleTouch(screenAddress, x, y, button, playerName)
     self:toggleButtonSortType()
   elseif isPointInRectangle(x, y, self.button.labelType.x, self.button.labelType.y, self.button.labelType.width, self.button.labelType.height) then
     self:toggleButtonLabelType()
+  elseif isPointInRectangle(x, y, self.button.lastPage.x, self.button.lastPage.y, self.button.lastPage.width, self.button.lastPage.height) then
+    self:toggleButtonLastPage()
+  elseif isPointInRectangle(x, y, self.button.nextPage.x, self.button.nextPage.y, self.button.nextPage.width, self.button.nextPage.height) then
+    self:toggleButtonNextPage()
+  elseif isPointInRectangle(x, y, self.button.start.x, self.button.start.y, self.button.start.width, self.button.start.height) then
+    self:toggleButtonStart()
+  elseif isPointInRectangle(x, y, self.button.cancel.x, self.button.cancel.y, self.button.cancel.width, self.button.cancel.height) then
+    self:toggleButtonCancel()
   else
     for i = 1, self.area.numItemColumns do
       local itemArea = self.area["item" .. i]
@@ -862,8 +1088,20 @@ end
 
 function Gui:handleScroll(screenAddress, x, y, direction, playerName)
   --print("handleScroll", screenAddress, x, y, direction, playerName)
-  self:updateScrollBar(direction)
-  self:drawAreaItem()
+  if x < self.area.craftingItem.x then
+    self:updateScrollBar(direction)
+    self:drawAreaItem()
+  else
+    self:updateCraftingScrollBar(direction)
+    self:drawAreaCraftingItem()
+  end
+end
+
+function Gui:addPendingCraftRequest(ticket, craftProgress)
+  self.crafting.pendingCraftRequest = {}
+  self.crafting.pendingCraftRequest[ticket] = craftProgress
+  self:updateCraftingScrollBar(0)
+  self:drawAreaCraftingItem()
 end
 
 
@@ -985,6 +1223,13 @@ local function main()
           -- TODO #######################################################################################################################################################################
         elseif dataType == "inter_recipe_list" then
           
+        elseif dataType == "inter_recipe_confirm" then
+          local ticket = string.match(data, "[^;]*")
+          data = string.sub(data, #ticket + 2)
+          if ticket == "missing" or ticket ~= "error" then
+            data = serialization.unserialize(data)
+          end
+          gui:addPendingCraftRequest(ticket, data)
         end
       end
     end

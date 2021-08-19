@@ -603,8 +603,8 @@ end
 
 -- Extract items from storage network. Just like insertStorage() this also
 -- follows rules for fragmentation prevention.
--- Returns false if not all of the amount specified could be extracted. The
--- destSlot, itemName, and amount can be nil.
+-- Returns false if not all of the amount specified could be extracted, and the
+-- amount that was extracted. The destSlot, itemName, and amount can be nil.
 local function extractStorage(transposers, routing, storageItems, destType, destIndex, destSlot, itemName, amount)
   checkArg(1, transposers, "table", 2, routing, "table", 3, storageItems, "table", 4, destType, "string", 5, destIndex, "number")
   --print("extractStorage(", transposers, routing, storageItems, destType, destIndex, destSlot, itemName, amount, ")")
@@ -877,7 +877,16 @@ local function main()
             itemName = nil
           end
           print("extract with item " .. tostring(itemName) .. " and amount " .. amount .. ".")
-          print("result = ", extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, tonumber(amount)))
+          -- Continuously extract item until we reach the amount or run out (or output full).
+          amount = tonumber(amount)
+          while amount > 0 do
+            local success, amountTransferred = extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, amount)
+            print("result = ", success, amountTransferred)
+            if not success then
+              break
+            end
+            amount = amount - (storageItems[itemName] and storageItems[itemName].maxSize or 0)
+          end
           sendStorageItemsDiff(craftInterServerAddresses, storageItems)
         elseif dataType == "stor_debug" then
           tdebug.printTable(storageItems)

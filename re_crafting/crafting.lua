@@ -654,6 +654,74 @@ we iterate tables in reverse to find the sequence of steps to run in parallel.
 
 --]]
 
+local function checkRecipe(stations, recipes, storageItems, pendingCraftRequests, itemName, amount)
+  checkArg2(1, stations, "table", 2, recipes, "table", 3, storageItems, "table", 4, pendingCraftRequests, "table", 5, itemName, "string", 6, amount, "number")
+  local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
+  
+  print("status = " .. status)
+  if status == "ok" or status == "missing" then
+    print("recipeIndices/recipeBatches and requiredItems")
+    for i = 1, #recipeIndices do
+      print(recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") = " .. recipeBatches[i])
+    end
+    tdebug.printTable(requiredItems)
+  end
+  
+  -- Check for expired tickets and remove them.
+  for ticketName, request in pairs(pendingCraftRequests) do
+    if computer.uptime() > request.creationTime + 10 then
+      print("ticket " .. ticketName .. "has expired")
+      pendingCraftRequests[ticketName] = nil
+    end
+  end
+  
+  -- Reserve a ticket for the crafting request if good to go.
+  local ticketName = ""
+  if status == "ok" then
+    while true do
+      ticketName = "id" .. math.floor(math.random(0, 999)) .. "," .. itemName .. "," .. amount
+      if not pendingCraftRequests[ticketName] then
+        break
+      end
+    end
+    print("creating ticket " .. ticketName)
+    pendingCraftRequests[ticketName] = {}
+    pendingCraftRequests[ticketName].creationTime = computer.uptime()
+    pendingCraftRequests[ticketName].recipeIndices = recipeIndices
+    pendingCraftRequests[ticketName].recipeBatches = recipeBatches
+    pendingCraftRequests[ticketName].requiredItems = requiredItems
+  end
+  
+  -- 
+  if status == "ok" or status == "missing" then
+    local craftProgress = {}
+    setmetatable(craftProgress, {__index = function(t, k) rawset(t, k, {inp=0, out=0, hav=0}) return t[k] end})
+    for i = 1, #recipeIndices do
+      local recipeDetails = recipes[recipeIndices[i]]
+      for _, input in ipairs(recipeDetails.inp) do
+        local inputAmount = (recipeDetails.station and input[2] or #input - 1)
+        craftProgress[input[1]].inp = craftProgress[input[1]].inp + inputAmount * recipeBatches[i]
+      end
+      for outputName, outputAmount in pairs(recipeDetails.out) do
+        craftProgress[outputName].out = craftProgress[outputName].out + outputAmount * recipeBatches[i]
+      end
+    end
+    for k, v in pairs(craftProgress) do
+      v.hav = (storageItems[k] and storageItems[k].total or 0)
+    end
+    
+    tdebug.printTable(craftProgress)
+    
+    if status == "ok" then
+      wnet.send(modem, address, COMMS_PORT, "inter_recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
+    else
+      wnet.send(modem, address, COMMS_PORT, "inter_recipe_confirm,missing;" .. serialization.serialize(craftProgress))
+    end
+  else
+    wnet.send(modem, address, COMMS_PORT, "inter_recipe_confirm,error;" .. status)
+  end
+end
+
 local function main()
   local threadSuccess = false
   -- Captures the interrupt signal to stop program.
@@ -661,7 +729,7 @@ local function main()
     event.pull("interrupted")
   end)
   
-  local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses
+  local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses, pendingCraftRequests
   local netLog = ""
   
   -- Performs setup and initialization tasks.
@@ -669,6 +737,8 @@ local function main()
     modem.open(COMMS_PORT)
     wnet.debug = true
     interfaceServerAddresses = {}
+    pendingCraftRequests = {}
+    math.randomseed(os.time())
     
     io.write("Loading recipes...\n")
     stations = {}
@@ -703,7 +773,7 @@ local function main()
     end
     io.write("\nSuccess.\n")
     
-    local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, "minecraft:torch/0", 16)
+    --local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, "minecraft:torch/0", 16)
     
     --storageItems["stuff:impossible/0"] = {}
     --storageItems["stuff:impossible/0"].maxSize = 64
@@ -711,14 +781,14 @@ local function main()
     --storageItems["stuff:impossible/0"].total = 1
     --local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, "stuff:nou/0", 100)
     
-    print("status = " .. status)
-    if status == "ok" or status == "missing" then
-      print("recipeIndices/recipeBatches and requiredItems")
-      for i = 1, #recipeIndices do
-        print(recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") -> " .. recipeBatches[i])
-      end
-      tdebug.printTable(requiredItems)
-    end
+    --print("status = " .. status)
+    --if status == "ok" or status == "missing" then
+      --print("recipeIndices/recipeBatches and requiredItems")
+      --for i = 1, #recipeIndices do
+        --print(recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") -> " .. recipeBatches[i])
+      --end
+      --tdebug.printTable(requiredItems)
+    --end
     
     threadSuccess = true
   end)
@@ -780,18 +850,9 @@ local function main()
           local itemName = string.match(data, "[^,]*")
           local amount = string.match(data, "[^,]*", #itemName + 2)
           
-          local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, 16)
-          
-          print("status = " .. status)
-          if status == "ok" or status == "missing" then
-            print("recipeIndices/recipeBatches and requiredItems")
-            for i = 1, #recipeIndices do
-              print(recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") -> " .. recipeBatches[i])
-            end
-            tdebug.printTable(requiredItems)
-          end
-          
-          
+          checkRecipe(stations, recipes, storageItems, pendingCraftRequests, itemName, tonumber(amount))
+        elseif dataType == "craft_recipe_start" then
+          print("start " .. data)
         end
       end
     end
