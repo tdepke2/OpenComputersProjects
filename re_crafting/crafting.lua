@@ -654,8 +654,8 @@ we iterate tables in reverse to find the sequence of steps to run in parallel.
 
 --]]
 
-local function checkRecipe(stations, recipes, storageItems, pendingCraftRequests, itemName, amount)
-  checkArg2(1, stations, "table", 2, recipes, "table", 3, storageItems, "table", 4, pendingCraftRequests, "table", 5, itemName, "string", 6, amount, "number")
+local function checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, senderAddress, itemName, amount)
+  checkArg2(1, stations, "table", 2, recipes, "table", 3, storageServerAddress, "string", 4, storageItems, "table", 5, pendingCraftRequests, "table", 6, senderAddress, "string", 7, itemName, "string", 8, amount, "number")
   local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   
   print("status = " .. status)
@@ -670,7 +670,7 @@ local function checkRecipe(stations, recipes, storageItems, pendingCraftRequests
   -- Check for expired tickets and remove them.
   for ticketName, request in pairs(pendingCraftRequests) do
     if computer.uptime() > request.creationTime + 10 then
-      print("ticket " .. ticketName .. "has expired")
+      print("ticket " .. ticketName .. " has expired")
       pendingCraftRequests[ticketName] = nil
     end
   end
@@ -692,7 +692,7 @@ local function checkRecipe(stations, recipes, storageItems, pendingCraftRequests
     pendingCraftRequests[ticketName].requiredItems = requiredItems
   end
   
-  -- 
+  -- Compute the craftProgress table if possible and send to interface/crafting servers. Otherwise we report the error.
   if status == "ok" or status == "missing" then
     local craftProgress = {}
     setmetatable(craftProgress, {__index = function(t, k) rawset(t, k, {inp=0, out=0, hav=0}) return t[k] end})
@@ -713,12 +713,13 @@ local function checkRecipe(stations, recipes, storageItems, pendingCraftRequests
     tdebug.printTable(craftProgress)
     
     if status == "ok" then
-      wnet.send(modem, address, COMMS_PORT, "inter_recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
+      wnet.send(modem, senderAddress, COMMS_PORT, "inter_recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
+      wnet.send(modem, storageServerAddress, COMMS_PORT, "stor_recipe_reserve," .. ticketName .. ";" .. serialization.serialize(requiredItems))
     else
-      wnet.send(modem, address, COMMS_PORT, "inter_recipe_confirm,missing;" .. serialization.serialize(craftProgress))
+      wnet.send(modem, senderAddress, COMMS_PORT, "inter_recipe_confirm,missing;" .. serialization.serialize(craftProgress))
     end
   else
-    wnet.send(modem, address, COMMS_PORT, "inter_recipe_confirm,error;" .. status)
+    wnet.send(modem, senderAddress, COMMS_PORT, "inter_recipe_confirm,error;" .. status)
   end
 end
 
@@ -850,9 +851,13 @@ local function main()
           local itemName = string.match(data, "[^,]*")
           local amount = string.match(data, "[^,]*", #itemName + 2)
           
-          checkRecipe(stations, recipes, storageItems, pendingCraftRequests, itemName, tonumber(amount))
+          checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, address, itemName, tonumber(amount))
         elseif dataType == "craft_recipe_start" then
           print("start " .. data)
+        elseif dataType == "craft_recipe_cancel" then
+          -- Interface is requesting to cancel crafting operation. Forward request to storage and clear entry in pendingCraftRequests.
+          wnet.send(modem, storageServerAddress, COMMS_PORT, "stor_recipe_cancel," .. data)
+          pendingCraftRequests[data] = nil
         end
       end
     end

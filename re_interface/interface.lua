@@ -893,6 +893,7 @@ function Gui:toggleButtonStart()
   if ticket and string.find(ticket, "^id") then
     wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_recipe_start," .. ticket)
     self.crafting.pendingCraftRequest[ticket] = nil
+    -- FIXME move ticket to active before setting nil? ########################################################################################################
     
     self:updateCraftingScrollBar(0)
     self:drawAreaCraftingItem()
@@ -900,7 +901,16 @@ function Gui:toggleButtonStart()
 end
 
 function Gui:toggleButtonCancel()
-  
+  local ticket = next(self.crafting.pendingCraftRequest)
+  if ticket then
+    if string.find(ticket, "^id") then
+      wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_recipe_cancel," .. ticket)
+    end
+    self.crafting.pendingCraftRequest[ticket] = nil
+    
+    self:updateCraftingScrollBar(0)
+    self:drawAreaCraftingItem()
+  end
 end
 
 function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
@@ -1098,7 +1108,15 @@ function Gui:handleScroll(screenAddress, x, y, direction, playerName)
 end
 
 function Gui:addPendingCraftRequest(ticket, craftProgress)
-  self.crafting.pendingCraftRequest = {}
+  -- Remove any old pending request and cancel it if applicable.
+  local oldTicket = next(self.crafting.pendingCraftRequest)
+  if oldTicket then
+    if string.find(oldTicket, "^id") then
+      wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_recipe_cancel," .. oldTicket)
+    end
+    self.crafting.pendingCraftRequest[oldTicket] = nil
+  end
+  
   self.crafting.pendingCraftRequest[ticket] = craftProgress
   self:updateCraftingScrollBar(0)
   self:drawAreaCraftingItem()

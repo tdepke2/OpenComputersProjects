@@ -604,8 +604,10 @@ end
 -- Extract items from storage network. Just like insertStorage() this also
 -- follows rules for fragmentation prevention.
 -- Returns false if not all of the amount specified could be extracted, and the
--- amount that was extracted. The destSlot, itemName, and amount can be nil.
-local function extractStorage(transposers, routing, storageItems, destType, destIndex, destSlot, itemName, amount)
+-- amount that was extracted. The destSlot, itemName, amount, and reservedItems
+-- can be nil. If reserved items are specified, the storage will purposefully
+-- fail to extract these items.
+local function extractStorage(transposers, routing, storageItems, destType, destIndex, destSlot, itemName, amount, reservedItems)
   checkArg(1, transposers, "table", 2, routing, "table", 3, storageItems, "table", 4, destType, "string", 5, destIndex, "number")
   --print("extractStorage(", transposers, routing, storageItems, destType, destIndex, destSlot, itemName, amount, ")")
   assert(destType == "input" or destType == "output" or destType == "drone")
@@ -620,8 +622,19 @@ local function extractStorage(transposers, routing, storageItems, destType, dest
   if not storageItems[itemName] then
     return false, 0
   end
-  -- Clamp amount to the max stack size, and use the storage total for the amount if not specified.
-  amount = math.floor(math.min((amount or storageItems[itemName].total), storageItems[itemName].maxSize))
+  
+  -- Find amount available taking into account the reservedItems if provided. If this amount is less than the amount asked for, we reduce it.
+  local amountAvailable = math.max(storageItems[itemName].total - math.max(reservedItems and reservedItems[itemName] or 0, 0), 0)
+  -- Clamp amount to the max stack size, and use the amountAvailable for the amount if not specified.
+  amount = math.floor(math.min((amount or amountAvailable), storageItems[itemName].maxSize))
+  local isAmountNotReduced = true
+  if amount > amountAvailable then
+    amount = amountAvailable
+    isAmountNotReduced = false
+  end
+  if amount == 0 then
+    return isAmountNotReduced, 0
+  end
   local originalAmount = amount
   
   -- Find the first empty slot to choose as a destination if not given.
@@ -693,7 +706,7 @@ local function extractStorage(transposers, routing, storageItems, destType, dest
     removeStorageItems(transposers, routing, storageItems, storageItems[itemName].extractIndex, storageItems[itemName].extractSlot, item, amountTransferred)
     
     if amountTransferred == amount then
-      return true, originalAmount
+      return isAmountNotReduced, originalAmount
     elseif amountTransferred < sendAmount then
       return false, amountTransferred
     end
@@ -724,7 +737,7 @@ local function extractStorage(transposers, routing, storageItems, destType, dest
           removeStorageItems(transposers, routing, storageItems, invIndex, slot, item, amountTransferred)
           
           if amountTransferred == amount then
-            return true, originalAmount
+            return isAmountNotReduced, originalAmount
           elseif amountTransferred < sendAmount then
             return false, originalAmount - amount + amountTransferred
           end
@@ -752,15 +765,16 @@ end
 
 
 -- Strip off the unnecessary data in storageItems and send over the network to
--- specified addresses (or broadcast if nil).
-local function sendTrimmedStorageItems(addresses, storageItems)
+-- specified addresses (or broadcast if nil). Items that are reserved are hidden
+-- away.
+local function sendAvailableItems(addresses, storageItems, reservedItems)
   local items = {}
   for itemName, itemDetails in pairs(storageItems) do
-    if itemName ~= "data" then
+    if itemName ~= "data" and itemDetails.total > (reservedItems[itemName] or 0) then
       items[itemName] = {}
       items[itemName].maxSize = itemDetails.maxSize
       items[itemName].label = itemDetails.label
-      items[itemName].total = itemDetails.total
+      items[itemName].total = itemDetails.total - math.max(reservedItems[itemName] or 0, 0)
     end
   end
   items = serialization.serialize(items)
@@ -770,26 +784,57 @@ end
 
 -- Compiles the changes made to storageItems since the last call to this
 -- function, and sends the changes over network to the addresses (or broadcast
--- if nil).
-local function sendStorageItemsDiff(addresses, storageItems)
+-- if nil). Items that are reserved are hidden away.
+local function sendAvailableItemsDiff(addresses, storageItems, reservedItems)
+  -- Merge changes from storageItems and reservedItems together.
+  local mergedChanges = {}
+  for itemName, _ in pairs(storageItems.data.changes) do
+    mergedChanges[itemName] = true
+  end
+  for itemName, _ in pairs(reservedItems.data.changes) do
+    mergedChanges[itemName] = true
+  end
+  
+  -- Pull changes from storageItems and reservedItems to build a diff.
   local itemsDiff = {}
-  for itemName, previousTotal in pairs(storageItems.data.changes) do
-    if storageItems[itemName] then
-      if storageItems[itemName].total ~= previousTotal then
+  for itemName, _ in pairs(mergedChanges) do
+    -- Find previous and current amount available.
+    -- We clamp to non-negative values to discard negative reserved amounts and account for reservations greater than what is stored.
+    local currentTotal = (storageItems[itemName] and storageItems[itemName].total or 0)
+    local previousAvailable = math.max((storageItems.data.changes[itemName] or currentTotal) - math.max(reservedItems.data.changes[itemName] or reservedItems[itemName] or 0, 0), 0)
+    local currentAvailable = math.max(currentTotal - math.max(reservedItems[itemName] or 0, 0), 0)
+    
+    if currentAvailable ~= 0 then
+      if previousAvailable ~= currentAvailable then
         itemsDiff[itemName] = {}
         itemsDiff[itemName].maxSize = storageItems[itemName].maxSize
         itemsDiff[itemName].label = storageItems[itemName].label
-        itemsDiff[itemName].total = storageItems[itemName].total
+        itemsDiff[itemName].total = currentAvailable
       end
-    else
+    elseif previousAvailable ~= 0 then
       itemsDiff[itemName] = {}
       itemsDiff[itemName].total = 0
     end
     storageItems.data.changes[itemName] = nil
+    reservedItems.data.changes[itemName] = nil
   end
   if next(itemsDiff) ~= nil then
     itemsDiff = serialization.serialize(itemsDiff)
     sendToAddresses(addresses, "craftinter_item_diff," .. itemsDiff)
+  end
+end
+
+
+-- Set amount for a reserved item. Adds a new entry to changes to keep track of
+-- previous amount.
+local function setReservedItemAmount(reservedItems, itemName, amount)
+  if not reservedItems.data.changes[itemName] then
+    reservedItems.data.changes[itemName] = (reservedItems[itemName] or 0)
+  end
+  if amount ~= 0 then
+    reservedItems[itemName] = amount
+  else
+    reservedItems[itemName] = nil
   end
 end
 
@@ -803,13 +848,14 @@ local function main()
     event.pull("interrupted")
   end)
   
-  local transposers, routing, storageItems, craftInterServerAddresses
+  local transposers, routing, storageItems, reservedItems, craftInterServerAddresses, pendingCraftRequests
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
     modem.open(COMMS_PORT)
     wnet.debug = true
     craftInterServerAddresses = {}
+    pendingCraftRequests = {}
     
     transposers, routing = loadRoutingConfig(ROUTING_CONFIG_FILENAME)
     
@@ -827,6 +873,11 @@ local function main()
     end
     io.write("\n")
     storageItems.data.changes = {}    -- Add changes table now to track changes in item totals.
+    
+    -- Reserved items start empty, these are items that will appear invisible in storage system. Crafting jobs use this to hide away intermediate crafting ingredients.
+    reservedItems = {}
+    reservedItems.data = {}
+    reservedItems.data.changes = {}
     
     --print(" - items - ")
     --tdebug.printTable(storageItems)
@@ -862,12 +913,12 @@ local function main()
         if dataType == "stor_discover" then
           -- Device is searching for this storage server, respond with storage items list.
           craftInterServerAddresses[address] = true
-          sendTrimmedStorageItems({[address]=true}, storageItems)
+          sendAvailableItems({[address]=true}, storageItems, reservedItems)
         elseif dataType == "stor_insert" then
           -- Device requested to insert items into the network.
           craftInterServerAddresses[address] = true
           print("result = ", insertStorage(transposers, routing, storageItems, "input", 1))
-          sendStorageItemsDiff(craftInterServerAddresses, storageItems)
+          sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
         elseif dataType == "stor_extract" then
           -- Device has requested to extract items from network.
           craftInterServerAddresses[address] = true
@@ -880,14 +931,65 @@ local function main()
           -- Continuously extract item until we reach the amount or run out (or output full).
           amount = tonumber(amount)
           while amount > 0 do
-            local success, amountTransferred = extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, amount)
+            local success, amountTransferred = extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, amount, reservedItems)
             print("result = ", success, amountTransferred)
             if not success then
               break
             end
-            amount = amount - (storageItems[itemName] and storageItems[itemName].maxSize or 0)
+            amount = amount - amountTransferred
           end
-          sendStorageItemsDiff(craftInterServerAddresses, storageItems)
+          sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+        elseif dataType == "stor_recipe_reserve" then
+          -- Crafting server is requesting to reserve items for crafting operation.
+          local ticket = string.match(data, "[^;]*")
+          data = string.sub(data, #ticket + 2)
+          
+          -- Check for expired tickets and remove them.
+          for ticketName, request in pairs(pendingCraftRequests) do
+            if computer.uptime() > request.creationTime + 10 then
+              print("ticket " .. ticketName .. " has expired")
+              
+              for itemName, amount in pairs(request.reserved) do
+                setReservedItemAmount(reservedItems, itemName, (reservedItems[itemName] or 0) - amount)
+              end
+              pendingCraftRequests[ticketName] = nil
+            end
+          end
+          
+          -- Add all required items for crafting directly to the reserved list.
+          -- This includes the negative ones (recipe outputs), a negative reservation means the item can be reserved later once inserted into network but will show up anyways.
+          local requiredItems = serialization.unserialize(data)
+          local reserveFailed = false
+          for itemName, amount in pairs(requiredItems) do
+            setReservedItemAmount(reservedItems, itemName, (reservedItems[itemName] or 0) + amount)
+            if (reservedItems[itemName] or 0) > (storageItems[itemName] and storageItems[itemName].total or 0) then
+              reserveFailed = true
+            end
+          end
+          
+          -- If we successfully reserved the items then add the ticket to pending. Otherwise we undo the reservation.
+          if not reserveFailed then
+            pendingCraftRequests[ticket] = {}
+            pendingCraftRequests[ticket].creationTime = computer.uptime()
+            pendingCraftRequests[ticket].reserved = requiredItems
+          else
+            for itemName, amount in pairs(requiredItems) do
+              setReservedItemAmount(reservedItems, itemName, (reservedItems[itemName] or 0) - amount)
+            end
+            wnet.send(modem, address, COMMS_PORT, "craft_recipe_cancel," .. ticket)
+          end
+          
+          sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+        elseif dataType == "stor_recipe_cancel" then
+          -- Crafting server is requesting to cancel a crafting operation.
+          if pendingCraftRequests[data] then
+            for itemName, amount in pairs(pendingCraftRequests[data].reserved) do
+              setReservedItemAmount(reservedItems, itemName, (reservedItems[itemName] or 0) - amount)
+            end
+            pendingCraftRequests[data] = nil
+            
+            sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+          end
         elseif dataType == "stor_debug" then
           tdebug.printTable(storageItems)
         end
@@ -914,7 +1016,7 @@ local function main()
           if next(item) ~= nil then
             local success, amountTransferred = insertStorage(transposers, routing, storageItems, "input", 1, slot)
             print("result = ", success, amountTransferred)
-            sendStorageItemsDiff(craftInterServerAddresses, storageItems)
+            sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
             os.sleep(0)    -- Yield to let other threads do I/O with storage if they need to.
           end
           item = itemIter()

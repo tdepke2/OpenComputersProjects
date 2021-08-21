@@ -20,12 +20,19 @@ DONE    * Item list sent to interface should use a simpler format, don't need to
 DONE    * Storage needs to send item diffs when contents change.
             * Maybe interface will need to do a "fake" pending update of contents and confirm when it gets the message (this could be bad idea)?
             * More likely not, doesn't work well with multiple users.
+DONE    * We will need to keep a secondary storage table that represents the "available" items, this is reported to interfaces and stuff.
+            * This solves the issue of hiding away intermediate ingredients in crafting process.
+            * Solution: instead of keeping a second list, just keep list of reserved items and amounts.
 
 --------------------------------------------------------------------------------
 Crafting Tasks:
 DONE    * Network module needs compressed version and testing with drones.
-* Seems like we will need to keep a secondary storage table that represents the "available" items, this is reported to interfaces and stuff.
-    * This could solve the issue of hiding away intermediate ingredients in crafting process.
+* For robots, need to have them adjacent to drone inventories for crafting tasks.
+    * The robots spin around to access items.
+* Storage may need to know which robots can see which inventories.
+    * Either have storage fully keep track of which robots see what inventory, and do this by having robots scan adjacent inventories during setup script.
+    * Or do this dynamically each boot by dropping items off in any drone inventory and robots report if they can reach (might be tricky).
+* Need scheduling algorithm for crafting steps to keep crafting jobs running in parallel.
 
 --------------------------------------------------------------------------------
 Interface Tasks:
@@ -38,9 +45,9 @@ DONE    * Better item display interface with easy selection.
                 * Click and scroll to get what you want, nice.
 DONE    * May be a good idea to convert all GUI draw calls to the lazy system (so we can have redundant draw calls without a problem).
 * Scroll bar should be clickable and same for search bar.
-* When clicking item to request, left/right-click prompts input of amount in the search bar (press enter to confirm or enter with empty string to cancel).
-    * Shift + left-click grabs one stack, shift + right-click grabs half stack, middle-click grabs one.
-    * Middle click doesn't work cuz it doesn't report screen coordinates, right-click grabs one instead.
+DONE    * When clicking item to request, left/right-click prompts input of amount in the search bar (press enter to confirm or enter with empty string to cancel).
+            * Shift + left-click grabs one stack, shift + right-click grabs half stack, middle-click grabs one.
+            * Middle click doesn't work cuz it doesn't report screen coordinates, right-click grabs one instead.
 * Log should display at bottom of GUI and report success/fail of item requests.
     * Maybe also display item insert events and crafting completion?
 DONE    * Need to display craftable items along with the rest, crafting system will need some work first.
