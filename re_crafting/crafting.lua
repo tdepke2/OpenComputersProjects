@@ -723,6 +723,8 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
   end
 end
 
+
+
 local function main()
   local threadSuccess = false
   -- Captures the interrupt signal to stop program.
@@ -858,6 +860,10 @@ local function main()
           -- Interface is requesting to cancel crafting operation. Forward request to storage and clear entry in pendingCraftRequests.
           wnet.send(modem, storageServerAddress, COMMS_PORT, "stor_recipe_cancel," .. data)
           pendingCraftRequests[data] = nil
+        elseif dataType == "drone_error" then
+          --print("Drone error: " .. string.format("%q", data))
+        elseif dataType == "robot_error" then
+          --print("Robot error: " .. string.format("%q", data))
         end
       end
     end
@@ -879,11 +885,25 @@ local function main()
       io.write("> ")
       local input = io.read()
       input = text.tokenize(input)
-      if input[1] == "up" then
+      if input[1] == "dup" then
         local file = io.open("drone_up.lua")
         local sourceCode = file:read(10000000)
         io.write("Uploading \"drone_up.lua\"...\n")
         wnet.send(modem, nil, COMMS_PORT, "drone_upload," .. sourceCode)
+      elseif input[1] == "rup" then
+        local file = io.open("robot_up.lua")
+        local sourceCode = file:read(10000000)
+        io.write("Uploading \"robot_up.lua\"...\n")
+        wnet.send(modem, nil, COMMS_PORT, "robot_upload," .. sourceCode)
+      elseif input[1] == "rsetup" then
+        local file = io.open("robot_up.lua")
+        local sourceCode = file:read("a")     -- FIXME check if this works? ########################################
+        file:close()
+        io.write("Uploading \"robot_up.lua\"...\n")
+        wnet.send(modem, nil, COMMS_PORT, "robot_upload," .. sourceCode)
+        
+        local robotAddresses = {}
+        wnet.send(modem, nil, COMMS_PORT, "robot_scan_adjacent,minecraft:redstone/0,1")
       elseif input[1] == "exit" then
         threadSuccess = true
         break

@@ -1,4 +1,15 @@
-local drone = component.proxy(component.list("drone")())
+-- FIXME we now use this for both drones and robots, name should change ###########################################################
+
+local drone
+if component.list("drone")() then
+  drone = component.proxy(component.list("drone")())
+end
+local gpu
+if component.list("gpu")() then
+  gpu = component.proxy(component.list("gpu")())
+  local screenAddress = component.list("screen")()
+  gpu.bind(screenAddress)
+end
 local modem = component.proxy(component.list("modem")())
 
 local COMMS_PORT = 0xE298
@@ -53,58 +64,49 @@ computer.beep(500, 0.1)
 computer.beep(700, 0.1)
 computer.beep(900, 0.1)
 
-drone.setStatusText("Start!")
+if drone then
+  drone.setStatusText("Start!")
+elseif gpu then
+  gpu.set(1, 1, "Start!    ")
+end
 
 modem.open(COMMS_PORT)
 
 while true do
   local ev = {computer.pullSignal()}
-  wnet.send(modem, nil, COMMS_PORT, "ev = " .. tostring(ev[1]) .. "," .. tostring(ev[2]) .. "," .. tostring(ev[3]) .. "," .. tostring(ev[4]) .. "," .. tostring(ev[5]) .. "," .. tostring(ev[6]))
+  --wnet.send(modem, nil, COMMS_PORT, "ev = " .. tostring(ev[1]) .. "," .. tostring(ev[2]) .. "," .. tostring(ev[3]) .. "," .. tostring(ev[4]) .. "," .. tostring(ev[5]) .. "," .. tostring(ev[6]))
   local address, port, data = wnet.receive(ev)
   
   if port == COMMS_PORT then
     local dataType = string.match(data, "[^,]*")
     data = string.sub(data, #dataType + 2)
     
-    if dataType == "drone_upload" then
+    if dataType == "drone_upload" and drone then
       drone.setStatusText("Running.")
       local fn, err = load(data)
       if fn then
+        wnet.send(modem, address, COMMS_PORT, "drone_start,")
         local status, err = pcall(fn)
         if not status then
-          wnet.send(modem, address, COMMS_PORT, "drone_runtime_error," .. err)
+          wnet.send(modem, address, COMMS_PORT, "drone_error,runtime," .. err)
         end
       else
-        wnet.send(modem, address, COMMS_PORT, "drone_compile_error," .. err)
+        wnet.send(modem, address, COMMS_PORT, "drone_error,compile," .. err)
       end
       drone.setStatusText("Done.")
-    end
-  end
-end
-
---[[
-local baseStation
-while true do
-  local ev, _, sender, port, _, message, arg1 = computer.pullSignal()
-  
-  if ev == "modem_message" and port == COMMS_PORT then
-    --if message == "FIND_DRONE" then
-      --drone.setStatusText("Link:\n" .. sender:sub(1, 4))
-      --modem.send(sender, COMMS_PORT, "FIND_DRONE_ACK")
-      --baseStation = sender
-    if message == "drone_upload" and arg1 then
-      drone.setStatusText("Running.")
-      local fn, err = load(arg1)
+    elseif dataType == "robot_upload" and not drone then
+      gpu.set(1, 1, "Running.  ")
+      local fn, err = load(data)
       if fn then
+        wnet.send(modem, address, COMMS_PORT, "robot_start,")
         local status, err = pcall(fn)
         if not status then
-          modem.send(sender, COMMS_PORT, "drone_runtime_error", err)
+          wnet.send(modem, address, COMMS_PORT, "robot_error,runtime," .. err)
         end
       else
-        modem.send(sender, COMMS_PORT, "drone_compile_error", err)
+        wnet.send(modem, address, COMMS_PORT, "robot_error,compile," .. err)
       end
-      drone.setStatusText("Done.")
+      gpu.set(1, 1, "Done.     ")
     end
   end
 end
---]]
