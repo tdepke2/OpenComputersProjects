@@ -713,13 +713,13 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
     tdebug.printTable(craftProgress)
     
     if status == "ok" then
-      wnet.send(modem, senderAddress, COMMS_PORT, "inter_recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
-      wnet.send(modem, storageServerAddress, COMMS_PORT, "stor_recipe_reserve," .. ticketName .. ";" .. serialization.serialize(requiredItems))
+      wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
+      wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_reserve," .. ticketName .. ";" .. serialization.serialize(requiredItems))
     else
-      wnet.send(modem, senderAddress, COMMS_PORT, "inter_recipe_confirm,missing;" .. serialization.serialize(craftProgress))
+      wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,missing;" .. serialization.serialize(craftProgress))
     end
   else
-    wnet.send(modem, senderAddress, COMMS_PORT, "inter_recipe_confirm,error;" .. status)
+    wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,error;" .. status)
   end
 end
 
@@ -761,14 +761,14 @@ local function main()
         lastAttemptTime = computer.uptime()
         term.clearLine()
         io.write("Trying to contact storage server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
-        wnet.send(modem, nil, COMMS_PORT, "stor_discover,")
+        wnet.send(modem, nil, COMMS_PORT, "stor:discover,")
         attemptNumber = attemptNumber + 1
       end
       local address, port, data = wnet.receive(0.1)
       if port == COMMS_PORT then
-        local dataType = string.match(data, "[^,]*")
-        data = string.sub(data, #dataType + 2)
-        if dataType == "craftinter_item_list" then
+        local dataHeader = string.match(data, "[^,]*")
+        data = string.sub(data, #dataHeader + 2)
+        if dataHeader == "any:item_list" then
           storageItems = serialization.unserialize(data)
           storageServerAddress = address
         end
@@ -793,6 +793,9 @@ local function main()
       --tdebug.printTable(requiredItems)
     --end
     
+    -- Report system started to other listening devices (so they can re-discover the crafting server).
+    wnet.send(modem, nil, COMMS_PORT, "any:craft_started,")
+    
     threadSuccess = true
   end)
   
@@ -810,10 +813,10 @@ local function main()
     while true do
       local address, port, data = wnet.receive()
       if port == COMMS_PORT then
-        local dataType = string.match(data, "[^,]*")
-        data = string.sub(data, #dataType + 2)
+        local dataHeader = string.match(data, "[^,]*")
+        data = string.sub(data, #dataHeader + 2)
         
-        if dataType == "craftinter_item_diff" then
+        if dataHeader == "any:item_diff" then
           -- Apply the items diff to storageItems to keep the table synced up.
           local itemsDiff = serialization.unserialize(data)
           for itemName, diff in pairs(itemsDiff) do
@@ -828,14 +831,14 @@ local function main()
               storageItems[itemName].total = diff.total
             end
           end
-        elseif dataType == "craftinter_stor_started" then
+        elseif dataHeader == "any:stor_started" then
           -- If we get a broadcast that storage started, it must have just rebooted and we need to discover new storageItems.
-          wnet.send(modem, address, COMMS_PORT, "stor_discover,")
-        elseif dataType == "craftinter_item_list" then
+          wnet.send(modem, address, COMMS_PORT, "stor:discover,")
+        elseif dataHeader == "any:item_list" then
           -- New item list, update storageItems.
           storageItems = serialization.unserialize(data)
           storageServerAddress = address
-        elseif dataType == "craft_discover" then
+        elseif dataHeader == "craft:discover" then
           -- Interface is searching for this crafting server, respond with list of recipes.
           interfaceServerAddresses[address] = true
           local recipeItems = {}
@@ -846,23 +849,23 @@ local function main()
               recipeItems[k].label = v.label
             end
           end
-          wnet.send(modem, address, COMMS_PORT, "inter_recipe_list," .. serialization.serialize(recipeItems))
-        elseif dataType == "craft_check_recipe" then
+          wnet.send(modem, address, COMMS_PORT, "any:recipe_list," .. serialization.serialize(recipeItems))
+        elseif dataHeader == "craft:check_recipe" then
           -- Interface is requesting to craft an item, compute the recipe dependencies and reserve a ticket for the operation if successful.
           interfaceServerAddresses[address] = true
           local itemName = string.match(data, "[^,]*")
           local amount = string.match(data, "[^,]*", #itemName + 2)
           
           checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, address, itemName, tonumber(amount))
-        elseif dataType == "craft_recipe_start" then
+        elseif dataHeader == "craft:recipe_start" then
           print("start " .. data)
-        elseif dataType == "craft_recipe_cancel" then
+        elseif dataHeader == "craft:recipe_cancel" then
           -- Interface is requesting to cancel crafting operation. Forward request to storage and clear entry in pendingCraftRequests.
-          wnet.send(modem, storageServerAddress, COMMS_PORT, "stor_recipe_cancel," .. data)
+          wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_cancel," .. data)
           pendingCraftRequests[data] = nil
-        elseif dataType == "drone_error" then
+        elseif dataHeader == "any:drone_error" then
           --print("Drone error: " .. string.format("%q", data))
-        elseif dataType == "robot_error" then
+        elseif dataHeader == "any:robot_error" then
           --print("Robot error: " .. string.format("%q", data))
         end
       end
@@ -889,21 +892,21 @@ local function main()
         local file = io.open("drone_up.lua")
         local sourceCode = file:read(10000000)
         io.write("Uploading \"drone_up.lua\"...\n")
-        wnet.send(modem, nil, COMMS_PORT, "drone_upload," .. sourceCode)
+        wnet.send(modem, nil, COMMS_PORT, "drone:upload," .. sourceCode)
       elseif input[1] == "rup" then
         local file = io.open("robot_up.lua")
         local sourceCode = file:read(10000000)
         io.write("Uploading \"robot_up.lua\"...\n")
-        wnet.send(modem, nil, COMMS_PORT, "robot_upload," .. sourceCode)
+        wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. sourceCode)
       elseif input[1] == "rsetup" then
         local file = io.open("robot_up.lua")
         local sourceCode = file:read("a")     -- FIXME check if this works? ########################################
         file:close()
         io.write("Uploading \"robot_up.lua\"...\n")
-        wnet.send(modem, nil, COMMS_PORT, "robot_upload," .. sourceCode)
+        wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. sourceCode)
         
         local robotAddresses = {}
-        wnet.send(modem, nil, COMMS_PORT, "robot_scan_adjacent,minecraft:redstone/0,1")
+        wnet.send(modem, nil, COMMS_PORT, "robot:scan_adjacent,minecraft:redstone/0,1")
       elseif input[1] == "exit" then
         threadSuccess = true
         break

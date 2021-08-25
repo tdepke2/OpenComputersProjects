@@ -778,7 +778,7 @@ local function sendAvailableItems(addresses, storageItems, reservedItems)
     end
   end
   items = serialization.serialize(items)
-  sendToAddresses(addresses, "craftinter_item_list," .. items)
+  sendToAddresses(addresses, "any:item_list," .. items)
 end
 
 
@@ -820,7 +820,7 @@ local function sendAvailableItemsDiff(addresses, storageItems, reservedItems)
   end
   if next(itemsDiff) ~= nil then
     itemsDiff = serialization.serialize(itemsDiff)
-    sendToAddresses(addresses, "craftinter_item_diff," .. itemsDiff)
+    sendToAddresses(addresses, "any:item_diff," .. itemsDiff)
   end
 end
 
@@ -883,7 +883,7 @@ local function main()
     --tdebug.printTable(storageItems)
     
     -- Report system started to other listening devices (so they can re-discover the storage).
-    wnet.send(modem, nil, COMMS_PORT, "craftinter_stor_started,")
+    wnet.send(modem, nil, COMMS_PORT, "any:stor_started,")
     
     threadSuccess = true
   end)
@@ -903,25 +903,19 @@ local function main()
     while true do
       local address, port, data = wnet.receive()
       if port == COMMS_PORT then
-        local dataType = string.match(data, "[^,]*")
-        data = string.sub(data, #dataType + 2)
+        local dataHeader = string.match(data, "[^,]*")
+        data = string.sub(data, #dataHeader + 2)
         
-        --if string.find(dataType, "stor_", 1, true) then
-          -- assume this is an interface??? set craftInterServerAddresses
-        --end
-        
-        if dataType == "stor_discover" then
+        if dataHeader == "stor:discover" then
           -- Device is searching for this storage server, respond with storage items list.
           craftInterServerAddresses[address] = true
           sendAvailableItems({[address]=true}, storageItems, reservedItems)
-        elseif dataType == "stor_insert" then
+        elseif dataHeader == "stor:insert" then
           -- Device requested to insert items into the network.
-          craftInterServerAddresses[address] = true
           print("result = ", insertStorage(transposers, routing, storageItems, "input", 1))
           sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-        elseif dataType == "stor_extract" then
+        elseif dataHeader == "stor:extract" then
           -- Device has requested to extract items from network.
-          craftInterServerAddresses[address] = true
           local itemName = string.match(data, "[^,]*")
           local amount = string.match(data, "[^,]*", #itemName + 2)
           if itemName == "" then
@@ -939,7 +933,7 @@ local function main()
             amount = amount - amountTransferred
           end
           sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-        elseif dataType == "stor_recipe_reserve" then
+        elseif dataHeader == "stor:recipe_reserve" then
           -- Crafting server is requesting to reserve items for crafting operation.
           local ticket = string.match(data, "[^;]*")
           data = string.sub(data, #ticket + 2)
@@ -976,11 +970,11 @@ local function main()
             for itemName, amount in pairs(requiredItems) do
               setReservedItemAmount(reservedItems, itemName, (reservedItems[itemName] or 0) - amount)
             end
-            wnet.send(modem, address, COMMS_PORT, "craft_recipe_cancel," .. ticket)
+            wnet.send(modem, address, COMMS_PORT, "craft:recipe_cancel," .. ticket)
           end
           
           sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-        elseif dataType == "stor_recipe_cancel" then
+        elseif dataHeader == "stor:recipe_cancel" then
           -- Crafting server is requesting to cancel a crafting operation.
           if pendingCraftRequests[data] then
             for itemName, amount in pairs(pendingCraftRequests[data].reserved) do
@@ -990,7 +984,7 @@ local function main()
             
             sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
           end
-        elseif dataType == "stor_debug" then
+        elseif dataHeader == "stor:debug" then
           tdebug.printTable(storageItems)
         end
       end

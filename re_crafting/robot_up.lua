@@ -32,10 +32,10 @@ local function main()
     local address, port, data = wnet.receive(ev)
     
     if port == COMMS_PORT then
-      local dataType = string.match(data, "[^,]*")
-      data = string.sub(data, #dataType + 2)
+      local dataHeader = string.match(data, "[^,]*")
+      data = string.sub(data, #dataHeader + 2)
       
-      if dataType == "robot_scan_adjacent" then
+      if dataHeader == "robot:scan_adjacent" then
         local itemName = string.match(data, "[^,]*")
         local slotNum = tonumber(string.match(data, "[^,]*", #itemName + 2))
         local foundSide
@@ -61,7 +61,7 @@ local function main()
         robot.turn(true)
         
         gpu.set(1, 4, "foundSide = " .. tostring(foundSide))
-      elseif dataType == "robot_halt" then
+      elseif dataHeader == "robot:halt" then
         computer.pullSignal(math.random() * 0.4)
         computer.beep(800, 0.05)
         computer.beep(600, 0.05)
@@ -76,7 +76,7 @@ local function main()
     if not status then
       computer.beep(300, 0.2)
       computer.beep(300, 0.2)
-      wnet.send(modem, nil, COMMS_PORT, "robot_error,runtime," .. msg)
+      wnet.send(modem, nil, COMMS_PORT, "any:robot_error,runtime," .. msg)
       break
     end
   end

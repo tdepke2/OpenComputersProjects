@@ -45,14 +45,14 @@ local function main()
   end
   
   -- Reset any running robots.
-  wnet.send(modem, nil, COMMS_PORT, "robot_halt,")
+  wnet.send(modem, nil, COMMS_PORT, "robot:halt,")
   os.sleep(1)
   
   -- Send robot code to active robots.
   local robotUpFile = io.open("robot_up.lua")
   io.write("Uploading \"robot_up.lua\"...\n")
   wnet.debug = false
-  wnet.send(modem, nil, COMMS_PORT, "robot_upload," .. robotUpFile:read("a"))
+  wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. robotUpFile:read("a"))
   wnet.debug = true
   robotUpFile:close()
   
@@ -63,9 +63,9 @@ local function main()
   while lastResponseTime + 2 > computer.uptime() do
     local address, port, data = wnet.receive(1)
     if port == COMMS_PORT then
-      local dataType = string.match(data, "[^,]*")
+      local dataHeader = string.match(data, "[^,]*")
       
-      if dataType == "robot_start" then
+      if dataHeader == "any:robot_start" then
         numRobotAddresses = numRobotAddresses + (robotAddresses[address] and 0 or 1)
         robotAddresses[address] = true
       end
@@ -76,7 +76,7 @@ local function main()
   
   
   
-  --wnet.send(modem, nil, COMMS_PORT, "robot_scan_adjacent,minecraft:redstone/0,1")
+  --wnet.send(modem, nil, COMMS_PORT, "robot:scan_adjacent,minecraft:redstone/0,1")
 end
 
 main()

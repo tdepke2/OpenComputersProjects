@@ -891,9 +891,8 @@ end
 function Gui:toggleButtonStart()
   local ticket = next(self.crafting.pendingCraftRequest)
   if ticket and string.find(ticket, "^id") then
-    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_recipe_start," .. ticket)
+    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft:recipe_start," .. ticket)
     self.crafting.pendingCraftRequest[ticket] = nil
-    -- FIXME move ticket to active before setting nil? ########################################################################################################
     
     self:updateCraftingScrollBar(0)
     self:drawAreaCraftingItem()
@@ -904,7 +903,7 @@ function Gui:toggleButtonCancel()
   local ticket = next(self.crafting.pendingCraftRequest)
   if ticket then
     if string.find(ticket, "^id") then
-      wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_recipe_cancel," .. ticket)
+      wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft:recipe_cancel," .. ticket)
     end
     self.crafting.pendingCraftRequest[ticket] = nil
     
@@ -943,9 +942,9 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
           local amount = tonumber(self.textBox.contents)
           if amount then
             if self.textBox.requestedCrafting then
-              wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_check_recipe," .. self.textBox.requestedItem .. "," .. amount)
+              wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft:check_recipe," .. self.textBox.requestedItem .. "," .. amount)
             else
-              wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor_extract," .. self.textBox.requestedItem .. "," .. amount)
+              wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor:extract," .. self.textBox.requestedItem .. "," .. amount)
             end
           end
           
@@ -1048,7 +1047,7 @@ function Gui:requestItem(itemName, button)
         amount = math.ceil(self.recipeItems[itemName].maxSize / 2)
       end
     end
-    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_check_recipe," .. itemName .. "," .. amount)
+    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft:check_recipe," .. itemName .. "," .. amount)
   else
     if not amount then
       if button == 0 then
@@ -1057,7 +1056,7 @@ function Gui:requestItem(itemName, button)
         amount = math.ceil(math.min(self.storageItems[itemName].maxSize, self.storageItems[itemName].total) / 2)
       end
     end
-    wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor_extract," .. itemName .. "," .. amount)
+    wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor:extract," .. itemName .. "," .. amount)
   end
 end
 
@@ -1112,7 +1111,7 @@ function Gui:addPendingCraftRequest(ticket, craftProgress)
   local oldTicket = next(self.crafting.pendingCraftRequest)
   if oldTicket then
     if string.find(oldTicket, "^id") then
-      wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft_recipe_cancel," .. oldTicket)
+      wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft:recipe_cancel," .. oldTicket)
     end
     self.crafting.pendingCraftRequest[oldTicket] = nil
   end
@@ -1146,14 +1145,14 @@ local function main()
         lastAttemptTime = computer.uptime()
         term.clearLine()
         io.write("Trying to contact storage server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
-        wnet.send(modem, nil, COMMS_PORT, "stor_discover,")
+        wnet.send(modem, nil, COMMS_PORT, "stor:discover,")
         attemptNumber = attemptNumber + 1
       end
       local address, port, data = wnet.receive(0.1)
       if port == COMMS_PORT then
-        local dataType = string.match(data, "[^,]*")
-        data = string.sub(data, #dataType + 2)
-        if dataType == "craftinter_item_list" then
+        local dataHeader = string.match(data, "[^,]*")
+        data = string.sub(data, #dataHeader + 2)
+        if dataHeader == "any:item_list" then
           storageItems = serialization.unserialize(data)
           storageServerAddress = address
         end
@@ -1169,14 +1168,14 @@ local function main()
         lastAttemptTime = computer.uptime()
         term.clearLine()
         io.write("Trying to contact crafting server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
-        wnet.send(modem, nil, COMMS_PORT, "craft_discover,")
+        wnet.send(modem, nil, COMMS_PORT, "craft:discover,")
         attemptNumber = attemptNumber + 1
       end
       local address, port, data = wnet.receive(0.1)
       if port == COMMS_PORT then
-        local dataType = string.match(data, "[^,]*")
-        data = string.sub(data, #dataType + 2)
-        if dataType == "inter_recipe_list" then
+        local dataHeader = string.match(data, "[^,]*")
+        data = string.sub(data, #dataHeader + 2)
+        if dataHeader == "any:recipe_list" then
           recipeItems = serialization.unserialize(data)
           craftingServerAddress = address
         end
@@ -1207,10 +1206,10 @@ local function main()
     while true do
       local address, port, data = wnet.receive()
       if port == COMMS_PORT then
-        local dataType = string.match(data, "[^,]*")
-        data = string.sub(data, #dataType + 2)
+        local dataHeader = string.match(data, "[^,]*")
+        data = string.sub(data, #dataHeader + 2)
         
-        if dataType == "craftinter_item_diff" then
+        if dataHeader == "any:item_diff" then
           -- Apply the items diff to storageItems to keep the table synced up.
           local itemsDiff = serialization.unserialize(data)
           for itemName, diff in pairs(itemsDiff) do
@@ -1228,20 +1227,20 @@ local function main()
             end
           end
           gui:updateSortingKeys()
-        elseif dataType == "craftinter_stor_started" then
+        elseif dataHeader == "any:stor_started" then
           -- If we get a broadcast that storage started, it must have just rebooted and we need to discover new storageItems.
-          wnet.send(modem, address, COMMS_PORT, "stor_discover,")
-        elseif dataType == "craftinter_item_list" then
+          wnet.send(modem, address, COMMS_PORT, "stor:discover,")
+        elseif dataHeader == "any:item_list" then
           -- New item list, update storageItems and GUI.
           storageItems = serialization.unserialize(data)
           storageServerAddress = address
           gui:setStorageItems(storageItems)
           gui.storageServerAddress = address
-        elseif dataType == "inter_craft_started" then
+        elseif dataHeader == "any:craft_started" then
           -- TODO #######################################################################################################################################################################
-        elseif dataType == "inter_recipe_list" then
+        elseif dataHeader == "any:recipe_list" then
           
-        elseif dataType == "inter_recipe_confirm" then
+        elseif dataHeader == "inter:recipe_confirm" then
           local ticket = string.match(data, "[^;]*")
           data = string.sub(data, #ticket + 2)
           if ticket == "missing" or ticket ~= "error" then
@@ -1305,10 +1304,10 @@ local function main()
         --print("result = ", extractStorage(transposers, routing, storageItems, "output", 1, nil, input[2], tonumber(input[3])))
         input[2] = input[2] or ""
         input[3] = input[3] or ""
-        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor_extract," .. input[2] .. "," .. input[3])
+        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:extract," .. input[2] .. "," .. input[3])
       elseif input[1] == "a" then    -- Add.
         --print("result = ", insertStorage(transposers, routing, storageItems, "input", 1))
-        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor_insert,")
+        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:insert,")
       elseif input[1] == "d" then
         print(" - items - ")
         tdebug.printTable(storageItems)
