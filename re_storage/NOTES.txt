@@ -10,6 +10,8 @@ General Tasks:
 * Would be neat to have some security. When system first set up we could keep track of all addresses in a file and validate packets with these.
     * This could also be a performance issue, may want to use broadcasts when communicating with interfaces.
 DONE    * wnet needs some adjustments to handle invalid data format (drop these packets).
+* Using os.sleep() may be evil, same thing for event.pull() with filter.
+    * Need to investigate how signals get dropped and possibly make a separate event library that queues signals.
 
 --------------------------------------------------------------------------------
 Storage Tasks:

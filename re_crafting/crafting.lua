@@ -863,6 +863,11 @@ local function main()
           -- Interface is requesting to cancel crafting operation. Forward request to storage and clear entry in pendingCraftRequests.
           wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_cancel," .. data)
           pendingCraftRequests[data] = nil
+        elseif dataHeader == "any:drone_item_diff" then
+          local result = string.match(data, "[^,]*")
+          local droneItemsDiff = serialization.unserialize(string.sub(data, #result + 2))
+          print("droneItemsDiff:")
+          tdebug.printTable(droneItemsDiff)
         elseif dataHeader == "any:drone_error" then
           --print("Drone error: " .. string.format("%q", data))
         elseif dataHeader == "any:robot_error" then
@@ -898,15 +903,23 @@ local function main()
         local sourceCode = file:read(10000000)
         io.write("Uploading \"robot_up.lua\"...\n")
         wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. sourceCode)
-      elseif input[1] == "rsetup" then
-        local file = io.open("robot_up.lua")
-        local sourceCode = file:read("a")     -- FIXME check if this works? ########################################
-        file:close()
-        io.write("Uploading \"robot_up.lua\"...\n")
-        wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. sourceCode)
-        
-        local robotAddresses = {}
-        wnet.send(modem, nil, COMMS_PORT, "robot:scan_adjacent,minecraft:redstone/0,1")
+      elseif input[1] == "insert" then
+        local ticket = next(pendingCraftRequests)
+        if not ticket then
+          ticket = ""
+        end
+        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_insert,1," .. ticket)
+      elseif input[1] == "extract" then
+        local t = {}
+        t[#t + 1] = {"minecraft:cobblestone/0", 1000}
+        t[#t + 1] = {"minecraft:coal/0", 2}
+        t.supplyIndices = {}
+        t.supplyIndices[2] = true  -- true for dirty, false for not
+        local ticket = next(pendingCraftRequests)
+        if not ticket then
+          ticket = ""
+        end
+        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract,1," .. ticket .. ";" .. serialization.serialize(t))
       elseif input[1] == "exit" then
         threadSuccess = true
         break
