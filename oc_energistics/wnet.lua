@@ -14,10 +14,9 @@ local component = require("component")
 local computer = require("computer")
 local event = require("event")
 
-local wnet = {}
+local dlog = require("dlog")
 
--- Debugging control. If true then packet data is printed to standard output.
-wnet.debug = false
+local wnet = {}
 
 -- Maximum lifetime of a buffered packet (in seconds). Note that packets are only dropped when a new one is received.
 wnet.maxPacketLife = 5
@@ -36,7 +35,6 @@ wnet.packetBuffer = {}
 -- size.
 function wnet.send(modem, address, port, data)
   checkArg(1, modem, "table", 3, port, "number", 4, data, "string")
-  --print("Send message to " .. string.sub(tostring(address), 1, 4) .. " port " .. port .. ": " .. data)
   
   if #data <= wnet.maxDataLength then
     -- Data is small enough, send it in one packet.
@@ -45,9 +43,7 @@ function wnet.send(modem, address, port, data)
     else
       modem.broadcast(port, wnet.packetNumber .. "/1", data)
     end
-    if wnet.debug then
-      print("Packet to " .. (address == nil and "BROAD" or string.sub(address, 1, 5)) .. ":" .. port .. " -> " .. wnet.packetNumber .. "/1 " .. data)
-    end
+    dlog.out("wnet", "Packet to " .. (address == nil and "BROAD" or string.sub(address, 1, 5)) .. ":" .. port .. " -> " .. wnet.packetNumber .. "/1", data)
     wnet.packetNumber = wnet.packetNumber + 1
   else
     -- Substring data into multiple pieces and send each. The first one includes a "/<packet count>" after the packet number.
@@ -58,9 +54,7 @@ function wnet.send(modem, address, port, data)
       else
         modem.broadcast(port, wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(data, (i - 1) * wnet.maxDataLength + 1, i * wnet.maxDataLength))
       end
-      if wnet.debug then
-        print("Packet to " .. (address == nil and "BROAD" or string.sub(address, 1, 5)) .. ":" .. port .. " -> " .. wnet.packetNumber .. (i == 1 and "/" .. packetCount or "") .. " " .. string.sub(data, (i - 1) * wnet.maxDataLength + 1, i * wnet.maxDataLength))
-      end
+      dlog.out("wnet", "Packet to " .. (address == nil and "BROAD" or string.sub(address, 1, 5)) .. ":" .. port .. " -> " .. wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(data, (i - 1) * wnet.maxDataLength + 1, i * wnet.maxDataLength))
       wnet.packetNumber = wnet.packetNumber + 1
     end
   end
@@ -79,18 +73,14 @@ function wnet.receive(timeout)
     return nil
   end
   senderPort = math.floor(senderPort)
-  if wnet.debug then
-    print("Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence .. " " .. data)
-  end
+  dlog.out("wnet", "Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence, data)
   
   if string.match(sequence, "/(%d+)") == "1" then
     -- Got a packet without any pending ones. Do a quick clean of dead packets and return this one.
-    --print("found packet with no pending")
+    dlog.out("wnet:d", "Packet is single (no pending).")
     for k, v in pairs(wnet.packetBuffer) do
       if computer.uptime() > v[1] + wnet.maxPacketLife then
-        if wnet.debug then
-          print("Dropping packet: " .. k)
-        end
+        dlog.out("wnet:d", "Dropping packet: " .. k)
         wnet.packetBuffer[k] = nil
       end
     end
@@ -104,16 +94,14 @@ function wnet.receive(timeout)
       local kAddress, kPort, kPacketNum = string.match(k, "([%w-]+):(%d+),(%d+)")
       kPacketNum = tonumber(kPacketNum)
       local kPacketCount = tonumber(string.match(k, "/(%d+)"))
-      --print("in loop: ", k, kAddress, kPort, kPacketNum, kPacketCount)
+      dlog.out("wnet:d", "In loop: ", k, kAddress, kPort, kPacketNum, kPacketCount)
       
       if computer.uptime() > v[1] + wnet.maxPacketLife then
-        if wnet.debug then
-          print("Dropping packet: " .. k)
-        end
+        dlog.out("wnet:d", "Dropping packet: " .. k)
         wnet.packetBuffer[k] = nil
       elseif kPacketCount and (kPacketCount == 1 or wnet.packetBuffer[kAddress .. ":" .. kPort .. "," .. (kPacketNum + kPacketCount - 1)]) then
         -- Found a start packet and the corresponding end packet was received, try to form the full data.
-        --print("found begin and end packets, checking...")
+        dlog.out("wnet:d", "Found begin and end packets, checking...")
         data = ""
         for i = 1, kPacketCount do
           if not wnet.packetBuffer[kAddress .. ":" .. kPort .. "," .. (kPacketNum + i - 1) .. (i == 1 and "/" .. kPacketCount or "")] then
@@ -131,7 +119,7 @@ function wnet.receive(timeout)
           end
           return kAddress, tonumber(kPort), data
         end
-        --print("nope, need more")
+        dlog.out("wnet:d", "Nope, need more.")
       end
     end
     
@@ -141,9 +129,7 @@ function wnet.receive(timeout)
       return nil
     end
     senderPort = math.floor(senderPort)
-    if wnet.debug then
-      print("Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence .. " " .. data)
-    end
+    dlog.out("wnet", "Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence, data)
   end
 end
 

@@ -1,30 +1,20 @@
 
-local common = require("common")
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
 local modem = component.modem
 local serialization = require("serialization")
 local sides = require("sides")
-local tdebug = require("tdebug")
 local term = require("term")
 local text = require("text")
 local thread = require("thread")
+
+local common = require("common")
+local dlog = require("dlog")
+local tdebug = require("tdebug")
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
-
--- FIXME this should be used everywhere #############################################################################################################
--- As of writing, the checkArg() builtin is bugged out for table types. Here is
--- a fixed implementation.
-local function checkArg2(...)
-  local arg = table.pack(...)
-  for i = 1, arg.n do
-    if i % 3 == 0 then
-      assert(arg[i] == type(arg[i - 1]), "bad argument #" .. arg[i - 2] .. " (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")")
-    end
-  end
-end
 
 -- Verify string has item name format "<mod name>:<item name>/<damage>[n]".
 -- Allows skipping the damage value (which then defaults to zero).
@@ -50,7 +40,7 @@ end
 -- Parse a recipe file containing information about crafting stations and the
 -- recipes made there (item inputs and outputs).
 local function loadRecipes(stations, recipes, filename)
-  checkArg2(1, stations, "table", 2, recipes, "table", 3, filename, "string")
+  dlog.checkArg(1, stations, "table", 2, recipes, "table", 3, filename, "string")
   
   -- Parses one line of the file, checks for errors and syntax, and adds new data to the tables.
   local parseState = ""
@@ -234,7 +224,7 @@ recipes: {
 -- Called once after each recipe file has been scanned in. Confirms that for
 -- each recipe, its corresponding station has been defined.
 local function verifyRecipes(stations, recipes)
-  checkArg2(1, stations, "table", 2, recipes, "table")
+  dlog.checkArg(1, stations, "table", 2, recipes, "table")
   for i, recipe in ipairs(recipes) do
     if recipe.station and not stations[recipe.station .. "1"] then
       assert(false, "Recipe " .. i .. " for " .. next(recipe.out) .. " requires station " .. recipe.station .. ", but station not found.")
@@ -258,7 +248,7 @@ end
 -- 
 -- FIXME if have time, improve this to handle the above drawbacks. ##############################################################################
 local function solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
-  checkArg2(1, stations, "table", 2, recipes, "table", 3, storageItems, "table", 4, itemName, "string", 5, amount, "number")
+  dlog.checkArg(1, stations, "table", 2, recipes, "table", 3, storageItems, "table", 4, itemName, "string", 5, amount, "number")
   if not recipes[itemName] then
     return "No recipe found for \"" .. itemName .. "\"."
   end
@@ -655,7 +645,7 @@ we iterate tables in reverse to find the sequence of steps to run in parallel.
 --]]
 
 local function checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, senderAddress, itemName, amount)
-  checkArg2(1, stations, "table", 2, recipes, "table", 3, storageServerAddress, "string", 4, storageItems, "table", 5, pendingCraftRequests, "table", 6, senderAddress, "string", 7, itemName, "string", 8, amount, "number")
+  dlog.checkArg(1, stations, "table", 2, recipes, "table", 3, storageServerAddress, "string", 4, storageItems, "table", 5, pendingCraftRequests, "table", 6, senderAddress, "string", 7, itemName, "string", 8, amount, "number")
   local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   
   print("status = " .. status)
@@ -733,10 +723,10 @@ local function main()
   end)
   
   local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses, pendingCraftRequests
-  local netLog = ""
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
+    dlog.out("main", "Setup thread starts.")
     modem.open(COMMS_PORT)
     wnet.debug = true
     interfaceServerAddresses = {}
@@ -810,6 +800,7 @@ local function main()
   
   -- Listens for incoming packets over the network and deals with them.
   local modemThread = thread.create(function()
+    dlog.out("main", "Modem thread starts.")
     while true do
       local address, port, data = wnet.receive()
       if port == COMMS_PORT then
@@ -877,21 +868,14 @@ local function main()
     end
   end)
   
-  --[[
-  local listenThread = thread.create(function()
-    while true do
-      local address, port, data = wnet.receive()
-      if address then
-        netLog = netLog .. "Packet from " .. string.sub(address, 1, 5) .. ":" .. port .. " <- " .. string.format("%q", data) .. "\n"
-      end
-    end
-  end)
-  --]]
-  
   local commandThread = thread.create(function()
+    dlog.out("main", "Command thread starts.")
     while true do
       io.write("> ")
       local input = io.read()
+      if type(input) ~= "string" then
+        input = ""
+      end
       input = text.tokenize(input)
       if input[1] == "dup" then
         local file = io.open("drone_up.lua")
@@ -920,11 +904,23 @@ local function main()
           ticket = ""
         end
         wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract,1," .. ticket .. ";" .. serialization.serialize(t))
+      elseif input[1] == "dlog" then
+        if input[2] then
+          dlog.setSubsystem(input[2], input[3] == "1")
+        else
+          io.write("Outputs: std_out=" .. tostring(dlog.stdOutput) .. ", file_out=" .. tostring(io.type(dlog.fileOutput)) .. "\n")
+          io.write("Enabled subsystems:\n")
+          for k, _ in pairs(dlog.subsystems) do
+            io.write(k .. "\n")
+          end
+        end
+      elseif input[1] == "dlog_file" then
+        dlog.setFileOut(input[2] or "")
+      elseif input[1] == "dlog_std" then
+        dlog.setStdOut(input[2] == "1")
       elseif input[1] == "exit" then
         threadSuccess = true
         break
-      elseif input[1] == "log" then
-        io.write(netLog)
       else
         io.write("Enter \"up\" to upload, or \"exit\" to quit.\n")
       end
@@ -939,6 +935,7 @@ local function main()
     os.exit(1)
   end
   
+  dlog.out("main", "Killing threads and stopping program.")
   interruptThread:kill()
   modemThread:kill()
   commandThread:kill()
