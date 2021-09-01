@@ -1,3 +1,8 @@
+--[[
+Crafting server application code.
+
+
+--]]
 
 local component = require("component")
 local computer = require("computer")
@@ -11,7 +16,6 @@ local thread = require("thread")
 
 local common = require("common")
 local dlog = require("dlog")
-local tdebug = require("tdebug")
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
@@ -274,21 +278,21 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
     
   --end
   
-  print("crafting " .. amount .. " of " .. itemName)
+  dlog.out("recipeSolver", "Crafting " .. amount .. " of " .. itemName)
   
   --local MIX = false
   
   local function recursiveSolve(spacing, index)
     assert(index < 50, "Recipe too complex or not possible.")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
-    print(spacing .. "recursiveSolve(" .. index .. ")")
+    dlog.out("recipeSolver", spacing .. "recursiveSolve(" .. index .. ")")
     for _, recipeIndex in ipairs(recipes[craftNames[index]]) do
-      print(spacing .. "trying recipe " .. recipeIndex .. " for " .. craftNames[index])
+      dlog.out("recipeSolver", spacing .. "Trying recipe " .. recipeIndex .. " for " .. craftNames[index])
       craftIndices[index] = recipeIndex
       
       -- If there are multiple recipe options, make a backup copy of requiredItems, length of craftNames, and numMissingItems to restore later.
       local requiredItems2, lastCraftNamesLength, numMissingItems2
       if #recipes[craftNames[index]] > 1 then
-        print(spacing .. "multiple recipes, making copy of table...")
+        dlog.out("recipeSolver", spacing .. "Multiple recipes, making copy of table...")
         
         requiredItems2 = requiredItems
         requiredItems = {}
@@ -329,23 +333,23 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
         if addAmount > availableAmount then
           if recipes[inputName] then
             -- Add the addAmount minus availableAmount to craftNames/craftAmounts if the recipe is known.
-            print(spacing .. "craft " .. addAmount - availableAmount .. " more of " .. inputName)
+            dlog.out("recipeSolver", spacing .. "Craft " .. addAmount - availableAmount .. " more of " .. inputName)
             craftNames[#craftNames + 1] = inputName
             craftAmounts[#craftAmounts + 1] = addAmount - availableAmount
           else
             -- Recipe not known so this item will prevent crafting, add to numMissingItems.
-            print(spacing .. "missing " .. addAmount - availableAmount .. " of " .. inputName)
+            dlog.out("recipeSolver", spacing .. "Missing " .. addAmount - availableAmount .. " of " .. inputName)
             numMissingItems = numMissingItems + addAmount - availableAmount
           end
         end
         
-        print(spacing .. "require " .. addAmount .. " more of " .. inputName)
+        dlog.out("recipeSolver", spacing .. "Require " .. addAmount .. " more of " .. inputName)
         requiredItems[inputName] = requiredItems[inputName] + addAmount
       end
       
       -- For each recipe output, remove from requiredItems.
       for outputName, amount in pairs(recipes[recipeIndex].out) do
-        print(spacing .. "add " .. -mult * amount .. " of output " .. outputName)
+        dlog.out("recipeSolver", spacing .. "Add " .. -mult * amount .. " of output " .. outputName)
         requiredItems[outputName] = requiredItems[outputName] - mult * amount
         if requiredItems[outputName] == 0 then
           requiredItems[outputName] = nil
@@ -354,11 +358,10 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
       
       -- If no more recipes remaining, solution found. Otherwise we do recursive call.
       if not craftNames[index + 1] then
-        print(spacing .. "found solution, numMissingItems = " .. numMissingItems)
-        print("requiredItems and craftNames/craftIndices/craftAmounts:")
-        tdebug.printTable(requiredItems)
+        dlog.out("recipeSolver", spacing .. "Found solution, numMissingItems = " .. numMissingItems)
+        dlog.out("recipeSolver", "RequiredItems and craftNames/craftIndices/craftAmounts:", requiredItems)
         for i = 1, #craftNames do
-          print(craftNames[i] .. " index " .. craftIndices[i] .. " amount " .. craftAmounts[i])
+          dlog.out("recipeSolver", craftNames[i] .. " index " .. craftIndices[i] .. " amount " .. craftAmounts[i])
         end
         
         --[[
@@ -367,11 +370,11 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
         for k, v in pairs(requiredItems) do
           craftingTotal = craftingTotal + math.max(v - (storageItems[k] and storageItems[k].total or 0), 0)
         end
-        print("craftingTotal = " .. craftingTotal)
+        dlog.out("recipeSolver", "craftingTotal = " .. craftingTotal)
         --]]
         -- Check if the total number of missing items is a new low, and update the result if so.
         if numMissingItems < bestMissingItems then
-          print("new best found!!!")
+          dlog.out("recipeSolver", "New best found!")
           bestMissingItems = numMissingItems
           if numMissingItems == 0 then
             resultStatus = "ok"
@@ -412,7 +415,7 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
       end
       
       -- Restore state of requiredItems, craftNames/craftAmounts, and numMissingItems.
-      print(spacing .. "end of recipe, restore state")
+      dlog.out("recipeSolver", spacing .. "End of recipe, restore state")
       if requiredItems2 then
         requiredItems = requiredItems2
         for i = lastCraftNamesLength + 1, #craftNames do
@@ -435,7 +438,7 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
     return err
   end
   
-  print("done.")
+  dlog.out("recipeSolver", "Done.")
   return resultStatus, resultIndices, resultBatches, resultItems
 end
 
@@ -648,19 +651,19 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
   dlog.checkArg(1, stations, "table", 2, recipes, "table", 3, storageServerAddress, "string", 4, storageItems, "table", 5, pendingCraftRequests, "table", 6, senderAddress, "string", 7, itemName, "string", 8, amount, "number")
   local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   
-  print("status = " .. status)
+  dlog.out("checkRecipe", "status = " .. status)
   if status == "ok" or status == "missing" then
-    print("recipeIndices/recipeBatches and requiredItems")
+    dlog.out("checkRecipe", "recipeIndices/recipeBatches:")
     for i = 1, #recipeIndices do
-      print(recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") = " .. recipeBatches[i])
+      dlog.out("checkRecipe", recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") = " .. recipeBatches[i])
     end
-    tdebug.printTable(requiredItems)
+    dlog.out("checkRecipe", "requiredItems:", requiredItems)
   end
   
   -- Check for expired tickets and remove them.
   for ticketName, request in pairs(pendingCraftRequests) do
     if computer.uptime() > request.creationTime + 10 then
-      print("ticket " .. ticketName .. " has expired")
+      dlog.out("checkRecipe", "Ticket " .. ticketName .. " has expired")
       pendingCraftRequests[ticketName] = nil
     end
   end
@@ -674,7 +677,7 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
         break
       end
     end
-    print("creating ticket " .. ticketName)
+    dlog.out("checkRecipe", "Creating ticket " .. ticketName)
     pendingCraftRequests[ticketName] = {}
     pendingCraftRequests[ticketName].creationTime = computer.uptime()
     pendingCraftRequests[ticketName].recipeIndices = recipeIndices
@@ -700,7 +703,7 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
       v.hav = (storageItems[k] and storageItems[k].total or 0)
     end
     
-    tdebug.printTable(craftProgress)
+    dlog.out("checkRecipe", "craftProgress:", craftProgress)
     
     if status == "ok" then
       wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
@@ -723,6 +726,7 @@ local function main()
   end)
   
   local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses, pendingCraftRequests
+  --dlog.setFileOut("/tmp/messages", "w")
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
@@ -740,8 +744,7 @@ local function main()
     loadRecipes(stations, recipes, "recipes/plates.proc")
     verifyRecipes(stations, recipes)
     
-    --tdebug.printTable(stations)
-    --tdebug.printTable(recipes)
+    --dlog.out("setup", "stations and recipes:", stations, recipes)
     
     -- Contact the storage server.
     local attemptNumber = 1
@@ -774,19 +777,20 @@ local function main()
     --storageItems["stuff:impossible/0"].total = 1
     --local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, "stuff:nou/0", 100)
     
-    --print("status = " .. status)
+    --dlog.out("info", "status = " .. status)
     --if status == "ok" or status == "missing" then
-      --print("recipeIndices/recipeBatches and requiredItems")
+      --dlog.out("info", "recipeIndices/recipeBatches:")
       --for i = 1, #recipeIndices do
-        --print(recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") -> " .. recipeBatches[i])
+        --dlog.out("info", recipeIndices[i] .. " (" .. next(recipes[recipeIndices[i]].out) .. ") -> " .. recipeBatches[i])
       --end
-      --tdebug.printTable(requiredItems)
+      --dlog.out("info", "requiredItems:", requiredItems)
     --end
     
     -- Report system started to other listening devices (so they can re-discover the crafting server).
     wnet.send(modem, nil, COMMS_PORT, "any:craft_started,")
     
     threadSuccess = true
+    dlog.out("main", "Setup thread ends.")
   end)
   
   thread.waitForAny({interruptThread, setupThread})
@@ -849,7 +853,7 @@ local function main()
           
           checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, address, itemName, tonumber(amount))
         elseif dataHeader == "craft:recipe_start" then
-          print("start " .. data)
+          dlog.out("info", "start " .. data)
         elseif dataHeader == "craft:recipe_cancel" then
           -- Interface is requesting to cancel crafting operation. Forward request to storage and clear entry in pendingCraftRequests.
           wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_cancel," .. data)
@@ -857,24 +861,25 @@ local function main()
         elseif dataHeader == "any:drone_item_diff" then
           local result = string.match(data, "[^,]*")
           local droneItemsDiff = serialization.unserialize(string.sub(data, #result + 2))
-          print("droneItemsDiff:")
-          tdebug.printTable(droneItemsDiff)
+          dlog.out("info", "droneItemsDiff:", droneItemsDiff)
         elseif dataHeader == "any:drone_error" then
-          --print("Drone error: " .. string.format("%q", data))
+          dlog.out("drone", "Drone error: " .. string.format("%q", data))
         elseif dataHeader == "any:robot_error" then
-          --print("Robot error: " .. string.format("%q", data))
+          dlog.out("robot", "Robot error: " .. string.format("%q", data))
         end
       end
     end
+    dlog.out("main", "Modem thread ends.")
   end)
   
+  -- Waits for commands from user-input and executes them.
   local commandThread = thread.create(function()
     dlog.out("main", "Command thread starts.")
     while true do
       io.write("> ")
       local input = io.read()
       if type(input) ~= "string" then
-        input = ""
+        input = "exit"
       end
       input = text.tokenize(input)
       if input[1] == "dup" then
@@ -918,13 +923,28 @@ local function main()
         dlog.setFileOut(input[2] or "")
       elseif input[1] == "dlog_std" then
         dlog.setStdOut(input[2] == "1")
+      elseif input[1] == "help" then
+        io.write("Commands:\n")
+        io.write("  dlog [<subsystem> <0 or 1>]\n")
+        io.write("    Display diagnostics log info (when called with no arguments), or enable/\n")
+        io.write("    disable logging for a subsystem. Use a \"*\" to refer to all subsystems.\n")
+        io.write("  dlog_file [<filename>]\n")
+        io.write("    Set logging output file. Skip the filename argument to disable file output.\n")
+        io.write("    Note: the file will close automatically when the command thread ends.\n")
+        io.write("  dlog_std <0 or 1>\n")
+        io.write("    Set logging to standard output (0 to disable and 1 to enable).\n")
+        io.write("  help\n")
+        io.write("    Show this help menu.\n")
+        io.write("  exit\n")
+        io.write("    Exit program.\n")
       elseif input[1] == "exit" then
         threadSuccess = true
         break
       else
-        io.write("Enter \"up\" to upload, or \"exit\" to quit.\n")
+        io.write("Enter \"help\" for command help, or \"exit\" to quit.\n")
       end
     end
+    dlog.out("main", "Command thread ends.")
   end)
   
   thread.waitForAny({interruptThread, modemThread, commandThread})

@@ -32,8 +32,8 @@ dlog.subsystems = {}
 function dlog.checkArg(...)
   local arg = table.pack(...)
   for i = 1, arg.n do
-    if i % 3 == 0 then
-      assert(arg[i] == type(arg[i - 1]), "bad argument #" .. arg[i - 2] .. " (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")")
+    if i % 3 == 0 and arg[i] ~= type(arg[i - 1]) then
+      assert(false, string.gsub(debug.traceback("bad argument #" .. arg[i - 2] .. " (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")"), "\t", "  "))
     end
   end
 end
