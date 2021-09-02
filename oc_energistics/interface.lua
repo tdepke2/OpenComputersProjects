@@ -1,8 +1,8 @@
 --[[
+Interface server application code.
+
 
 --]]
-
-local COMMS_PORT = 0xE298
 
 local component = require("component")
 local computer = require("computer")
@@ -11,11 +11,14 @@ local gpu = component.gpu
 local keyboard = require("keyboard")
 local modem = component.modem
 local serialization = require("serialization")
-local tdebug = require("tdebug")
 local term = require("term")
 local text = require("text")
 local thread = require("thread")
+
+local dlog = require("dlog")
 local wnet = require("wnet")
+
+local COMMS_PORT = 0xE298
 
 -- Checks if given point lies within the bounds (inclusive).
 local function isPointInRectangle(xPoint, yPoint, x, y, width, height)
@@ -913,7 +916,7 @@ function Gui:toggleButtonCancel()
 end
 
 function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
-  --print("handleKeyDown", keyboardAddress, char, code, playerName)
+  --dlog.out("event", "handleKeyDown", keyboardAddress, char, code, playerName)
   if keyboard.isControl(char) then
     if code == keyboard.keys.lmenu then
       if not self.keyShowCraftingPressed then
@@ -995,7 +998,7 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
 end
 
 function Gui:handleKeyUp(keyboardAddress, char, code, playerName)
-  --print("handleKeyUp", keyboardAddress, char, code, playerName)
+  --dlog.out("event", "handleKeyUp", keyboardAddress, char, code, playerName)
   if keyboard.isControl(char) then
     if code == keyboard.keys.lmenu then
       if self.keyShowCraftingPressed then
@@ -1061,7 +1064,7 @@ function Gui:requestItem(itemName, button)
 end
 
 function Gui:handleTouch(screenAddress, x, y, button, playerName)
-  --print("handleTouch", screenAddress, x, y, button, playerName)
+  --dlog.out("event", "handleTouch", screenAddress, x, y, button, playerName)
   x = math.floor(x)
   y = math.floor(y)
   button = math.floor(button)
@@ -1096,7 +1099,7 @@ function Gui:handleTouch(screenAddress, x, y, button, playerName)
 end
 
 function Gui:handleScroll(screenAddress, x, y, direction, playerName)
-  --print("handleScroll", screenAddress, x, y, direction, playerName)
+  --dlog.out("event", "handleScroll", screenAddress, x, y, direction, playerName)
   if x < self.area.craftingItem.x then
     self:updateScrollBar(direction)
     self:drawAreaItem()
@@ -1135,7 +1138,6 @@ local function main()
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
     modem.open(COMMS_PORT)
-    wnet.debug = false
     
     -- Contact the storage server.
     local attemptNumber = 1
@@ -1183,8 +1185,7 @@ local function main()
     end
     io.write("\nSuccess.\n")
     
-    print(" - items - ")
-    tdebug.printTable(storageItems)
+    dlog.out("setup", "storageItems:", storageItems)
     
     gui = Gui:new(nil, storageItems, storageServerAddress, recipeItems, craftingServerAddress)
     gui:draw()
@@ -1284,42 +1285,6 @@ local function main()
       end
     end
   end)
-  
-  --[[
-  -- Continuously get user input and send commands to storage server.
-  local commandThread = thread.create(function()
-    while true do
-      io.write("> ")
-      local input = io.read()
-      if type(input) ~= "string" then
-        input = "exit"
-      end
-      input = text.tokenize(input)
-      if input[1] == "l" then    -- List.
-        io.write("Storage contents:\n")
-        for itemName, itemDetails in pairs(storageItems) do
-          io.write("  " .. itemDetails.total .. "  " .. itemName .. "\n")
-        end
-      elseif input[1] == "r" then    -- Request.
-        --print("result = ", extractStorage(transposers, routing, storageItems, "output", 1, nil, input[2], tonumber(input[3])))
-        input[2] = input[2] or ""
-        input[3] = input[3] or ""
-        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:extract," .. input[2] .. "," .. input[3])
-      elseif input[1] == "a" then    -- Add.
-        --print("result = ", insertStorage(transposers, routing, storageItems, "input", 1))
-        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:insert,")
-      elseif input[1] == "d" then
-        print(" - items - ")
-        tdebug.printTable(storageItems)
-      elseif input[1] == "exit" then
-        break
-      else
-        print("Enter \"l\" to list, \"r <item> <count>\" to request, \"a\" to add, or \"exit\" to quit.")
-      end
-    end
-    threadSuccess = true
-  end)
-  --]]
   
   thread.waitForAny({interruptThread, modemThread, userInputThread, guiLazyDrawThread})
   if interruptThread:status() == "dead" then

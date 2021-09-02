@@ -29,7 +29,6 @@ end
 
 local function main()
   modem.open(COMMS_PORT)
-  wnet.debug = true
   
   io.write("Running crafting setup.\n")
   
@@ -89,9 +88,7 @@ local function main()
   -- Send robot code to active robots.
   local robotUpFile = io.open("robot_up.lua")
   io.write("Uploading \"robot_up.lua\"...\n")
-  wnet.debug = false
   wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. robotUpFile:read("a"))
-  wnet.debug = true
   robotUpFile:close()
   
   -- Wait for robots to receive the software update and keep track of their addresses.

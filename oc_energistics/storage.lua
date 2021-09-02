@@ -866,7 +866,6 @@ local function main()
   local setupThread = thread.create(function()
     dlog.out("main", "Setup thread starts.")
     modem.open(COMMS_PORT)
-    wnet.debug = true
     craftInterServerAddresses = {}
     pendingCraftRequests = {}
     
@@ -1283,25 +1282,33 @@ local function main()
         input = "exit"
       end
       input = text.tokenize(input)
-      if input[1] == "dlog" then
+      if input[1] == "dlog" then    -- Command dlog [<subsystem> <0, 1, or nil>]
         if input[2] then
-          dlog.setSubsystem(input[2], input[3] == "1")
+          if input[3] == "0" then
+            dlog.setSubsystem(input[2], false)
+          elseif input[3] == "1" then
+            dlog.setSubsystem(input[2], true)
+          else
+            dlog.setSubsystem(input[2], nil)
+          end
         else
           io.write("Outputs: std_out=" .. tostring(dlog.stdOutput) .. ", file_out=" .. tostring(io.type(dlog.fileOutput)) .. "\n")
-          io.write("Enabled subsystems:\n")
-          for k, _ in pairs(dlog.subsystems) do
-            io.write(k .. "\n")
+          io.write("Monitored subsystems:\n")
+          for k, v in pairs(dlog.subsystems) do
+            io.write(text.padRight(k, 20) .. (v and "1" or "0") .. "\n")
           end
         end
-      elseif input[1] == "dlog_file" then
+      elseif input[1] == "dlog_file" then    -- Command dlog_file [<filename>]
         dlog.setFileOut(input[2] or "")
-      elseif input[1] == "dlog_std" then
+      elseif input[1] == "dlog_std" then    -- Command dlog_std <0 or 1>
         dlog.setStdOut(input[2] == "1")
-      elseif input[1] == "help" then
+      elseif input[1] == "help" then    -- Command help
         io.write("Commands:\n")
-        io.write("  dlog [<subsystem> <0 or 1>]\n")
+        io.write("  dlog [<subsystem> <0, 1, or nil>]\n")
         io.write("    Display diagnostics log info (when called with no arguments), or enable/\n")
-        io.write("    disable logging for a subsystem. Use a \"*\" to refer to all subsystems.\n")
+        io.write("    disable logging for a subsystem. Use a \"*\" to refer to all subsystems, except\n")
+        io.write("    ones that are explicitly disabled.\n")
+        io.write("    Ex: Run \"dlog * 1\" then \"dlog wnet:d 0\" to enable all logs except \"wnet:d\".\n")
         io.write("  dlog_file [<filename>]\n")
         io.write("    Set logging output file. Skip the filename argument to disable file output.\n")
         io.write("    Note: the file will close automatically when the command thread ends.\n")
@@ -1311,7 +1318,7 @@ local function main()
         io.write("    Show this help menu.\n")
         io.write("  exit\n")
         io.write("    Exit program.\n")
-      elseif input[1] == "exit" then
+      elseif input[1] == "exit" then    -- Command exit
         threadSuccess = true
         break
       else

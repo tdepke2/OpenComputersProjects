@@ -67,22 +67,19 @@ end
 -- dlog.setSubsystems(subsystems: table)
 -- 
 -- Set the subsystems to log from the provided table. The table keys are the
--- subsystem names (strings, case sensitive) and the values should be true. The
--- special subsystem name "*" can be used to enable all subsystems.
+-- subsystem names (strings, case sensitive) and the values should be true or
+-- false. The special subsystem name "*" can be used to enable all subsystems,
+-- except ones that are explicitly disabled with the value of false.
 function dlog.setSubsystems(subsystems)
   dlog.subsystems = subsystems
 end
 
--- dlog.setSubsystem(subsystem: string, state: boolean)
+-- dlog.setSubsystem(subsystem: string, state: boolean|nil)
 -- 
 -- Similar to dlog.setSubsystems() for setting individual subsystems. The same
 -- behavior in dlog.setSubsystems() applies here.
 function dlog.setSubsystem(subsystem, state)
-  if state then
-    dlog.subsystems[subsystem] = true
-  else
-    dlog.subsystems[subsystem] = nil
-  end
+  dlog.subsystems[subsystem] = state
 end
 
 -- dlog.tableToString(t: table): string
@@ -121,7 +118,7 @@ end
 --    info in an anonymous function and pass it into dlog.out() to prevent
 --    execution if logging is not enabled.
 function dlog.out(subsystem, ...)
-  if dlog.enableOutput and (dlog.subsystems[subsystem] or dlog.subsystems["*"]) then
+  if dlog.enableOutput and (dlog.subsystems[subsystem] or (dlog.subsystems["*"] and dlog.subsystems[subsystem] == nil)) then
     local arg = table.pack(...)
     local str = ""
     for i = 1, arg.n do
