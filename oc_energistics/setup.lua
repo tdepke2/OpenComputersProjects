@@ -147,7 +147,8 @@ local function buildRoutingTable(transposers, inventories)
     assert(currentSide)
     local numTransferred = transposers[transIdx].transferItem(currentSide, side, 1, 1, 1)
     if numTransferred == 0 then
-      assert(transposers[transIdx].transferItem(side, side, math.huge, 1, 2) > 0, "Failed to move item stack from slot 1 to 2.")
+      local status, result = pcall(transposers[transIdx].transferItem, side, side, math.huge, 1, 2)
+      assert(status and result > 0, "Failed to move item stack from slot 1 to 2.")
       assert(transposers[transIdx].transferItem(currentSide, side, 1, 1, 1) > 0, "Failed to transfer item between inventories.")
     end
     

@@ -899,15 +899,20 @@ local function main()
         wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_insert,1," .. ticket)
       elseif input[1] == "extract" then
         local t = {}
-        t[#t + 1] = {"minecraft:cobblestone/0", 1000}
-        t[#t + 1] = {"minecraft:coal/0", 2}
+        --t[#t + 1] = {"minecraft:cobblestone/0", 1000}
+        --t[#t + 1] = {"minecraft:coal/0", 2}
+        t[#t + 1] = {"minecraft:coal/0", 3}
+        t[#t + 1] = {"minecraft:redstone/0", 6}
+        t[#t + 1] = {"minecraft:stick/0", 4}
         t.supplyIndices = {}
-        t.supplyIndices[2] = true  -- true for dirty, false for not
+        t.supplyIndices[3] = true  -- true for dirty, false for not
+        t.supplyIndices[2] = true
+        t.supplyIndices[1] = false
         local ticket = next(pendingCraftRequests)
         if not ticket then
           ticket = ""
         end
-        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract,1," .. ticket .. ";" .. serialization.serialize(t))
+        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract,4," .. ticket .. ";" .. serialization.serialize(t))
       elseif input[1] == "dlog" then    -- Command dlog [<subsystem> <0, 1, or nil>]
         if input[2] then
           if input[3] == "0" then

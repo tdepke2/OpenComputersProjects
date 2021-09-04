@@ -123,6 +123,9 @@ local function loadRoutingConfig(filename)
   
   -- Open file and for each line trim whitespace, skip empty lines, and lines beginning with comment symbol '#'. Parse the rest.
   local file = io.open(filename, "r")
+  if not file then
+    return nil
+  end
   local lineNum = 1
   for line in file:lines() do
     line = text.trim(line)
@@ -849,6 +852,244 @@ local function changeReservedItemAmount(reservedItems, itemName, amount)
 end
 
 
+-- 
+local function setDroneItemsSlot(droneItems, i, slot, size, maxSize, fullName)
+  if size == 0 then
+    if droneItems[i][slot] then
+      droneItems[i][slot] = nil
+      droneItems[i].dirty = true
+    end
+  elseif not droneItems[i][slot] then
+    droneItems[i][slot] = {}
+    droneItems[i][slot].size = size
+    droneItems[i][slot].maxSize = maxSize
+    droneItems[i][slot].fullName = fullName
+    droneItems[i].dirty = true
+  elseif droneItems[i][slot].size ~= size then
+    droneItems[i][slot].size = size
+    droneItems[i].dirty = true
+  end
+end
+
+
+
+-- FIXME not sure what to do with these, they probably should not be here. maybe group them into a few classes that handle them? ###########################################################
+local transposers, routing, storageItems, reservedItems
+local craftInterServerAddresses, pendingCraftRequests, droneItems
+
+
+
+local function handleDroneInsert(address, droneInvIndex, ticket)
+  local result = "ok"
+  dlog.out("hDroneInsert", "reservedItems before:", reservedItems)
+  dlog.out("hDroneInsert", "droneItems before:", droneItems)
+  
+  local transIndex, side = next(routing.drone[droneInvIndex])
+  local itemIter = transposers[transIndex].getAllStacks(side)
+  local item = itemIter()
+  local slot = 1
+  while item do
+    if next(item) == nil then
+      setDroneItemsSlot(droneItems, droneInvIndex, slot, 0)
+    else
+      local itemName = getItemFullName(item)
+      
+      dlog.out("hDroneInsert", "Found item in slot, inserting " .. itemName .. " with count " .. math.floor(item.size))
+      
+      local success, amountTransferred = insertStorage(transposers, routing, storageItems, "drone", droneInvIndex, slot, item.size)
+      dlog.out("hDroneInsert", "insertStorage() returned " .. tostring(success) .. ", " .. amountTransferred)
+      if not success then
+        result = "full";
+      end
+      
+      if ticket then
+        -- Reserve the items that were added to storage.
+        pendingCraftRequests[ticket].reserved[itemName] = (pendingCraftRequests[ticket].reserved[itemName] or 0) + amountTransferred
+        changeReservedItemAmount(reservedItems, itemName, amountTransferred)
+      end
+      
+      setDroneItemsSlot(droneItems, droneInvIndex, slot, math.floor(item.size) - amountTransferred, math.floor(item.maxSize), itemName)
+    end
+    item = itemIter()
+    slot = slot + 1
+  end
+  
+  dlog.out("hDroneInsert", "reservedItems after:", reservedItems)
+  dlog.out("hDroneInsert", "droneItems after:", droneItems)
+  
+  -- Create a diff of the changes made, and send back to address with the result status.
+  -- We always send the contents at droneInvIndex whether it updated or not.
+  local droneItemsDiff = {}
+  droneItems[droneInvIndex].dirty = nil
+  droneItemsDiff[droneInvIndex] = droneItems[droneInvIndex]
+  
+  sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+  wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff," .. result .. "," .. serialization.serialize(droneItemsDiff))
+end
+
+
+-- Note: it is an error to specify a supply index that is the same as droneInvIndex.
+local function handleDroneExtract(address, droneInvIndex, ticket, extractList)
+  local extractIdx = 1
+  local extractItemName = extractList[extractIdx][1]
+  local extractItemAmount = extractList[extractIdx][2]
+  local result = "ok"
+  assert(extractList.supplyIndices[droneInvIndex] == nil, "Cannot specify supply index that matches droneInvIndex (index is " .. droneInvIndex .. ").")
+  
+  dlog.out("hDroneExtract", "reservedItems before:", reservedItems)
+  
+  -- Check if we can pull directly from other drone inventories
+  -- (supplyIndices) and transfer items to current one.
+  local function pullFromSupplyInventories(destSlot, amount)
+    for supplyIndex, _ in pairs(extractList.supplyIndices) do
+      for slot, itemDetails in pairs(droneItems[supplyIndex]) do
+        if slot ~= "dirty" and itemDetails.fullName == extractItemName then
+          dlog.out("hDroneExtract", "Found supply items in container " .. supplyIndex .. " slot " .. slot)
+          
+          -- Clamp amount to the total in that slot, and confirm items transfer to new slot.
+          local transferAmount = math.min(amount, itemDetails.size)
+          local maxSize = itemDetails.maxSize
+          assert(routeItems(transposers, routing, "drone", supplyIndex, slot, "drone", droneInvIndex, destSlot, transferAmount) == transferAmount, "Failed to transfer items between drone inventories.")
+          setDroneItemsSlot(droneItems, supplyIndex, slot, itemDetails.size - transferAmount)
+          setDroneItemsSlot(droneItems, droneInvIndex, destSlot, (droneItems[droneInvIndex][destSlot] and droneItems[droneInvIndex][destSlot].size or 0) + transferAmount, maxSize, extractItemName)
+          return true, transferAmount, maxSize
+        end
+      end
+    end
+    return false
+  end
+  
+  -- Re-scan inventories marked as dirty (crafting operation had changed or is adding items into inventory).
+  for supplyIndex, dirty in pairs(extractList.supplyIndices) do
+    if dirty then
+      local transIndex, side = next(routing.drone[supplyIndex])
+      local itemIter = transposers[transIndex].getAllStacks(side)
+      local item = itemIter()
+      local slot = 1
+      while item do
+        if next(item) == nil then
+          setDroneItemsSlot(droneItems, supplyIndex, slot, 0)
+        else
+          setDroneItemsSlot(droneItems, supplyIndex, slot, math.floor(item.size), math.floor(item.maxSize), getItemFullName(item))
+        end
+        
+        item = itemIter()
+        slot = slot + 1
+      end
+      -- Explicitly mark index as dirty because we need to send updated data anyways.
+      droneItems[supplyIndex].dirty = true
+    end
+  end
+  
+  dlog.out("hDroneExtract", "droneItems before:", droneItems)
+  
+  -- Scan inventory at droneInvIndex for empty slots we can push items to. Items are prioritized from other drone "supply" inventories, then from storage.
+  local transIndex, side = next(routing.drone[droneInvIndex])
+  local itemIter = transposers[transIndex].getAllStacks(side)
+  local item = itemIter()
+  local slot = 1
+  while item do
+    if next(item) == nil then
+      -- Amount of items to extract clamped to the max stack size (clamped later once we know this size).
+      local slotAmountRemaining = extractItemAmount
+      dlog.out("hDroneExtract", "Found free slot, extracting " .. extractItemName .. " with count " .. slotAmountRemaining)
+      
+      -- Repeatedly pull from other drone inventories that contain the target item.
+      local supplyItemsFound = true
+      while supplyItemsFound and slotAmountRemaining > 0 do
+        local amountTransferred, maxSize
+        supplyItemsFound, amountTransferred, maxSize = pullFromSupplyInventories(slot, slotAmountRemaining)
+        if supplyItemsFound then
+          slotAmountRemaining = math.min(slotAmountRemaining, maxSize) - amountTransferred
+          extractItemAmount = extractItemAmount - amountTransferred
+        end
+      end
+      
+      -- If we still need items, attempt to pull items from storage.
+      if slotAmountRemaining > 0 then
+        if ticket then
+          -- Confirm we can take the items (they must have been reserved).
+          if not pendingCraftRequests[ticket].reserved[extractItemName] or pendingCraftRequests[ticket].reserved[extractItemName] < slotAmountRemaining then
+            assert(false, "Item " .. extractItemName .. " with count " .. slotAmountRemaining .. " was not reserved! Crafting operation unable to extract items from storage.")
+          end
+          -- Remove reservation of the items we need.
+          pendingCraftRequests[ticket].reserved[extractItemName] = pendingCraftRequests[ticket].reserved[extractItemName] - slotAmountRemaining
+          changeReservedItemAmount(reservedItems, extractItemName, -slotAmountRemaining)
+        end
+        
+        -- Attempt to grab the items.
+        local previousSlotTotal = (droneItems[droneInvIndex][slot] and droneItems[droneInvIndex][slot].size or 0)
+        local maxSize = (storageItems[extractItemName] and storageItems[extractItemName].maxSize or 0)
+        local success, amountTransferred = extractStorage(transposers, routing, storageItems, "drone", droneInvIndex, slot, extractItemName, slotAmountRemaining, reservedItems)
+        dlog.out("hDroneExtract", "extractStorage() returned " .. tostring(success) .. ", " .. amountTransferred)
+        setDroneItemsSlot(droneItems, droneInvIndex, slot, previousSlotTotal + amountTransferred, maxSize, extractItemName)
+        if not success then
+          dlog.out("hDroneExtract", "OH NO, what da fuq? extractStorage() failed... guess we move on to next item")  -- ########################################################################
+          result = "missing"
+          extractItemAmount = 0
+        else
+          extractItemAmount = extractItemAmount - amountTransferred
+        end
+        
+        -- Re-reserve items we didn't take out.
+        if ticket then
+          pendingCraftRequests[ticket].reserved[extractItemName] = pendingCraftRequests[ticket].reserved[extractItemName] + slotAmountRemaining - amountTransferred
+          changeReservedItemAmount(reservedItems, extractItemName, slotAmountRemaining - amountTransferred)
+        end
+      end
+      
+      -- Move on to next item if we got them all.
+      if extractItemAmount == 0 then
+        extractIdx = extractIdx + 1
+        if not extractList[extractIdx] then
+          break
+        end
+        extractItemName = extractList[extractIdx][1]
+        extractItemAmount = extractList[extractIdx][2]
+      end
+      
+      --[[
+      test cases:
+      items in storage, none in drone, extract to drone
+      items in another drone, extract to drone
+      items in multiple drones (different types), extract to drone
+      items in multiple drones (same type), extract to drone
+      items in storage, items in multiple drones (same/different types), extract to drone
+      --]]
+      
+      --[[
+      use cases:
+      need to craft items, request to extract to drone inventory (currently an output), robots do some shit, inventory becomes an input and marked dirty
+      need to export items for manufacturing (we have a ticket), inventory stays an output?
+      need to import items from manufacturing (we have a ticket), inventory is an input, marked dirty when we add stuff
+      generic export of items (no ticket)
+      generic import of items (no ticket)
+      --]]
+    end
+    item = itemIter()
+    slot = slot + 1
+  end
+  if result == "ok" and extractList[extractIdx] then
+    result = "full"
+  end
+  
+  dlog.out("hDroneExtract", "reservedItems after:", reservedItems)
+  dlog.out("hDroneExtract", "droneItems after:", droneItems)
+  
+  -- Create a diff of the changes made, and send back to address with the result status.
+  local droneItemsDiff = {}
+  for i, inventoryDetails in ipairs(droneItems) do
+    if inventoryDetails.dirty then
+      inventoryDetails.dirty = nil
+      droneItemsDiff[i] = inventoryDetails
+    end
+  end
+  sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+  wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff," .. result .. "," .. serialization.serialize(droneItemsDiff))
+  
+end
+
+
 -- Main program starts here. Runs a few threads to do setup work, listen for
 -- packets, redstone events, etc.
 local function main()
@@ -858,8 +1099,6 @@ local function main()
     event.pull("interrupted")
   end)
   
-  local transposers, routing, storageItems, reservedItems
-  local craftInterServerAddresses, pendingCraftRequests, droneItems
   --dlog.setFileOut("/tmp/messages", "w")
   
   -- Performs setup and initialization tasks.
@@ -870,6 +1109,12 @@ local function main()
     pendingCraftRequests = {}
     
     transposers, routing = loadRoutingConfig(ROUTING_CONFIG_FILENAME)
+    if not transposers then
+      io.write("Routing config file \"" .. ROUTING_CONFIG_FILENAME .. "\" not found.\n")
+      io.write("Please run the setup utility to create this file.\n")
+      interruptThread:kill()
+      os.exit()
+    end
     
     --dlog.out("setup", "routing:", routing)
     
@@ -1018,219 +1263,19 @@ local function main()
           if ticket == "" then
             ticket = nil
           end
-          local result = "ok"
           
-          dlog.out("cmdDroneInsert", "reservedItems before:", reservedItems)
-          dlog.out("cmdDroneInsert", "droneItems before:", droneItems)
-          
-          local transIndex, side = next(routing.drone[droneInvIndex])
-          local itemIter = transposers[transIndex].getAllStacks(side)
-          local item = itemIter()
-          local slot = 1
-          while item do
-            if next(item) ~= nil then
-              
-              -- TODO stuff needs to happen
-              
-            end
-            item = itemIter()
-            slot = slot + 1
-          end
-          
-          dlog.out("cmdDroneInsert", "reservedItems after:", reservedItems)
-          dlog.out("cmdDroneInsert", "droneItems after:", droneItems)
-          
-          -- Create a diff of the changes made, and send back to address with the result status.
-          local droneItemsDiff = {}
-          for i, inventoryDetails in ipairs(droneItems) do
-            if inventoryDetails.dirty then
-              inventoryDetails.dirty = nil
-              droneItemsDiff[i] = inventoryDetails
-            end
-          end
-          sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-          wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff," .. result .. "," .. serialization.serialize(droneItemsDiff))
+          handleDroneInsert(address, droneInvIndex, ticket)
           
         elseif dataHeader == "stor:drone_extract" then
           local droneInvIndex = string.match(data, "[^,]*")
           local ticket = string.match(data, "[^;]*", #droneInvIndex + 2)
           local extractList = serialization.unserialize(string.sub(data, #droneInvIndex + #ticket + 3))
-          local extractIdx = 1
           droneInvIndex = tonumber(droneInvIndex)
           if ticket == "" then
             ticket = nil
           end
-          local extractItemName = extractList[extractIdx][1]
-          local extractItemAmount = extractList[extractIdx][2]
-          local result = "ok"
           
-          dlog.out("cmdDroneExtract", "reservedItems before:", reservedItems)
-          
-          local function setDroneItemsSlot(droneItems, i, slot, size, maxSize, fullName)
-            if size == 0 then
-              if droneItems[i][slot] then
-                droneItems[i][slot] = nil
-                droneItems[i].dirty = true
-              end
-            elseif not droneItems[i][slot] then
-              droneItems[i][slot] = {}
-              droneItems[i][slot].size = size
-              droneItems[i][slot].maxSize = maxSize
-              droneItems[i][slot].fullName = fullName
-              droneItems[i].dirty = true
-            elseif droneItems[i][slot].size ~= size then
-              droneItems[i][slot].size = size
-              droneItems[i].dirty = true
-            end
-          end
-          
-          -- Check if we can pull directly from other drone inventories
-          -- (supplyIndices) and transfer items to current one.
-          local function pullFromSupplyInventories(destSlot, amount)
-            for supplyIndex, _ in pairs(extractList.supplyIndices) do
-              for slot, itemDetails in pairs(droneItems[supplyIndex]) do
-                if slot ~= "dirty" and itemDetails.fullName == extractItemName then
-                  dlog.out("cmdDroneExtract", "Found supply items in container " .. supplyIndex .. " slot " .. slot)
-                  
-                  -- Clamp amount to the total in that slot, and confirm items transfer to new slot.
-                  local transferAmount = math.min(amount, itemDetails.size)
-                  local maxSize = itemDetails.maxSize
-                  assert(routeItems(transposers, routing, "drone", supplyIndex, slot, "drone", droneInvIndex, destSlot, transferAmount) == transferAmount, "Failed to transfer items between drone inventories.")
-                  setDroneItemsSlot(droneItems, supplyIndex, slot, itemDetails.size - transferAmount)
-                  setDroneItemsSlot(droneItems, droneInvIndex, destSlot, (droneItems[droneInvIndex][destSlot] and droneItems[droneInvIndex][destSlot].size or 0) + transferAmount, maxSize, extractItemName)
-                  return true, transferAmount, maxSize
-                end
-              end
-            end
-            return false
-          end
-          
-          -- Re-scan inventories marked as dirty (crafting operation had changed or is adding items into inventory).
-          for supplyIndex, dirty in pairs(extractList.supplyIndices) do
-            if dirty then
-              local transIndex, side = next(routing.drone[supplyIndex])
-              local itemIter = transposers[transIndex].getAllStacks(side)
-              local item = itemIter()
-              local slot = 1
-              while item do
-                if next(item) == nil then
-                  setDroneItemsSlot(droneItems, supplyIndex, slot, 0)
-                else
-                  setDroneItemsSlot(droneItems, supplyIndex, slot, math.floor(item.size), math.floor(item.maxSize), getItemFullName(item))
-                end
-                
-                item = itemIter()
-                slot = slot + 1
-              end
-              -- Explicitly mark index as dirty because we need to send updated data anyways.
-              droneItems[supplyIndex].dirty = true
-            end
-          end
-          
-          dlog.out("cmdDroneExtract", "droneItems before:", droneItems)
-          
-          local transIndex, side = next(routing.drone[droneInvIndex])
-          local itemIter = transposers[transIndex].getAllStacks(side)
-          local item = itemIter()
-          local slot = 1
-          while item do
-            if next(item) == nil then
-              -- Amount of items to extract clamped to the max stack size (clamped later once we know this size).
-              local slotAmountRemaining = extractItemAmount
-              dlog.out("cmdDroneExtract", "Found free slot, extracting " .. extractItemName .. " with count " .. slotAmountRemaining)
-              
-              -- Repeatedly pull from other drone inventories that contain the target item.
-              local supplyItemsFound = true
-              while supplyItemsFound and slotAmountRemaining > 0 do
-                local amountTransferred, maxSize
-                supplyItemsFound, amountTransferred, maxSize = pullFromSupplyInventories(slot, slotAmountRemaining)
-                if supplyItemsFound then
-                  slotAmountRemaining = math.min(slotAmountRemaining, maxSize) - amountTransferred
-                  extractItemAmount = extractItemAmount - amountTransferred
-                end
-              end
-              
-              -- If we still need items, attempt to pull items from storage.
-              if slotAmountRemaining > 0 then
-                if ticket then
-                  -- Confirm we can take the items (they must have been reserved).
-                  if pendingCraftRequests[ticket].reserved[extractItemName] < slotAmountRemaining then
-                    assert(false, "Item " .. extractItemName .. " with count " .. slotAmountRemaining .. " was not reserved! Crafting operation unable to extract items from storage.")
-                  end
-                  -- Remove reservation of the items we need.
-                  pendingCraftRequests[ticket].reserved[extractItemName] = pendingCraftRequests[ticket].reserved[extractItemName] - slotAmountRemaining
-                  changeReservedItemAmount(reservedItems, extractItemName, -slotAmountRemaining)
-                end
-                
-                -- Attempt to grab the items.
-                local previousSlotTotal = (droneItems[droneInvIndex][slot] and droneItems[droneInvIndex][slot].size or 0)
-                local maxSize = (storageItems[extractItemName] and storageItems[extractItemName].maxSize or 0)
-                local success, amountTransferred = extractStorage(transposers, routing, storageItems, "drone", droneInvIndex, slot, extractItemName, slotAmountRemaining, reservedItems)
-                dlog.out("cmdDroneExtract", "extractStorage() returned " .. tostring(success) .. ", " .. amountTransferred)
-                setDroneItemsSlot(droneItems, droneInvIndex, slot, previousSlotTotal + amountTransferred, maxSize, extractItemName)
-                if not success then
-                  dlog.out("cmdDroneExtract", "OH NO, what da fuq? extractStorage() failed... guess we move on to next item")  -- ########################################################################
-                  result = "missing"
-                  extractItemAmount = 0
-                else
-                  extractItemAmount = extractItemAmount - amountTransferred
-                end
-                
-                -- Re-reserve items we didn't take out.
-                if ticket then
-                  pendingCraftRequests[ticket].reserved[extractItemName] = pendingCraftRequests[ticket].reserved[extractItemName] + slotAmountRemaining - amountTransferred
-                  changeReservedItemAmount(reservedItems, extractItemName, slotAmountRemaining - amountTransferred)
-                end
-              end
-              
-              -- Move on to next item if we got them all.
-              if extractItemAmount == 0 then
-                extractIdx = extractIdx + 1
-                if not extractList[extractIdx] then
-                  break
-                end
-                extractItemName = extractList[extractIdx][1]
-                extractItemAmount = extractList[extractIdx][2]
-              end
-              
-              --[[
-              test cases:
-              items in storage, none in drone, extract to drone
-              items in another drone, extract to drone
-              items in multiple drones (different types), extract to drone
-              items in multiple drones (same type), extract to drone
-              items in storage, items in multiple drones (same/different types), extract to drone
-              --]]
-              
-              --[[
-              use cases:
-              need to craft items, request to extract to drone inventory (currently an output), robots do some shit, inventory becomes an input and marked dirty
-              need to export items for manufacturing (we have a ticket), inventory stays an output?
-              need to import items from manufacturing (we have a ticket), inventory is an input, marked dirty when we add stuff
-              generic export of items (no ticket)
-              generic import of items (no ticket)
-              --]]
-            end
-            item = itemIter()
-            slot = slot + 1
-          end
-          if result == "ok" and extractList[extractIdx] then
-            result = "full"
-          end
-          
-          dlog.out("cmdDroneExtract", "reservedItems after:", reservedItems)
-          dlog.out("cmdDroneExtract", "droneItems after:", droneItems)
-          
-          -- Create a diff of the changes made, and send back to address with the result status.
-          local droneItemsDiff = {}
-          for i, inventoryDetails in ipairs(droneItems) do
-            if inventoryDetails.dirty then
-              inventoryDetails.dirty = nil
-              droneItemsDiff[i] = inventoryDetails
-            end
-          end
-          sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-          wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff," .. result .. "," .. serialization.serialize(droneItemsDiff))
+          handleDroneExtract(address, droneInvIndex, ticket, extractList)
           
         elseif dataHeader == "stor:debug" then
           dlog.out("cmdDebug", "storageItems:", storageItems)
