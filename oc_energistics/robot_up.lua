@@ -61,6 +61,7 @@ local function main()
         robot.turn(true)
         
         gpu.set(1, 4, "foundSide = " .. tostring(foundSide))
+        wnet.send(modem, address, COMMS_PORT, "any:scan_adjacent_result," .. tostring(foundSide))
       elseif dataHeader == "robot:halt" then
         computer.pullSignal(math.random() * 0.4)
         computer.beep(800, 0.05)

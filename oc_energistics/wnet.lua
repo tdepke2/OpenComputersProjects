@@ -27,7 +27,7 @@ wnet.maxDataLength = computer.getDeviceInfo()[component.modem.address].capacity 
 wnet.packetNumber = 1
 wnet.packetBuffer = {}
 
--- send(modem: table, address: string|nil, port: number, data: string)
+-- wnet.send(modem: table, address: string|nil, port: number, data: string)
 -- 
 -- Send a message over the network containing the data packet (must be a
 -- string). If the address is nil, message is sent as a broadcast. The data
@@ -60,7 +60,7 @@ function wnet.send(modem, address, port, data)
   end
 end
 
--- receive([timeout: number]): string, number, string
+-- wnet.receive([timeout: number]): string, number, string
 -- 
 -- Get a message sent over the network (waits until one arrives). If the timeout
 -- is specified, this function only waits for that many seconds before
@@ -131,6 +131,32 @@ function wnet.receive(timeout)
     senderPort = math.floor(senderPort)
     dlog.out("wnet", "Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence, data)
   end
+end
+
+-- wnet.waitReceive(targetAddress: string|nil, targetPort: number|nil,
+--   dataHeader: string|nil, timeout: number): string, number, string, string
+-- 
+-- Similar to wnet.receive(), but blocks until a message that meets the criteria
+-- is found or timeout is reached. Any of the targetAddress, targetPort, or
+-- dataHeader arguments can be nil to ignore matching of this type. Returns nil
+-- if timeout reached, or address, port, dataHeader, and data if received (the
+-- returned data value has the dataHeader stripped off).
+function wnet.waitReceive(targetAddress, targetPort, dataHeader, timeout)
+  local stopTime = computer.uptime() + timeout
+  repeat
+    dlog.out("wnet:d", "Waiting for next packet to match.")
+    local address, port, data = wnet.receive(math.min(timeout, 1))
+    if address and (not targetAddress or address == targetAddress) and (not targetPort or port == targetPort) then
+      local foundHeader = ""
+      if dataHeader then
+        foundHeader = string.match(data, "^" .. dataHeader)
+      end
+      if foundHeader then
+        return address, port, foundHeader, string.sub(data, #foundHeader + 1)
+      end
+    end
+  until computer.uptime() >= stopTime
+  return nil
 end
 
 return wnet
