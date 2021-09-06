@@ -249,7 +249,7 @@ local function removeStorageItems(transposers, routing, storageItems, invIndex, 
   
   -- Update total and check if we can remove the table entry.
   storageItems[fullName].total = storageItems[fullName].total - amount
-  if storageItems[fullName].total == 0 then    -- FIXME may want to change to <= after testing ####################################################
+  if storageItems[fullName].total == 0 then
     dlog.out("removeStor", "Removing item entry for " .. fullName)
     storageItems[fullName] = nil
     return
@@ -759,6 +759,54 @@ local function extractStorage(transposers, routing, storageItems, destType, dest
 end
 
 
+-- Iterator wrapper for the itemIter returned from transposer.getAllStacks().
+-- Returns the current item and slot number with each call.
+-- FIXME probably want to use this in more places to simplify ##############################################################
+local function invIterator(itemIter)
+  local slot = 0
+  return function()
+    local item = itemIter()
+    slot = slot + 1
+    if item then
+      return item, slot
+    end
+  end
+end
+
+
+-- Scan all inventories of type invType and extract their contents to empty
+-- slots in the output inventory. Returns true if success or false if output is full.
+local function flushInventoriesToOutput(transposers, routing, invType)
+  for srcIndex, srcConnections in ipairs(routing[invType]) do
+    
+    -- Iterate through each item in the inventory.
+    local transIndex, side = next(srcConnections)
+    for item, slot in invIterator(transposers[transIndex].getAllStacks(side)) do
+      if next(item) ~= nil then
+        dlog.out("flush", "Found item in " .. invType .. srcIndex .. " slot " .. slot)
+        
+        -- Find the first empty slot in output.
+        local firstEmpty
+        local transIndex, side = next(routing.output[1])
+        for item, slot in invIterator(transposers[transIndex].getAllStacks(side)) do
+          if next(item) == nil then
+            firstEmpty = slot
+            break
+          end
+        end
+        
+        if firstEmpty then
+          assert(routeItems(transposers, routing, invType, srcIndex, slot, "output", 1, firstEmpty, item.size) == item.size, "Failed to flush items to output inventory.")
+        else
+          return false
+        end
+      end
+    end
+  end
+  return true
+end
+
+
 -- Send data over network to each address in the table (or broadcast if nil).
 local function sendToAddresses(addresses, data)
   if addresses then
@@ -1110,17 +1158,32 @@ local function main()
     
     transposers, routing = loadRoutingConfig(ROUTING_CONFIG_FILENAME)
     if not transposers then
-      io.write("Routing config file \"" .. ROUTING_CONFIG_FILENAME .. "\" not found.\n")
-      io.write("Please run the setup utility to create this file.\n")
+      io.stderr:write("Routing config file \"" .. ROUTING_CONFIG_FILENAME .. "\" not found.\n")
+      io.stderr:write("Please run the setup utility to create this file.\n")
       interruptThread:kill()
       os.exit()
     end
     
     --dlog.out("setup", "routing:", routing)
     
+    -- Flush contents of the transfer and drone inventories to clean out any residual items in the system.
+    -- Items could have been left behind from a crafting operation or been in transit while the system was shut down.
+    local flushSuccess = true
+    io.write("Flushing all transfer inventories...\n")
+    flushSuccess = flushInventoriesToOutput(transposers, routing, "transfer")
+    if flushSuccess then
+      io.write("Flushing all drone inventories...\n")
+      flushSuccess = flushInventoriesToOutput(transposers, routing, "drone")
+    end
+    if not flushSuccess then
+      io.stderr:write("\nOutput inventory full while flushing residual items in system, please empty the\n")
+      io.stderr:write("output and try again.\n")
+      interruptThread:kill()
+      os.exit()
+    end
+    
     io.write("Running full inventory scan, please wait...\n")
     
-    -- FIXME we need to run a similar process here for transfer and drone inventories to flush out the system. ##################################################
     storageItems = {}
     storageItems.data = {}
     addStorageItems(transposers, routing, storageItems, 1, 1, {}, 0, true)    -- Update firstEmptyIndex/Slot.
