@@ -14,8 +14,9 @@ local sides = require("sides")
 local text = require("text")
 local thread = require("thread")
 
-local common = require("common")
 local dlog = require("dlog")
+dlog.osBlockNewGlobals(true)
+local common = require("common")
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
@@ -25,7 +26,7 @@ local INPUT_DELAY_SECONDS = 2
 -- Load routing configuration and return a table indexing the transposers and
 -- another table specifying the connections.
 local function loadRoutingConfig(filename)
-  dlog.checkArg(1, filename, "string")
+  dlog.checkArgs(filename, "string")
   local transposers = {}
   local routing = {}
   routing.storage = {}
@@ -147,7 +148,7 @@ end
 -- used for table indexing of items and such. Note that items with different NBT
 -- can still resolve to the same identifier.
 local function getItemFullName(item)
-  dlog.checkArg(1, item, "table")
+  dlog.checkArgs(item, "table")
   return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
 end
 
@@ -155,7 +156,7 @@ end
 -- Register the item stack with the storageItems table. If updateFirstEmpty is
 -- true then set storageItems.data.firstEmptyIndex/Slot to the next empty slot found.
 local function addStorageItems(transposers, routing, storageItems, invIndex, slot, item, amount, updateFirstEmpty)
-  dlog.checkArg(1, transposers, "table", 2, routing, "table", 3, storageItems, "table", 4, invIndex, "number", 5, slot, "number", 6, item, "table", 7, amount, "number", 8, updateFirstEmpty, "boolean")
+  dlog.checkArgs(transposers, "table", routing, "table", storageItems, "table", invIndex, "number", slot, "number", item, "table", amount, "number", updateFirstEmpty, "boolean")
   --dlog.out("addStor", "addStorageItems(", transposers, routing, storageItems, invIndex, slot, item, amount, updateFirstEmpty, ")")
   -- If updateFirstEmpty then find the first empty slot in storage system after the current invIndex and slot.
   if updateFirstEmpty then
@@ -225,7 +226,7 @@ end
 -- Remove the items from the storageItems table, and delete the item stack entry
 -- in the table if applicable.
 local function removeStorageItems(transposers, routing, storageItems, invIndex, slot, item, amount)
-  dlog.checkArg(1, transposers, "table", 2, routing, "table", 3, storageItems, "table", 4, invIndex, "number", 5, slot, "number", 6, item, "table", 7, amount, "number")
+  dlog.checkArgs(transposers, "table", routing, "table", storageItems, "table", invIndex, "number", slot, "number", item, "table", amount, "number")
   --dlog.out("removeStor", "removeStorageItems(", transposers, routing, storageItems, invIndex, slot, item, amount, ")")
   if amount == 0 then
     dlog.out("removeStor", "Amount is 0, done")
@@ -297,7 +298,7 @@ end
 -- (max stack size, id, label, etc) including the total amount and where the
 -- items are (insertion/extraction point, and first empty slot).
 local function scanInventory(transposers, routing, storageItems, invType, invIndex)
-  dlog.checkArg(1, transposers, "table", 2, routing, "table", 3, storageItems, "table", 4, invType, "string", 5, invIndex, "number")
+  dlog.checkArgs(transposers, "table", routing, "table", storageItems, "table", invType, "string", invIndex, "number")
   local numItemsFound = 0
   local transIndex, side = next(routing[invType][invIndex])
   local itemIter = transposers[transIndex].getAllStacks(side)
@@ -320,7 +321,7 @@ end
 -- FIXME: Probably just want this as a generic "unpack2Vals" function in common #################################################
 -- Parse connection and return the transposer index and side as numbers.
 local function unpackConnection(connection)
-  dlog.checkArg(1, connection, "string")
+  dlog.checkArgs(connection, "string")
   local transIndex, side = string.match(connection, "(%d+):(%d+)")
   return tonumber(transIndex), tonumber(side)
 end
@@ -334,7 +335,7 @@ end
 -- the source slot.
 -- Example usage: routeItems(transposers, routing, "storage", 1, 1, "output", 1, 1, 64)
 local function routeItems(transposers, routing, srcType, srcIndex, srcSlot, destType, destIndex, destSlot, amount)
-  dlog.checkArg(1, transposers, "table", 2, routing, "table", 3, srcType, "string", 4, srcIndex, "number", 5, srcSlot, "number", 6, destType, "string", 7, destIndex, "number", 8, destSlot, "number")
+  dlog.checkArgs(transposers, "table", routing, "table", srcType, "string", srcIndex, "number", srcSlot, "number", destType, "string", destIndex, "number", destSlot, "number", amount, "number,nil")
   local srcInvName = srcType .. srcIndex
   local destInvName = destType .. destIndex
   local visitedTransfers = {}
@@ -481,7 +482,7 @@ Extraction:
 -- Returns false if not all of the items could transfer, and the number of items
 -- that did transfer. The srcSlot and amount can be nil.
 local function insertStorage(transposers, routing, storageItems, srcType, srcIndex, srcSlot, amount)
-  dlog.checkArg(1, transposers, "table", 2, routing, "table", 3, storageItems, "table", 4, srcType, "string", 5, srcIndex, "number")
+  dlog.checkArgs(transposers, "table", routing, "table", storageItems, "table", srcType, "string", srcIndex, "number", srcSlot, "number,nil", amount, "number,nil")
   --dlog.out("insertStor", "insertStorage(", transposers, routing, storageItems, srcType, srcIndex, srcSlot, amount, ")")
   assert(srcType == "input" or srcType == "output" or srcType == "drone")
   local srcTransIndex, srcSide = next(routing[srcType][srcIndex])
@@ -615,7 +616,7 @@ end
 -- and reservedItems can be nil. If reserved items are specified, the storage
 -- will purposefully fail to extract these items.
 local function extractStorage(transposers, routing, storageItems, destType, destIndex, destSlot, itemName, amount, reservedItems)
-  dlog.checkArg(1, transposers, "table", 2, routing, "table", 3, storageItems, "table", 4, destType, "string", 5, destIndex, "number")
+  dlog.checkArgs(transposers, "table", routing, "table", storageItems, "table", destType, "string", destIndex, "number", destSlot, "number,nil", itemName, "string,nil", amount, "number,nil", reservedItems, "table,nil")
   --dlog.out("extractStor", "extractStorage(", transposers, routing, storageItems, destType, destIndex, destSlot, itemName, amount, ")")
   assert(destType == "input" or destType == "output" or destType == "drone")
   if not itemName then
@@ -1147,6 +1148,21 @@ local function main()
     event.pull("interrupted")
   end)
   
+  -- Blocks until any of the given threads finish. If threadSuccess is still
+  -- false and a thread exits, reports error and exits program.
+  local function waitThreads(threads)
+    thread.waitForAny(threads)
+    if interruptThread:status() == "dead" then
+      dlog.osBlockNewGlobals(false)
+      os.exit(1)
+    elseif not threadSuccess then
+      io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
+      dlog.osBlockNewGlobals(false)
+      os.exit(1)
+    end
+    threadSuccess = false
+  end
+  
   --dlog.setFileOut("/tmp/messages", "w")
   
   -- Performs setup and initialization tasks.
@@ -1213,14 +1229,9 @@ local function main()
     dlog.out("main", "Setup thread ends.")
   end)
   
-  thread.waitForAny({interruptThread, setupThread})
-  if interruptThread:status() == "dead" then
-    os.exit(1)
-  elseif not threadSuccess then
-    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-    os.exit(1)
-  end
-  threadSuccess = false
+  
+  waitThreads({interruptThread, setupThread})
+  
   
   -- Listens for incoming packets over the network and deals with them.
   local modemThread = thread.create(function()
@@ -1436,13 +1447,9 @@ local function main()
     dlog.out("main", "Command thread ends.")
   end)
   
-  thread.waitForAny({interruptThread, modemThread, inputSensorThread, commandThread})
-  if interruptThread:status() == "dead" then
-    os.exit(1)
-  elseif not threadSuccess then
-    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-    os.exit(1)
-  end
+  
+  waitThreads({interruptThread, modemThread, inputSensorThread, commandThread})
+  
   
   dlog.out("main", "Killing threads and stopping program.")
   interruptThread:kill()
@@ -1452,6 +1459,7 @@ local function main()
 end
 
 main()
+dlog.osBlockNewGlobals(false)
 
 --[[
 Pulling from storage grabs the last slot item from the lowest priority container.

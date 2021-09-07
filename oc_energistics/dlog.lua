@@ -1,5 +1,5 @@
 --[[
-Diagnostic logger.
+Diagnostic logger and debugging utilities.
 
 Allows writing logging data to standard output and/or a file for debugging code.
 Log messages include a subsystem name and a list of space-separated values
@@ -21,21 +21,83 @@ dlog.fileOutput = nil
 dlog.stdOutput = true
 dlog.enableOutput = true
 dlog.subsystems = {}
+dlog.env2 = nil
 
--- FIXME this should be used everywhere #############################################################################################################
--- dlog.checkArg(n: number, value, type: string, ...)
+-- dlog.errorWithTraceback(message: string)
+-- 
+-- Throws the error message, and includes a stack trace in the output.
+function dlog.errorWithTraceback(message)
+  error(string.gsub(debug.traceback(message), "\t", "  "))
+end
+
+-- FIXME this should be used everywhere and same for the block globals stuff #############################################################################################################
+-- dlog.checkArgs(value1: any, types1: string, ...)
 -- 
 -- Re-implementation of the checkArg() built-in function. Asserts that the given
--- parameters match the types they are supposed to. This version fixes issues
--- the original function had with tables as arguments.
--- Example: dlog.checkArg(1, my_first_arg, "number", 2, my_second_arg, "table")
-function dlog.checkArg(...)
+-- arguments match the types they are supposed to. This version fixes issues
+-- the original function had with tables as arguments and allows the types
+-- string to be a comma-separated list.
+-- Example: dlog.checkArgs(my_first_arg, "number", my_second_arg, "table,nil")
+function dlog.checkArgs(...)
   local arg = table.pack(...)
   for i = 1, arg.n do
-    if i % 3 == 0 and arg[i] ~= type(arg[i - 1]) then
-      assert(false, string.gsub(debug.traceback("bad argument #" .. arg[i - 2] .. " (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")"), "\t", "  "))
+    if i % 2 == 0 and not string.find(arg[i], type(arg[i - 1]), 1, true) then
+      dlog.errorWithTraceback("bad argument at index#" .. i .. " to checkArgs (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")")
     end
   end
+end
+
+-- dlog.osBlockNewGlobals(state: boolean)
+-- 
+-- Modifies the global environment to stop creation/access to new global
+-- variables. This is to help prevent typos in code from unintentionally
+-- creating new global variables that cause bugs later on (also, globals are
+-- generally a bad practice). In the case that some globals are needed in the
+-- code, they can be safely declared before calling this function. Also see
+-- https://www.lua.org/pil/14.2.html for other options and the following link:
+-- https://stackoverflow.com/questions/35910099/how-special-is-the-global-variable-g
+-- 
+-- Note: this function uses some extreme fuckery and modifies the system
+-- behavior, use at your own risk!
+function dlog.osBlockNewGlobals(state)
+  local environmentMetatable = getmetatable(_ENV) or {}    -- Package-level ENV used by OS.
+  
+  if state then
+    local env2 = rawget(environmentMetatable, "__index")    -- ENV at next level down?
+    if type(env2) ~= "table" then
+      return
+    end
+    local _G = _G    -- Need to add any used globals as locals, otherwise we get stack overflow.
+    
+    environmentMetatable.__newindex = function(_, key, value)
+      dlog.errorWithTraceback("attempt to write to undeclared global variable " .. key)
+      --print("__newindex invoked for " .. key)
+      env2[key] = value
+    end
+    environmentMetatable.__index = function(t, key)
+      if not _G[key] then
+        dlog.errorWithTraceback("attempt to read from undeclared global variable " .. key)
+        --print("__index invoked for " .. key)
+      end
+      return env2[key]
+    end
+    
+    dlog.env2 = env2
+  elseif dlog.env2 then
+    local env2 = dlog.env2
+    
+    -- Reset the metatable to the same way it is set up in /boot/01_process.lua in the intercept_load() function.
+    environmentMetatable.__newindex = function(_, key, value)
+      env2[key] = value
+    end
+    environmentMetatable.__index = env2
+    
+    dlog.env2 = nil
+  else
+    return
+  end
+  
+  setmetatable(_ENV, environmentMetatable)
 end
 
 -- dlog.setFileOut(filename: string[, mode: string])

@@ -16,6 +16,7 @@ local text = require("text")
 local thread = require("thread")
 
 local dlog = require("dlog")
+dlog.osBlockNewGlobals(true)
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
@@ -1133,7 +1134,23 @@ local function main()
     event.pull("interrupted")
   end)
   
+  -- Blocks until any of the given threads finish. If threadSuccess is still
+  -- false and a thread exits, reports error and exits program.
+  local function waitThreads(threads)
+    thread.waitForAny(threads)
+    if interruptThread:status() == "dead" then
+      dlog.osBlockNewGlobals(false)
+      os.exit(1)
+    elseif not threadSuccess then
+      io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
+      dlog.osBlockNewGlobals(false)
+      os.exit(1)
+    end
+    threadSuccess = false
+  end
+  
   local storageItems, storageServerAddress, recipeItems, craftingServerAddress, gui
+  --dlog.setFileOut("/tmp/messages", "w")
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
@@ -1193,14 +1210,9 @@ local function main()
     threadSuccess = true
   end)
   
-  thread.waitForAny({interruptThread, setupThread})
-  if interruptThread:status() == "dead" then
-    os.exit(1)
-  elseif not threadSuccess then
-    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-    os.exit(1)
-  end
-  threadSuccess = false
+  
+  waitThreads({interruptThread, setupThread})
+  
   
   -- Listens for incoming packets over the network and deals with them.
   local modemThread = thread.create(function()
@@ -1286,13 +1298,9 @@ local function main()
     end
   end)
   
-  thread.waitForAny({interruptThread, modemThread, userInputThread, guiLazyDrawThread})
-  if interruptThread:status() == "dead" then
-    os.exit(1)
-  elseif not threadSuccess then
-    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-    os.exit(1)
-  end
+  
+  waitThreads({interruptThread, modemThread, userInputThread, guiLazyDrawThread})
+  
   
   interruptThread:kill()
   modemThread:kill()
@@ -1301,3 +1309,4 @@ local function main()
 end
 
 main()
+dlog.osBlockNewGlobals(false)

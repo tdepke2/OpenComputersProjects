@@ -14,8 +14,9 @@ local term = require("term")
 local text = require("text")
 local thread = require("thread")
 
-local common = require("common")
 local dlog = require("dlog")
+dlog.osBlockNewGlobals(true)
+local common = require("common")
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
@@ -44,7 +45,7 @@ end
 -- Parse a recipe file containing information about crafting stations and the
 -- recipes made there (item inputs and outputs).
 local function loadRecipes(stations, recipes, filename)
-  dlog.checkArg(1, stations, "table", 2, recipes, "table", 3, filename, "string")
+  dlog.checkArgs(stations, "table", recipes, "table", filename, "string")
   
   -- Parses one line of the file, checks for errors and syntax, and adds new data to the tables.
   local parseState = ""
@@ -228,7 +229,7 @@ recipes: {
 -- Called once after each recipe file has been scanned in. Confirms that for
 -- each recipe, its corresponding station has been defined.
 local function verifyRecipes(stations, recipes)
-  dlog.checkArg(1, stations, "table", 2, recipes, "table")
+  dlog.checkArgs(stations, "table", recipes, "table")
   for i, recipe in ipairs(recipes) do
     if recipe.station and not stations[recipe.station .. "1"] then
       assert(false, "Recipe " .. i .. " for " .. next(recipe.out) .. " requires station " .. recipe.station .. ", but station not found.")
@@ -252,7 +253,7 @@ end
 -- 
 -- FIXME if have time, improve this to handle the above drawbacks. ##############################################################################
 local function solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
-  dlog.checkArg(1, stations, "table", 2, recipes, "table", 3, storageItems, "table", 4, itemName, "string", 5, amount, "number")
+  dlog.checkArgs(stations, "table", recipes, "table", storageItems, "table", itemName, "string", amount, "number")
   if not recipes[itemName] then
     return "No recipe found for \"" .. itemName .. "\"."
   end
@@ -648,7 +649,7 @@ we iterate tables in reverse to find the sequence of steps to run in parallel.
 --]]
 
 local function checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, senderAddress, itemName, amount)
-  dlog.checkArg(1, stations, "table", 2, recipes, "table", 3, storageServerAddress, "string", 4, storageItems, "table", 5, pendingCraftRequests, "table", 6, senderAddress, "string", 7, itemName, "string", 8, amount, "number")
+  dlog.checkArgs(stations, "table", recipes, "table", storageServerAddress, "string", storageItems, "table", pendingCraftRequests, "table", senderAddress, "string", itemName, "string", amount, "number")
   local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   
   dlog.out("checkRecipe", "status = " .. status)
@@ -725,6 +726,21 @@ local function main()
     event.pull("interrupted")
   end)
   
+  -- Blocks until any of the given threads finish. If threadSuccess is still
+  -- false and a thread exits, reports error and exits program.
+  local function waitThreads(threads)
+    thread.waitForAny(threads)
+    if interruptThread:status() == "dead" then
+      dlog.osBlockNewGlobals(false)
+      os.exit(1)
+    elseif not threadSuccess then
+      io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
+      dlog.osBlockNewGlobals(false)
+      os.exit(1)
+    end
+    threadSuccess = false
+  end
+  
   local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses, pendingCraftRequests
   --dlog.setFileOut("/tmp/messages", "w")
   
@@ -792,14 +808,9 @@ local function main()
     dlog.out("main", "Setup thread ends.")
   end)
   
-  thread.waitForAny({interruptThread, setupThread})
-  if interruptThread:status() == "dead" then
-    os.exit(1)
-  elseif not threadSuccess then
-    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-    os.exit(1)
-  end
-  threadSuccess = false
+  
+  waitThreads({interruptThread, setupThread})
+  
   
   -- Listens for incoming packets over the network and deals with them.
   local modemThread = thread.create(function()
@@ -959,13 +970,9 @@ local function main()
     dlog.out("main", "Command thread ends.")
   end)
   
-  thread.waitForAny({interruptThread, modemThread, commandThread})
-  if interruptThread:status() == "dead" then
-    os.exit(1)
-  elseif not threadSuccess then
-    io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-    os.exit(1)
-  end
+  
+  waitThreads({interruptThread, modemThread, commandThread})
+  
   
   dlog.out("main", "Killing threads and stopping program.")
   interruptThread:kill()
@@ -974,3 +981,4 @@ local function main()
 end
 
 main()
+dlog.osBlockNewGlobals(false)

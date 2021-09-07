@@ -34,7 +34,7 @@ wnet.packetBuffer = {}
 -- packet is broken up into smaller pieces if it is too big for the max packet
 -- size.
 function wnet.send(modem, address, port, data)
-  checkArg(1, modem, "table", 3, port, "number", 4, data, "string")
+  dlog.checkArgs(modem, "table", address, "string,nil", port, "number", data, "string")
   
   if #data <= wnet.maxDataLength then
     -- Data is small enough, send it in one packet.
@@ -68,6 +68,7 @@ end
 -- returning the result. Returns nil if timeout reached, or address, port, and
 -- data if received.
 function wnet.receive(timeout)
+  dlog.checkArgs(timeout, "number,nil")
   local eventType, _, senderAddress, senderPort, _, sequence, data = event.pull(timeout, "modem_message")
   if not (eventType and type(sequence) == "string" and type(data) == "string" and string.find(sequence, "^%d+")) then
     return nil
@@ -142,6 +143,7 @@ end
 -- if timeout reached, or address, port, dataHeader, and data if received (the
 -- returned data value has the dataHeader stripped off).
 function wnet.waitReceive(targetAddress, targetPort, dataHeader, timeout)
+  dlog.checkArgs(targetAddress, "string,nil", targetPort, "number,nil", dataHeader, "string,nil", timeout, "number")
   local stopTime = computer.uptime() + timeout
   repeat
     dlog.out("wnet:d", "Waiting for next packet to match.")
