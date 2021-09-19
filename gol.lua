@@ -6,6 +6,7 @@ local keyboard = require("keyboard")
 local term = require("term")
 local thread = require("thread")
 
+local common = require("common")
 local dlog = require("dlog")
 dlog.osBlockNewGlobals(true)
 
