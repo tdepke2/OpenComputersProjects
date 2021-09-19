@@ -58,176 +58,122 @@ function CellGrid:new(obj, width, height)
   
   -- Wrap edges of the grid back around (make the grid a toroid).
   self.WRAP_EDGE = true
-  
-  -- Number of bytes in the string blocks that run the width of the grid.
-  --self.CHUNK_SIZE = 4
+  -- FIXME still need to implement this ###############################################################################################################################################
   
   self.width = width
   self.height = height
   
-  local heightMetatable = {
-    __index = function(t, key)
-      return rawget(t, (key - 1) % self.height + 1)
-    end,
-    __newindex = function(t, key, value)
-      rawset(t, (key - 1) % self.height + 1, value)
-    end
-  }
-  
-  local widthMetatable = {
-    __index = function(t, key)
-      return rawget(t, (key - 1) % self.width + 1)
-    end,
-    __newindex = function(t, key, value)
-      rawset(t, (key - 1) % self.width + 1, value)
-    end
-  }
-  
-  self.cells = {}
-  for y = 1, height do
-    --self.cells[y] = {}
-    --for x = 1, (width + self.CHUNK_SIZE - 1) // self.CHUNK_SIZE do
-      --self.cells[y][x] = string.rep(".", self.CHUNK_SIZE)
-    --end
-    --self.cells[y] = string.rep(string.char(0), width)
-    
-    self.cells[y] = {}
-    for x = 1, width do
-      self.cells[y][x] = 0
-    end
-    setmetatable(self.cells[y], widthMetatable)
-  end
-  setmetatable(self.cells, heightMetatable)
-  --self.addedCells = {}
-  --self.removedCells = {}
-  self.updatedCells = {}
-  --self.recentSetCells = nil
-  self.redrawNeeded = true
+  self:clear()
   
   return obj
 end
 
 function CellGrid:getCell(x, y)
   assert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
-  --return string.byte(self.cells[y], x) & 0x01 == 0x01
-  return self.cells[y][x] & 0x01 == 0x01
+  return self.cells:get((y - 1) * self.width + x) & 0x01 == 0x01
 end
-
-function CellGrid:changeNeighbor_(x, y, val)
-  self.cells[y - 1][x - 1] = self.cells[y - 1][x - 1] + val
-  self.cells[y - 1][    x] = self.cells[y - 1][    x] + val
-  self.cells[y - 1][x + 1] = self.cells[y - 1][x + 1] + val
-  
-  self.cells[    y][x - 1] = self.cells[    y][x - 1] + val
-  self.cells[    y][x + 1] = self.cells[    y][x + 1] + val
-  
-  self.cells[y + 1][x - 1] = self.cells[y + 1][x - 1] + val
-  self.cells[y + 1][    x] = self.cells[y + 1][    x] + val
-  self.cells[y + 1][x + 1] = self.cells[y + 1][x + 1] + val
-end
-
-function CellGrid:updateState_(x, y, updates)
-  x = (x - 1) % self.width + 1
-  y = (y - 1) % self.width + 1
-  local cell = self.cells[y][x]
-  
-  if cell & 0x01 == 0x00 and cell & 0x1E == 0x06 then
-    -- Cell dead and has three neighbors, it lives.
-    self.cells[y][x] = cell | 0x01
-    updates[(y << 32) | x] = true
-  elseif cell & 0x01 == 0x01 and cell & 0x1E ~= 0x04 and cell & 0x1E ~= 0x06 then
-    -- Cell alive and has less than 2 or more than 3 neighbors, bye bye.
-    self.cells[y][x] = cell & 0xFE
-    updates[(y << 32) | x] = false
-  end
-end
-
---[[
--- dont think we need this
-
-function CellGrid:checkNeighbor_(x, y)
-  x = (x - 1) % self.width + 1
-  y = (y - 1) % self.width + 1
-  
-  if self.cells[y][x] & 0x01 == 0x01 and not self.recentSetCells[(y << 32) | x] then
-    return 0x02
-  else
-    return 0x00
-  end
-end
---]]
 
 function CellGrid:setCell(x, y, state)
   assert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
-  --[[
-  local cell = string.byte(self.cells[y], x)
-  if state then
-    if cell & 0x01 == 0x00 then
-      self.addedCells[y] = x
-    end
-    cell = cell | 0x01
-  else
-    if cell & 0x01 == 0x01 then
-      self.removedCells[y] = x
-    end
-    cell = cell & 0xFE
-  end
-  self.cells[y] = string.sub(self.cells[y], 1, x - 1) .. string.char(cell) .. string.sub(self.cells[y], x + 1)
-  --]]
   
-  --self.recentSetCells = self.recentSetCells or {}
-  local cell = self.cells[y][x]
+  local cell = self.cells:get((y - 1) * self.width + x)
   local pos = (y << 32) | x
   
   if state and cell & 0x01 == 0x00 then
-    -- Cell should turn on and is currently off, add/remove cell update and change state to on.
+    -- Cell should turn on and is currently off, add cell update if none found and change state to on.
     if self.updatedCells[pos] == nil then
       self.updatedCells[pos] = true
-    --else
-      --self.updatedCells[pos] = nil
     end
     cell = cell | 0x01
     gpu.set(x, y, "#")
   elseif not state and cell & 0x01 == 0x01 then
-    -- Cell should turn off and is currently on, add/remove cell update and change state to off.
+    -- Cell should turn off and is currently on, add cell update if none found and change state to off.
     if self.updatedCells[pos] == nil then
       self.updatedCells[pos] = false
-    --else
-      --self.updatedCells[pos] = nil
     end
     cell = cell & 0xFE
     gpu.set(x, y, ".")
   end
   
-  self.cells[y][x] = cell
+  self.cells:set((y - 1) * self.width + x, cell)
+end
+
+function CellGrid:clear()
+  self.cells = common.ByteArray:new(nil, self.width * self.height)
+  
+  -- Set edge flag in top and bottom row.
+  for x = 1, self.width do
+    self.cells:set((1 - 1) * self.width + x, 0x20)
+    self.cells:set((self.height - 1) * self.width + x, 0x20)
+  end
+  -- Set edge flag in left and right column.
+  for y = 1, self.height do
+    self.cells:set((y - 1) * self.width + 1, 0x20)
+    self.cells:set((y - 1) * self.width + self.width, 0x20)
+  end
+  
+  self.updatedCells = {}
+  self.redrawNeeded = true
+end
+
+function CellGrid:changeNeighbor_(x, y, val)
+  if self.cells:get((y - 1) * self.width + x) & 0x20 == 0x00 then
+    -- Common case, cell not on edge.
+    local index = (y - 2) * self.width + x - 1
+    self.cells:set(    index, self.cells:get(    index) + val)
+    self.cells:set(index + 1, self.cells:get(index + 1) + val)
+    self.cells:set(index + 2, self.cells:get(index + 2) + val)
+    
+    index = index + self.width
+    self.cells:set(    index, self.cells:get(    index) + val)
+    self.cells:set(index + 2, self.cells:get(index + 2) + val)
+    
+    index = index + self.width
+    self.cells:set(    index, self.cells:get(    index) + val)
+    self.cells:set(index + 1, self.cells:get(index + 1) + val)
+    self.cells:set(index + 2, self.cells:get(index + 2) + val)
+  else
+    -- Cell is on an edge, need to check for edge behavior.
+    local yDown = y % self.height + 1
+    local yUp = (y + self.height - 2) % self.height + 1
+    local xRight = x % self.width + 1
+    local xLeft = (x + self.width - 2) % self.width + 1
+    
+    self.cells:set((  yUp - 1) * self.width +  xLeft, self.cells:get((  yUp - 1) * self.width +  xLeft) + val)
+    self.cells:set((  yUp - 1) * self.width +      x, self.cells:get((  yUp - 1) * self.width +      x) + val)
+    self.cells:set((  yUp - 1) * self.width + xRight, self.cells:get((  yUp - 1) * self.width + xRight) + val)
+    
+    self.cells:set((    y - 1) * self.width +  xLeft, self.cells:get((    y - 1) * self.width +  xLeft) + val)
+    self.cells:set((    y - 1) * self.width + xRight, self.cells:get((    y - 1) * self.width + xRight) + val)
+    
+    self.cells:set((yDown - 1) * self.width +  xLeft, self.cells:get((yDown - 1) * self.width +  xLeft) + val)
+    self.cells:set((yDown - 1) * self.width +      x, self.cells:get((yDown - 1) * self.width +      x) + val)
+    self.cells:set((yDown - 1) * self.width + xRight, self.cells:get((yDown - 1) * self.width + xRight) + val)
+  end
+end
+
+function CellGrid:updateState_(x, y, index, updates)
+  local cell = self.cells:get(index)
+  
+  if cell & 0x01 == 0x00 and cell & 0x1E == 0x06 then
+    -- Cell dead and has three neighbors, it lives.
+    self.cells:set(index, cell | 0x01)
+    updates[(y << 32) | x] = true
+  elseif cell & 0x01 == 0x01 and cell & 0x1E ~= 0x04 and cell & 0x1E ~= 0x06 then
+    -- Cell alive and has less than 2 or more than 3 neighbors, bye bye.
+    self.cells:set(index, cell & 0xFE)
+    updates[(y << 32) | x] = false
+  end
 end
 
 function CellGrid:update()
-  --[[
-  local updatedCells = {}
-  for y, x in pairs(self.addedCells) do
-    self:addNeighbor_(x, y)
-    updatedCells[(y << 32) | (x & 0xFFFFFFFF)] = true
-  end
-  
-  self.addedCells = newAddedCells
-  
-  for y, x in pairs(self.removedCells) do
-    
-  end
-  --]]
-  
-  --in the following, we assume y and x always positive
-  
-  --(y << 32) | x
-  
   -- First pass, update the neighbor counts for each cell that updated and changed state.
   for pos, state in pairs(self.updatedCells) do
     local x = pos & 0xFFFFFFFF
     local y = pos >> 32
     
     -- We add a 2 or -2 since the neighbor count starts at the second bit. Just add a zero if the cell state did not change.
-    self:changeNeighbor_(x, y, (self.cells[y][x] & 0x01 == 0x01) == state and (state and 2 or -2) or 0)
+    self:changeNeighbor_(x, y, (self.cells:get((y - 1) * self.width + x) & 0x01 == 0x01) == state and (state and 2 or -2) or 0)
   end
   
   -- Second pass, update the state of the cell and neighbors, and find new updates. This can run updateState_() on the same cell more than once, but it's fine.
@@ -236,20 +182,43 @@ function CellGrid:update()
     local x = pos & 0xFFFFFFFF
     local y = pos >> 32
     
-    self:updateState_(x - 1, y - 1, newUpdatedCells)
-    self:updateState_(    x, y - 1, newUpdatedCells)
-    self:updateState_(x + 1, y - 1, newUpdatedCells)
-    
-    self:updateState_(x - 1,     y, newUpdatedCells)
-    self:updateState_(    x,     y, newUpdatedCells)
-    self:updateState_(x + 1,     y, newUpdatedCells)
-    
-    self:updateState_(x - 1, y + 1, newUpdatedCells)
-    self:updateState_(    x, y + 1, newUpdatedCells)
-    self:updateState_(x + 1, y + 1, newUpdatedCells)
+    if self.cells:get((y - 1) * self.width + x) & 0x20 == 0x00 then
+      -- Common case, cell not on edge.
+      local index = (y - 2) * self.width + x - 1
+      self:updateState_(x - 1, y - 1,     index, newUpdatedCells)
+      self:updateState_(    x, y - 1, index + 1, newUpdatedCells)
+      self:updateState_(x + 1, y - 1, index + 2, newUpdatedCells)
+      
+      index = index + self.width
+      self:updateState_(x - 1,     y,     index, newUpdatedCells)
+      self:updateState_(    x,     y, index + 1, newUpdatedCells)
+      self:updateState_(x + 1,     y, index + 2, newUpdatedCells)
+      
+      index = index + self.width
+      self:updateState_(x - 1, y + 1,     index, newUpdatedCells)
+      self:updateState_(    x, y + 1, index + 1, newUpdatedCells)
+      self:updateState_(x + 1, y + 1, index + 2, newUpdatedCells)
+    else
+      -- Cell is on an edge, need to check for edge behavior.
+      local yDown = y % self.height + 1
+      local yUp = (y + self.height - 2) % self.height + 1
+      local xRight = x % self.width + 1
+      local xLeft = (x + self.width - 2) % self.width + 1
+      
+      self:updateState_( xLeft,   yUp, (  yUp - 1) * self.width +  xLeft, newUpdatedCells)
+      self:updateState_(     x,   yUp, (  yUp - 1) * self.width +      x, newUpdatedCells)
+      self:updateState_(xRight,   yUp, (  yUp - 1) * self.width + xRight, newUpdatedCells)
+      
+      self:updateState_( xLeft,     y, (    y - 1) * self.width +  xLeft, newUpdatedCells)
+      self:updateState_(     x,     y, (    y - 1) * self.width +      x, newUpdatedCells)
+      self:updateState_(xRight,     y, (    y - 1) * self.width + xRight, newUpdatedCells)
+      
+      self:updateState_( xLeft, yDown, (yDown - 1) * self.width +  xLeft, newUpdatedCells)
+      self:updateState_(     x, yDown, (yDown - 1) * self.width +      x, newUpdatedCells)
+      self:updateState_(xRight, yDown, (yDown - 1) * self.width + xRight, newUpdatedCells)
+    end
   end
   self.updatedCells = newUpdatedCells
-  --self.recentSetCells = nil
 end
 
 function CellGrid:draw()
@@ -257,7 +226,7 @@ function CellGrid:draw()
   if self.redrawNeeded then
     for y = 1, self.height do
       for x = 1, self.width do
-        gpu.set(x, y, self.cells[y][x] & 0x01 == 0x01 and "#" or ".")
+        gpu.set(x, y, self.cells:get((y - 1) * self.width + x) & 0x01 == 0x01 and "#" or ".")
       end
     end
     self.redrawNeeded = false
@@ -284,6 +253,7 @@ function Game:new(obj)
   self.cellGrid:setCell(4, 5, true)
   self.cellGrid:setCell(5, 5, true)
   self.cellGrid:setCell(6, 5, true)
+  
   self.cellGrid:draw()
   self:drawDebug()
   
@@ -308,13 +278,21 @@ end
 function Game:drawDebug()
   for y = 1, self.cellGrid.height do
     for x = 1, self.cellGrid.width do
-      local cell = self.cellGrid.cells[y][x]
+      local cell = self.cellGrid.cells:get((y - 1) * self.cellGrid.width + x)
       
       if cell & 0x01 == 0x01 then
-        gpuSetBackground(0xFFFFFF)
+        if cell & 0x20 == 0x20 then
+          gpuSetBackground(0x808080)
+        else
+          gpuSetBackground(0xFFFFFF)
+        end
         gpuSetForeground(0x000000)
       else
-        gpuSetBackground(0x000000)
+        if cell & 0x20 == 0x20 then
+          gpuSetBackground(0x808080)
+        else
+          gpuSetBackground(0x000000)
+        end
         gpuSetForeground(0xFFFFFF)
       end
       
@@ -366,102 +344,16 @@ end
 each char: 4 bits neighbor count, 1 (or 2) bits state, 1 bit edge condition
 
 76543210
-???xxxxa
+??exxxxa
 x = neighbor count
 a = state
+e = edge
 
 update checks each char for changes, if change we update state and add to changelist
 update changelist at end
 
 split up strings into chunks?
 
---]]
-
---[[
-function CellGrid:new(obj, width, height)
-  obj = obj or {}
-  setmetatable(obj, self)
-  self.__index = self
-  
-  self.WRAP_EDGE = true
-  self.width = width
-  self.height = height
-  
-  self.cells = {}
-  for y = 1, height do
-    self.cells[y] = string.rep(".", width)
-  end
-  self.drawChanges = {}
-  
-  return obj
-end
-
-function CellGrid:getCell(x, y)
-  assert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
-  return string.sub(self.cells[y], x, x) == "#"
-end
-
-function CellGrid:setCell(x, y, state, cells)
-  cells = cells or self.cells
-  cells[y] = string.sub(cells[y], 1, x - 1) .. (state and "#" or ".") .. string.sub(cells[y], x + 1)
-end
-
-function CellGrid:numNeighbors(x, y)
-  local count = 0
-  if self.WRAP_EDGE then
-    local yDown = y % self.height + 1
-    local yUp = (y + self.height - 2) % self.height + 1
-    local xRight = x % self.width + 1
-    local xLeft = (x + self.width - 2) % self.width + 1
-    
-    count = count + (self:getCell(xRight, yDown) and 1 or 0)
-    count = count + (self:getCell(     x, yDown) and 1 or 0)
-    count = count + (self:getCell( xLeft, yDown) and 1 or 0)
-    count = count + (self:getCell(xRight,     y) and 1 or 0)
-    count = count + (self:getCell( xLeft,     y) and 1 or 0)
-    count = count + (self:getCell(xRight,   yUp) and 1 or 0)
-    count = count + (self:getCell(     x,   yUp) and 1 or 0)
-    count = count + (self:getCell( xLeft,   yUp) and 1 or 0)
-  else
-    count = count + ((y < self.height and x < self.width and self.cells[y + 1][x + 1] == "#") and 1 or 0)
-    count = count + ((y < self.height and self.cells[y + 1][x] == "#") and 1 or 0)
-    count = count + ((y < self.height and x > 1 and self.cells[y + 1][x - 1] == "#") and 1 or 0)
-    count = count + ((x < self.width and self.cells[y][x + 1] == "#") and 1 or 0)
-    count = count + ((x > 1 and self.cells[y][x - 1] == "#") and 1 or 0)
-    count = count + ((y > 1 and x < self.width and self.cells[y - 1][x + 1] == "#") and 1 or 0)
-    count = count + ((y > 1 and self.cells[y - 1][x] == "#") and 1 or 0)
-    count = count + ((y > 1 and x > 1 and self.cells[y - 1][x - 1] == "#") and 1 or 0)
-  end
-  return count
-end
-
-function CellGrid:update()
-  local newCells = {}
-  for y = 1, self.height do
-    newCells[y] = self.cells[y]
-  end
-  
-  for y = 1, self.height do
-    for x = 1, self.width do
-      local count = self:numNeighbors(x, y)
-      local currState = self:getCell(x, y)
-      if not currState and count == 3 then
-        self:setCell(x, y, true, newCells)
-      elseif currState and count ~= 2 and count ~= 3 then
-        self:setCell(x, y, false, newCells)
-      end
-      --print(x, y, currState, count)
-    end
-  end
-  
-  self.cells = newCells
-end
-
-function CellGrid:draw()
-  for y = 1, self.height do
-    gpu.set(1, y, self.cells[y])
-  end
-end
 --]]
 
 local function main()
