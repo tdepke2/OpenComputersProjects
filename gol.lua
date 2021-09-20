@@ -3,12 +3,14 @@ local computer = require("computer")
 local event = require("event")
 local gpu = component.gpu
 local keyboard = require("keyboard")
+local screen = component.screen
 local term = require("term")
 local thread = require("thread")
+local unicode = require("unicode")
 
-local common = require("common")
 local dlog = require("dlog")
 dlog.osBlockNewGlobals(true)
+local common = require("common")
 
 -- Wrapper for gpu.setBackground() that prevents the direct (slow) GPU call if
 -- background already set to the desired color.
@@ -28,6 +30,47 @@ local function gpuSetForeground(color, isPaletteIndex)
     gpu.setForeground(color, isPaletteIndex)
   end
 end
+
+-- Pack unicode braille characters into a look-up table. Modified from a similar
+-- look-up table used in asie's pngview script:
+-- https://github.com/ChenThread/octagon/blob/master/pngview.lua
+-- 
+-- Braille ordering goes:
+-- 1 4
+-- 2 5
+-- 3 6
+-- 7 8
+-- We fix it to get:
+-- 1 2
+-- 3 4
+-- 5 6
+-- 7 8
+local brailleLookup = {}
+for i = 0, 255 do
+  local dat = (i & 0x01) >> 0 << 0
+  dat = dat | (i & 0x02) >> 1 << 3
+  dat = dat | (i & 0x04) >> 2 << 1
+  dat = dat | (i & 0x08) >> 3 << 4
+  dat = dat | (i & 0x10) >> 4 << 2
+  dat = dat | (i & 0x20) >> 5 << 5
+  dat = dat | (i & 0x40) >> 6 << 6
+  dat = dat | (i & 0x80) >> 7 << 7
+  brailleLookup[i + 1] = unicode.char(0x2800 | dat)
+end
+--[[
+-- Viewer for look-up table.
+term.clear()
+term.setCursor(1, 10)
+for i = 1, #brailleLookup do
+  local y = (i - 1) // 64 + 1
+  local x = (i - 1) % 64 + 1
+  gpu.setBackground((x + y) % 2 == 0 and 0x000000 or 0x404040)
+  gpu.set(x, y, brailleLookup[i])
+end
+
+os.exit()
+--]]
+
 
 -- Class to model a grid of cells in Conway's Game of Life. In each step of the
 -- simulation (each call to update()), all of the cells update simultaneously
@@ -55,6 +98,7 @@ function CellGrid:new(obj, width, height)
   self.__index = self
   
   assert(width <= 0xFFFFFFFF and height <= 0xFFFFFFFF, "Grid size must be within 32-bits.")
+  assert(width % 2 == 0 and height % 4 == 0, "Grid width must be multiple of 2 and height must be multiple of 4.")
   
   -- Wrap edges of the grid back around (make the grid a toroid).
   self.WRAP_EDGE = true
@@ -68,6 +112,29 @@ function CellGrid:new(obj, width, height)
   return obj
 end
 
+function CellGrid:getDrawBlock_(index)
+  local states = 0
+  states = states | (self.cells:get(index) & 0x01)
+  states = states | (self.cells:get(index + 1) & 0x01) << 1
+  index = index + self.width
+  states = states | (self.cells:get(index) & 0x01) << 2
+  states = states | (self.cells:get(index + 1) & 0x01) << 3
+  index = index + self.width
+  states = states | (self.cells:get(index) & 0x01) << 4
+  states = states | (self.cells:get(index + 1) & 0x01) << 5
+  index = index + self.width
+  states = states | (self.cells:get(index) & 0x01) << 6
+  states = states | (self.cells:get(index + 1) & 0x01) << 7
+  
+  return brailleLookup[states + 1]
+end
+
+function CellGrid:drawBlockXY_(x, y)
+  x = ((x - 1) >> 1 << 1) + 1
+  y = ((y - 1) >> 2 << 2) + 1
+  gpu.set(((x - 1) >> 1) + 1, ((y - 1) >> 2) + 1, self:getDrawBlock_((y - 1) * self.width + x))
+end
+
 function CellGrid:getCell(x, y)
   assert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
   return self.cells:get((y - 1) * self.width + x) & 0x01 == 0x01
@@ -77,25 +144,23 @@ function CellGrid:setCell(x, y, state)
   assert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
   
   local cell = self.cells:get((y - 1) * self.width + x)
-  local pos = (y << 32) | x
+  local pos = y << 32 | x
   
   if state and cell & 0x01 == 0x00 then
     -- Cell should turn on and is currently off, add cell update if none found and change state to on.
     if self.updatedCells[pos] == nil then
       self.updatedCells[pos] = true
     end
-    cell = cell | 0x01
-    gpu.set(x, y, "#")
+    self.cells:set((y - 1) * self.width + x, cell | 0x01)
+    self:drawBlockXY_(x, y)
   elseif not state and cell & 0x01 == 0x01 then
     -- Cell should turn off and is currently on, add cell update if none found and change state to off.
     if self.updatedCells[pos] == nil then
       self.updatedCells[pos] = false
     end
-    cell = cell & 0xFE
-    gpu.set(x, y, ".")
+    self.cells:set((y - 1) * self.width + x, cell & 0xFE)
+    self:drawBlockXY_(x, y)
   end
-  
-  self.cells:set((y - 1) * self.width + x, cell)
 end
 
 function CellGrid:clear()
@@ -113,6 +178,7 @@ function CellGrid:clear()
   end
   
   self.updatedCells = {}
+  self.drawUpdates = {}
   self.redrawNeeded = true
 end
 
@@ -158,11 +224,13 @@ function CellGrid:updateState_(x, y, index, updates)
   if cell & 0x01 == 0x00 and cell & 0x1E == 0x06 then
     -- Cell dead and has three neighbors, it lives.
     self.cells:set(index, cell | 0x01)
-    updates[(y << 32) | x] = true
+    updates[y << 32 | x] = true
+    self.drawUpdates[(((y - 1) >> 2) + 1) << 32 | (((x - 1) >> 1) + 1)] = true
   elseif cell & 0x01 == 0x01 and cell & 0x1E ~= 0x04 and cell & 0x1E ~= 0x06 then
     -- Cell alive and has less than 2 or more than 3 neighbors, bye bye.
     self.cells:set(index, cell & 0xFE)
-    updates[(y << 32) | x] = false
+    updates[y << 32 | x] = false
+    self.drawUpdates[(((y - 1) >> 2) + 1) << 32 | (((x - 1) >> 1) + 1)] = true
   end
 end
 
@@ -224,18 +292,79 @@ end
 function CellGrid:draw()
   -- If redraw needed (grid initialized or reset) then draw the whole thing, otherwise just draw the changes.
   if self.redrawNeeded then
-    for y = 1, self.height do
-      for x = 1, self.width do
-        gpu.set(x, y, self.cells:get((y - 1) * self.width + x) & 0x01 == 0x01 and "#" or ".")
+    local index = 1
+    for y = 1, self.height >> 2 do
+      local cellLine = ""
+      for x = 1, self.width >> 1 do
+        cellLine = cellLine .. self:getDrawBlock_(index)
+        index = index + 2
       end
+      gpu.set(1, y, cellLine)
+      index = index + self.width * 3
     end
     self.redrawNeeded = false
   else
+    --[[
     for pos, state in pairs(self.updatedCells) do
       local x = pos & 0xFFFFFFFF
       local y = pos >> 32
       
-      gpu.set(x, y, state and "#" or ".")
+      -- FIXME optimize by grouping updates of the same y value to get less set calls. #######################################################################
+      --gpu.set(x, y, state and "#" or ".")
+      self:drawBlockXY_(x, y)
+    end
+    --]]
+    --[[
+    gpu.set(1, 40, "##########")
+    gpu.set(1, 41, "1234567890")
+    local i = 1
+    for k, v in pairs(self.drawUpdates) do
+      gpu.set(i, 40, self:getDrawBlock_(k))
+      self.drawUpdates[k] = nil
+      i = i + 1
+    end
+    --]]
+    
+    --[[
+    for screenPos, _ in pairs(self.drawUpdates) do
+      local screenX = screenPos & 0xFFFFFFFF
+      local screenY = screenPos >> 32
+      
+      gpu.set(screenX, screenY, self:getDrawBlock_(((screenY - 1) << 2) * self.width + ((screenX - 1) << 1) + 1))
+      self.drawUpdates[screenPos] = nil
+    end
+    --]]
+    
+    local screenPos = next(self.drawUpdates)
+    while screenPos do
+      -- Reset x component of screenPos to one, and find the first and last drawUpdates in this row.
+      screenPos = (screenPos & 0xFFFFFFFF00000000) + 1
+      local firstPos, lastPos
+      for x = 1, self.width >> 1 do
+        if self.drawUpdates[screenPos] then
+          firstPos = firstPos or screenPos
+          lastPos = screenPos
+        end
+        screenPos = screenPos + 1
+      end
+      
+      -- Find beginning screen coords, and index of cell in top left of draw block.
+      local screenX = firstPos & 0xFFFFFFFF
+      local screenY = firstPos >> 32
+      local index = ((screenY - 1) << 2) * self.width + ((screenX - 1) << 1) + 1
+      local drawLine = ""
+      
+      -- Add each draw block between the first and last updates in the row (and remove the draw updates). Then draw the row.
+      for screenPos = firstPos, lastPos do
+        drawLine = drawLine .. self:getDrawBlock_(index)
+        self.drawUpdates[screenPos] = nil
+        index = index + 2
+      end
+      
+      --drawLine = string.sub("abcdefghijklmnopqrstuvwxyz0123456789", 1, unicode.wlen(drawLine))
+      gpu.set(screenX, screenY, drawLine)
+      
+      screenPos = next(self.drawUpdates)
     end
   end
 end
@@ -247,12 +376,17 @@ function Game:new(obj)
   setmetatable(obj, self)
   self.__index = self
   
-  self.cellGrid = CellGrid:new(nil, 10, 10)
+  local width, height = term.getViewport()
+  self.cellGrid = CellGrid:new(nil, math.floor(width) * 2, math.floor(height) * 4)
   self.cellGrid:setCell(5, 3, true)
   self.cellGrid:setCell(6, 4, true)
   self.cellGrid:setCell(4, 5, true)
   self.cellGrid:setCell(5, 5, true)
   self.cellGrid:setCell(6, 5, true)
+  
+  self.cellGrid:setCell(1, 1, true)
+  self.cellGrid:setCell(math.floor(width) * 2, math.floor(height) * 4, true)
+  self.cellGrid:setCell(math.floor(width) * 2, 1, true)
   
   self.cellGrid:draw()
   self:drawDebug()
@@ -269,13 +403,14 @@ function Game:loop()
     self.cellGrid:draw()
     self:drawDebug()
     self.currentGeneration = self.currentGeneration + 1
-    os.sleep(0.1)
+    os.sleep(0.05)
   else
     os.sleep(0.05)
   end
 end
 
 function Game:drawDebug()
+  --[[
   for y = 1, self.cellGrid.height do
     for x = 1, self.cellGrid.width do
       local cell = self.cellGrid.cells:get((y - 1) * self.cellGrid.width + x)
@@ -301,6 +436,7 @@ function Game:drawDebug()
   end
   gpuSetBackground(0x000000)
   gpuSetForeground(0xFFFFFF)
+  --]]
 end
 
 function Game:handleKeyDown(keyboardAddress, char, code, playerName)
@@ -325,8 +461,8 @@ end
 
 function Game:handleTouch(screenAddress, x, y, button, playerName)
   --dlog.out("event", "handleTouch", screenAddress, x, y, button, playerName)
-  x = math.floor(x)
-  y = math.floor(y)
+  x = math.floor(x * 2 + 1)
+  y = math.floor(y * 4 + 1)
   button = math.floor(button)
   
   if x >= 1 and x <= self.cellGrid.width and y >= 1 and y <= self.cellGrid.height then
@@ -383,6 +519,7 @@ local function main()
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
+    screen.setPrecise(true)
     
     term.clear()
     for i = 1, 11 do
