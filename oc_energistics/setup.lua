@@ -5,7 +5,6 @@ local common = require("common")
 local component = require("component")
 local event = require("event")
 local sides = require("sides")
-local tdebug = require("tdebug")
 local text = require("text")
 
 local setupConfig
