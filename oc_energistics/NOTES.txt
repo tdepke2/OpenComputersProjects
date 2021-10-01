@@ -3,6 +3,7 @@ Development Notes and Story Tracking (I am too lazy to set up a Jira board right
 --------------------------------------------------------------------------------
 Keep In Mind:
 * Want to keep storage network separate from the auto-crafting stuff, so that it can be used independently.
+* Mixed tables (sequential integer keys and string keys) are apparently not good. May want to avoid.
 
 --------------------------------------------------------------------------------
 General Tasks:
@@ -12,6 +13,10 @@ General Tasks:
 DONE    * wnet needs some adjustments to handle invalid data format (drop these packets).
 * Using os.sleep() may be evil, same thing for event.pull() with filter.
     * Need to investigate how signals get dropped and possibly make a separate event library that queues signals.
+    * Solution for now: os.sleep() is fine as long as it's not used within a thread that must catch events.
+* Something needs to be done about the network communication. Instead of the <intended recipient>:<packet type> structure, use <class>:<type>.
+    * Might be good to create a new network module to keep track of all packet types. We would have a function for each packet that can be sent/received.
+    * Modem thread should be adjusted to be more generic and not check the packet headers for each type.
 
 --------------------------------------------------------------------------------
 Storage Tasks:
@@ -31,10 +36,12 @@ Crafting Tasks:
 DONE    * Network module needs compressed version and testing with drones.
 * For robots, need to have them adjacent to drone inventories for crafting tasks.
     * The robots spin around to access items.
-* Storage may need to know which robots can see which inventories.
-    * Either have storage fully keep track of which robots see what inventory, and do this by having robots scan adjacent inventories during setup script.
-    * Or do this dynamically each boot by dropping items off in any drone inventory and robots report if they can reach (might be tricky).
+DONE    * Storage may need to know which robots can see which inventories.
+            * Either have storage fully keep track of which robots see what inventory, and do this by having robots scan adjacent inventories during setup script.
+            * Or do this dynamically each boot by dropping items off in any drone inventory and robots report if they can reach (might be tricky).
 * Need scheduling algorithm for crafting steps to keep crafting jobs running in parallel.
+* If crafting operation fails for some reason, it should probably cancel (or just pause) the crafting instead of killing app.
+    * Just gonna leave 'error("Craft failed")' calls in the code for now.
 
 --------------------------------------------------------------------------------
 Interface Tasks:

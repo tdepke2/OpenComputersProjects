@@ -10,6 +10,7 @@ local event = require("event")
 local gpu = component.gpu
 local keyboard = require("keyboard")
 local modem = component.modem
+local screen = component.screen
 local serialization = require("serialization")
 local term = require("term")
 local text = require("text")
@@ -1155,6 +1156,7 @@ local function main()
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
     modem.open(COMMS_PORT)
+    screen.setPrecise(false)
     
     -- Contact the storage server.
     local attemptNumber = 1
@@ -1256,10 +1258,12 @@ local function main()
         elseif dataHeader == "inter:recipe_confirm" then
           local ticket = string.match(data, "[^;]*")
           data = string.sub(data, #ticket + 2)
-          if ticket == "missing" or ticket ~= "error" then
+          if ticket ~= "error" then
             data = serialization.unserialize(data)
+            gui:addPendingCraftRequest(ticket, data)
+          else
+            io.write("Error in recipe confirm: " .. data .. "\n")    -- FIXME show error in gui ################################################################
           end
-          gui:addPendingCraftRequest(ticket, data)
         end
       end
     end

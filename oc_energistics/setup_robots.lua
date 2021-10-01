@@ -53,11 +53,12 @@ end
 
 -- Handle the any:drone_item_diff packet type.
 local function handleDroneItemDiff(droneItems, data)
-  local result = string.match(data, "[^,]*")
-  local droneItemsDiff = serialization.unserialize(string.sub(data, #result + 2))
+  local operation = string.match(data, "[^,]*")
+  local result = string.match(data, "[^,]*", #operation + 2)
+  local droneItemsDiff = serialization.unserialize(string.sub(data, #operation + #result + 3))
   applyDroneItemsDiff(droneItems, droneItemsDiff)
   
-  return result, droneItemsDiff
+  return operation, result, droneItemsDiff
 end
 
 local function main()
@@ -178,7 +179,7 @@ local function main()
     wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract," .. i .. ",;" .. serialization.serialize(extractList))
     local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:drone_item_diff,", 5)
     assert(address, "Lost connection with storage server (request timed out).")
-    local result = handleDroneItemDiff(droneItems, data)
+    local _, result = handleDroneItemDiff(droneItems, data)
     assert(result ~= "missing", "Item \"" .. setupConfig.searchItem .. "\" was not found in storage.")
     assert(result == "ok", "Extract to drone inventory failed.")
     assert(droneItems[i][1].fullName == setupConfig.searchItem and not droneItems[i][2], "Unexpected contents in inventory.")
@@ -203,7 +204,7 @@ local function main()
   wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_insert," .. #droneItems .. ",")
   local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:drone_item_diff,", 5)
   assert(address, "Lost connection with storage server (request timed out).")
-  local result = handleDroneItemDiff(droneItems, data)
+  local _, result = handleDroneItemDiff(droneItems, data)
   assert(result == "ok", "Insert from drone inventory to storage failed.")
   
   if next(remainingRobotAddresses) then

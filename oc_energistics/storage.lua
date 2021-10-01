@@ -924,7 +924,7 @@ end
 
 -- FIXME not sure what to do with these, they probably should not be here. maybe group them into a few classes that handle them? ###########################################################
 local transposers, routing, storageItems, reservedItems
-local craftInterServerAddresses, pendingCraftRequests, droneItems
+local craftInterServerAddresses, pendingCraftRequests, activeCraftRequests, droneItems
 
 
 
@@ -953,7 +953,7 @@ local function handleDroneInsert(address, droneInvIndex, ticket)
       
       if ticket then
         -- Reserve the items that were added to storage.
-        pendingCraftRequests[ticket].reserved[itemName] = (pendingCraftRequests[ticket].reserved[itemName] or 0) + amountTransferred
+        activeCraftRequests[ticket].reserved[itemName] = (activeCraftRequests[ticket].reserved[itemName] or 0) + amountTransferred
         changeReservedItemAmount(reservedItems, itemName, amountTransferred)
       end
       
@@ -973,7 +973,7 @@ local function handleDroneInsert(address, droneInvIndex, ticket)
   droneItemsDiff[droneInvIndex] = droneItems[droneInvIndex]
   
   sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-  wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff," .. result .. "," .. serialization.serialize(droneItemsDiff))
+  wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff,insert," .. result .. "," .. serialization.serialize(droneItemsDiff))
 end
 
 
@@ -1058,11 +1058,11 @@ local function handleDroneExtract(address, droneInvIndex, ticket, extractList)
       if slotAmountRemaining > 0 then
         if ticket then
           -- Confirm we can take the items (they must have been reserved).
-          if not pendingCraftRequests[ticket].reserved[extractItemName] or pendingCraftRequests[ticket].reserved[extractItemName] < slotAmountRemaining then
+          if not activeCraftRequests[ticket].reserved[extractItemName] or activeCraftRequests[ticket].reserved[extractItemName] < slotAmountRemaining then
             assert(false, "Item " .. extractItemName .. " with count " .. slotAmountRemaining .. " was not reserved! Crafting operation unable to extract items from storage.")
           end
           -- Remove reservation of the items we need.
-          pendingCraftRequests[ticket].reserved[extractItemName] = pendingCraftRequests[ticket].reserved[extractItemName] - slotAmountRemaining
+          activeCraftRequests[ticket].reserved[extractItemName] = activeCraftRequests[ticket].reserved[extractItemName] - slotAmountRemaining
           changeReservedItemAmount(reservedItems, extractItemName, -slotAmountRemaining)
         end
         
@@ -1082,7 +1082,7 @@ local function handleDroneExtract(address, droneInvIndex, ticket, extractList)
         
         -- Re-reserve items we didn't take out.
         if ticket then
-          pendingCraftRequests[ticket].reserved[extractItemName] = pendingCraftRequests[ticket].reserved[extractItemName] + slotAmountRemaining - amountTransferred
+          activeCraftRequests[ticket].reserved[extractItemName] = activeCraftRequests[ticket].reserved[extractItemName] + slotAmountRemaining - amountTransferred
           changeReservedItemAmount(reservedItems, extractItemName, slotAmountRemaining - amountTransferred)
         end
       end
@@ -1134,7 +1134,7 @@ local function handleDroneExtract(address, droneInvIndex, ticket, extractList)
     end
   end
   sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-  wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff," .. result .. "," .. serialization.serialize(droneItemsDiff))
+  wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff,extract," .. result .. "," .. serialization.serialize(droneItemsDiff))
   
 end
 
@@ -1171,6 +1171,7 @@ local function main()
     modem.open(COMMS_PORT)
     craftInterServerAddresses = {}
     pendingCraftRequests = {}
+    activeCraftRequests = {}
     
     transposers, routing = loadRoutingConfig(ROUTING_CONFIG_FILENAME)
     if not transposers then
@@ -1311,6 +1312,14 @@ local function main()
           end
           
           sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+        elseif dataHeader == "stor:recipe_start" then
+          -- Crafting server is requesting to start a crafting operation.
+          if pendingCraftRequests[data] then
+            assert(not activeCraftRequests[data], "Attempt to start recipe for ticket " .. data .. " which is already running.")
+            activeCraftRequests[data] = pendingCraftRequests[data]
+            activeCraftRequests[data].startTime = computer.uptime()
+            pendingCraftRequests[data] = nil
+          end
         elseif dataHeader == "stor:recipe_cancel" then
           -- Crafting server is requesting to cancel a crafting operation.
           if pendingCraftRequests[data] then

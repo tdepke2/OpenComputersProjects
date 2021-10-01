@@ -20,6 +20,7 @@ local common = require("common")
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
+local ROBOTS_CONFIG_FILENAME = "robots.config"
 
 -- Verify string has item name format "<mod name>:<item name>/<damage>[n]".
 -- Allows skipping the damage value (which then defaults to zero).
@@ -51,6 +52,11 @@ local function loadRecipes(stations, recipes, filename)
   local parseState = ""
   local stationEntry, stationName, recipeEntry
   local function loadRecipesParser(line, lineNum)
+    if line == "" then
+      assert(parseState == "" or (parseState == "re_inp" and next(recipeEntry.inp)), "End of file reached, missing some data.")
+      return
+    end
+    
     local tokens = text.tokenize(line)
     if parseState == "re_inp" then    -- Within recipe inputs definition.
       if not (next(tokens) == nil or string.byte(tokens[1], #tokens[1]) == string.byte(":", 1) or tokens[1] == "station") then
@@ -163,12 +169,51 @@ local function loadRecipes(stations, recipes, filename)
       end
       lineNum = lineNum + 1
     end
+    loadRecipesParser("", lineNum)
   end)
   if not status then
     assert(false, "In file \"" .. filename .. "\" at line " .. lineNum .. ": " .. msg)
   end
   
   file:close()
+end
+
+
+local function loadRobotsConfig(filename)
+  dlog.checkArgs(filename, "string")
+  local robotConnections
+  
+  local function loadRobotsConfigParser(line, lineNum)
+    if line == "" then
+      assert(robotConnections, "End of file reached, missing some data.")
+      return
+    end
+    
+    assert(not robotConnections, "Unexpected data \"" .. line .. "\".")
+    robotConnections = serialization.unserialize(line)
+  end
+  
+  -- Open file and for each line trim whitespace, skip empty lines, and lines beginning with comment symbol '#'. Parse the rest.
+  local file = io.open(filename, "r")
+  local lineNum = 1
+  
+  local status, msg = pcall(function()
+    for line in file:lines() do
+      line = text.trim(line)
+      if line ~= "" and string.byte(line, 1) ~= string.byte("#", 1) then
+        loadRobotsConfigParser(line, lineNum)
+      end
+      lineNum = lineNum + 1
+    end
+    loadRobotsConfigParser("", lineNum)
+  end)
+  if not status then
+    assert(false, "In file \"" .. filename .. "\" at line " .. lineNum .. ": " .. msg)
+  end
+  
+  file:close()
+  
+  return robotConnections
 end
 
 --[[
@@ -255,7 +300,7 @@ end
 local function solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   dlog.checkArgs(stations, "table", recipes, "table", storageItems, "table", itemName, "string", amount, "number")
   if not recipes[itemName] then
-    return "No recipe found for \"" .. itemName .. "\"."
+    return "error", "No recipe found for \"" .. itemName .. "\"."
   end
   
   local defaultZeroMeta = {__index = function() return 0 end}
@@ -436,7 +481,7 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
   end
   local status, err = pcall(recursiveSolve, "", 1)
   if not status then
-    return err
+    return "error", err
   end
   
   dlog.out("recipeSolver", "Done.")
@@ -648,8 +693,8 @@ we iterate tables in reverse to find the sequence of steps to run in parallel.
 
 --]]
 
-local function checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, senderAddress, itemName, amount)
-  dlog.checkArgs(stations, "table", recipes, "table", storageServerAddress, "string", storageItems, "table", pendingCraftRequests, "table", senderAddress, "string", itemName, "string", amount, "number")
+local function checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, workers, senderAddress, itemName, amount)
+  dlog.checkArgs(stations, "table", recipes, "table", storageServerAddress, "string", storageItems, "table", pendingCraftRequests, "table", workers, "table", senderAddress, "string", itemName, "string", amount, "number")
   local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   
   dlog.out("checkRecipe", "status = " .. status)
@@ -688,10 +733,17 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
   
   -- Compute the craftProgress table if possible and send to interface/crafting servers. Otherwise we report the error.
   if status == "ok" or status == "missing" then
+    local requiresRobots = false
+    local requiresDrones = false
     local craftProgress = {}
     setmetatable(craftProgress, {__index = function(t, k) rawset(t, k, {inp=0, out=0, hav=0}) return t[k] end})
     for i = 1, #recipeIndices do
       local recipeDetails = recipes[recipeIndices[i]]
+      if not recipeDetails.station then
+        requiresRobots = true
+      else
+        requiresDrones = true
+      end
       for _, input in ipairs(recipeDetails.inp) do
         local inputAmount = (recipeDetails.station and input[2] or #input - 1)
         craftProgress[input[1]].inp = craftProgress[input[1]].inp + inputAmount * recipeBatches[i]
@@ -707,13 +759,50 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
     dlog.out("checkRecipe", "craftProgress:", craftProgress)
     
     if status == "ok" then
-      wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
-      wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_reserve," .. ticketName .. ";" .. serialization.serialize(requiredItems))
+      -- Confirm we will not have problems with a crafting recipe that needs robots when we have none (same for drones).
+      if (not requiresRobots or workers.totalRobots > 0) and (not requiresDrones or workers.totalDrones > 0) then
+        wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
+        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_reserve," .. ticketName .. ";" .. serialization.serialize(requiredItems))
+      else
+        local errorMessage = "Recipe requires "
+        if requiresRobots then
+          if requiresDrones then
+            errorMessage = errorMessage .. "robots and drones"
+          else
+            errorMessage = errorMessage .. "robots"
+          end
+        else
+          errorMessage = errorMessage .. "drones"
+        end
+        errorMessage = errorMessage .. ", but only " .. workers.totalRobots .. " robots and " .. workers.totalDrones .. " drones are active."
+        
+        wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,error;" .. errorMessage)
+      end
     else
       wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,missing;" .. serialization.serialize(craftProgress))
     end
   else
-    wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,error;" .. status)
+    -- Error status was returned from solveDependencyGraph(), the second return value recipeIndices contains the error message.
+    wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,error;" .. recipeIndices)
+  end
+end
+
+-- Update the amount of an item in storedItems. This happens when an item
+-- arrives in a drone inventory (finished crafting) or when item exported to
+-- drone inventory. The storedItems don't all reside in drone inventories
+-- though.
+local function updateStoredItem(craftRequest, itemName, deltaAmount)
+  if deltaAmount == 0 then
+    return
+  end
+  craftRequest.storedItems[itemName].total = craftRequest.storedItems[itemName].total + deltaAmount
+  if deltaAmount > 0 then
+    craftRequest.storedItems[itemName].lastTime = computer.uptime()
+  end
+  
+  -- Mark dependent recipes as dirty (amount changed).
+  for _, dependentIndex in ipairs(craftRequest.storedItems[itemName].dependents) do
+    craftRequest.recipeStatus[dependentIndex].dirty = true
   end
 end
 
@@ -741,8 +830,9 @@ local function main()
     threadSuccess = false
   end
   
-  local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses, pendingCraftRequests
-  --dlog.setFileOut("/tmp/messages", "w")
+  local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses
+  local pendingCraftRequests, activeCraftRequests, droneItems, droneInventories, workers
+  dlog.setFileOut("/tmp/messages", "w")
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
@@ -750,6 +840,8 @@ local function main()
     modem.open(COMMS_PORT)
     interfaceServerAddresses = {}
     pendingCraftRequests = {}
+    activeCraftRequests = {}
+    workers = {}
     math.randomseed(os.time())
     
     io.write("Loading recipes...\n")
@@ -760,6 +852,11 @@ local function main()
     verifyRecipes(stations, recipes)
     
     --dlog.out("setup", "stations and recipes:", stations, recipes)
+    
+    io.write("Loading configuration...\n")
+    workers.robotConnections = loadRobotsConfig(ROBOTS_CONFIG_FILENAME)
+    
+    --dlog.out("setup", "robotConnections:", workers.robotConnections)
     
     -- Contact the storage server.
     local attemptNumber = 1
@@ -803,6 +900,39 @@ local function main()
     
     -- Report system started to other listening devices (so they can re-discover the crafting server).
     wnet.send(modem, nil, COMMS_PORT, "any:craft_started,")
+    
+    io.write("\nStarting up robots...\n")
+    -- Reset any running robots.
+    wnet.send(modem, nil, COMMS_PORT, "robot:halt,")
+    os.sleep(1)
+    
+    -- Send robot code to active robots.
+    local robotUpFile = io.open("robot_up.lua")
+    local dlogWnetState = dlog.subsystems.wnet
+    dlog.setSubsystem("wnet", false)
+    wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. robotUpFile:read("a"))
+    dlog.setSubsystem("wnet", dlogWnetState)
+    robotUpFile:close()
+    
+    -- Wait for robots to receive the software update and keep track of their addresses.
+    workers.totalRobots = 0
+    workers.availableRobots = {}
+    while true do
+      local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:robot_start,", 2)
+      if address then
+        workers.totalRobots = workers.totalRobots + (workers.availableRobots[address] and 0 or 1)
+        workers.availableRobots[address] = true
+      else
+        break
+      end
+    end
+    
+    io.write("Found " .. workers.totalRobots .. " active robots.\n")
+    
+    workers.totalDrones = 0
+    workers.availableDrones = {}
+    
+    wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:get_drone_item_list,")
     
     threadSuccess = true
     dlog.out("main", "Setup thread ends.")
@@ -861,17 +991,85 @@ local function main()
           local itemName = string.match(data, "[^,]*")
           local amount = string.match(data, "[^,]*", #itemName + 2)
           
-          checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, address, itemName, tonumber(amount))
+          checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, workers, address, itemName, tonumber(amount))
         elseif dataHeader == "craft:recipe_start" then
-          dlog.out("info", "start " .. data)
+          -- Interface is requesting to start crafting operation. Forward request to storage and move entry in pendingCraftRequests to active.
+          if pendingCraftRequests[data] then
+            assert(not activeCraftRequests[data], "Attempt to start recipe for ticket " .. data .. " which is already running.")
+            wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_start," .. data)
+            activeCraftRequests[data] = pendingCraftRequests[data]
+            pendingCraftRequests[data] = nil
+            
+            -- Add/update an item in the storedItems table. The dependentIndex
+            -- is the recipe index that includes this item as an input.
+            local function initializeStoredItem(storedItems, itemName, dependentIndex)
+              if not storedItems[itemName] then
+                storedItems[itemName] = {}
+                storedItems[itemName].total = 0
+                storedItems[itemName].lastTime = computer.uptime()
+                storedItems[itemName].dependents = {}
+              end
+              storedItems[itemName].dependents[#storedItems[itemName].dependents + 1] = dependentIndex
+            end
+            
+            activeCraftRequests[data].startTime = computer.uptime()
+            activeCraftRequests[data].storedItems = {}
+            activeCraftRequests[data].recipeStartIndex = 1
+            activeCraftRequests[data].recipeStatus = {}
+            activeCraftRequests[data].supplyIndices = {}
+            -- Add each recipe used and inputs/outputs to storedItems.
+            for i, recipeIndex in ipairs(activeCraftRequests[data].recipeIndices) do
+              for _, input in ipairs(recipes[recipeIndex].inp) do
+                initializeStoredItem(activeCraftRequests[data].storedItems, input[1], recipeIndex)
+              end
+              for output, amount in pairs(recipes[recipeIndex].out) do
+                initializeStoredItem(activeCraftRequests[data].storedItems, output, nil)
+              end
+              activeCraftRequests[data].recipeStatus[i] = {}
+              activeCraftRequests[data].recipeStatus[i].dirty = true
+              activeCraftRequests[data].recipeStatus[i].available = 0
+              activeCraftRequests[data].recipeStatus[i].maxLastTime = 0
+            end
+            
+            -- Update the totals for storedItems from the requiredItems (these have been reserved already in storage).
+            for itemName, amount in pairs(activeCraftRequests[data].requiredItems) do
+              activeCraftRequests[data].storedItems[itemName].total = amount
+            end
+            
+            dlog.out("d", "end of craft:recipe_start, storedItems is:", activeCraftRequests[data].storedItems)
+          end
         elseif dataHeader == "craft:recipe_cancel" then
           -- Interface is requesting to cancel crafting operation. Forward request to storage and clear entry in pendingCraftRequests.
           wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_cancel," .. data)
           pendingCraftRequests[data] = nil
+        elseif dataHeader == "any:drone_item_list" then
+          -- Storage is reporting contents of the drone inventories (the inventory type in the network, not from actual drones).
+          droneItems = serialization.unserialize(data)
+          
+          -- Set the droneInventories for each drone inventory we have, and initialize to free (not in use).
+          droneInventories = {}
+          droneInventories.inv = {}
+          for i, inventoryDetails in ipairs(droneItems) do
+            droneInventories.inv[i] = {}
+            droneInventories.inv[i].status = "free"
+          end
+          droneInventories.firstFree = -1
+          droneInventories.firstFreeWithRobot = -1
         elseif dataHeader == "any:drone_item_diff" then
-          local result = string.match(data, "[^,]*")
-          local droneItemsDiff = serialization.unserialize(string.sub(data, #result + 2))
-          dlog.out("info", "droneItemsDiff:", droneItemsDiff)
+          -- Storage is reporting changed contents of drone inventories (result of insertion or extraction request).
+          local operation = string.match(data, "[^,]*")
+          local result = string.match(data, "[^,]*", #operation + 2)
+          local droneItemsDiff = serialization.unserialize(string.sub(data, #operation + #result + 3))
+          
+          if operation == "insert" and droneInventories.pendingInsert then
+            droneInventories.pendingInsert = result
+          elseif operation == "extract" and droneInventories.pendingExtract then
+            droneInventories.pendingExtract = result
+          end
+          
+          for invIndex, diff in pairs(droneItemsDiff) do
+            droneItems[invIndex] = diff
+          end
         elseif dataHeader == "any:drone_error" then
           dlog.out("drone", "Drone error: " .. string.format("%q", data))
         elseif dataHeader == "any:robot_error" then
@@ -880,6 +1078,333 @@ local function main()
       end
     end
     dlog.out("main", "Modem thread ends.")
+  end)
+  
+  --[[
+  crafting process:
+    crafting ticket moves to active
+    for each active ticket
+      check what new resources have been generated
+      if resources needed for current recipe and they are now available, queue up more crafting for it
+      
+    end
+  
+  which inventories in use, by who? what for?
+  what resources have been crafted?
+  last time each resource was crafted? how fast are they being crafted? (we need to decide how much to batch before sending items into next craft operation to allow pipelining)
+  when resource gets created, which recipes does it apply to?
+  
+  craftRequest.storedItems: {    -- Initialized with requiredItems and all items used in recipe
+    <item full name>: {
+      total: <total count>
+      lastTime: <computer uptime, last time the item was crafted>
+      dependents: {    -- All recipes in the request that require this item as an input.
+        1: <recipe index>
+        2: <recipe index>
+        ...
+      }
+    }
+  }
+  
+  craftRequest.recipeStatus: {
+    1: {
+      dirty: <true if any of the recipe input amounts changed, false otherwise>
+      available: <number of batches we can craft with current storedItems>
+      maxLastTime: <maximum lastTime of all recipe inputs>
+    }
+    ...
+  }
+  
+  craftRequest.supplyIndices: {
+    <index of drone inventory>: <true if dirty (inventory scan needed), false otherwise>
+  }
+  
+  droneInventories: {
+    firstFree: <index of first free inventory, or -1>
+    firstFreeWithRobot: <index of first free inventory with available robots, or -1>
+    pendingInsert: nil|<status>    -- Either "pending", or result of insert operation.
+    pendingExtract: nil|{    -- Pending drone extract request and instructions to robots/drones on what to do when items ready.
+      FIXME lets remove this, request sent over network immediately and then started later
+      hol up, we might need this to avoid flooding storage server with extract requests.
+      however we also want to get drones in position when extract starts, so maybe change this to be a boolean.
+    }
+    inv: {
+      1: {
+        status: free|input|output
+        ticketName: nil|<ticket name of corresponding craft request>
+      }
+      ...
+    }
+  }
+  
+  workers: {
+    robotConnections: {
+      1: {
+        <address>: <side>    -- The address of the robot that can access the inventory, and what side the robot sees the inventory.
+        ...
+      }
+      ...
+    }
+    totalRobots: <amount>
+    availableRobots: {
+      <address>: true
+      ...
+    }
+    totalDrones: <amount>
+    availableDrones: {
+      <address>: true
+      ...
+    }
+  }
+  --]]
+  
+  -- Iterate the droneInventories starting from startIndex. Stop and return
+  -- index if we find one with "free" status, or allowInput is true and we find
+  -- one with "input" status. If none found, return -1.
+  local function findNextFreeDroneInv(startIndex, allowInput)
+    if startIndex <= 0 then
+      return -1
+    end
+    for i = startIndex, #droneInventories.inv do
+      if droneInventories.inv[i].status == "free" or (allowInput and droneInventories.inv[i].status == "input") then
+        return i
+      end
+    end
+    return -1
+  end
+  
+  -- Similar to findNextFreeDroneInv(), but only counts inventories reachable by
+  -- robots with at least one robot available. Note that even if the inventory
+  -- is free now, it may not be later if the only adjacent robot is assigned a
+  -- task elsewhere.
+  local function findNextFreeDroneInvWithRobot(startIndex, allowInput)
+    if startIndex <= 0 then
+      return -1
+    end
+    for i = startIndex, #droneInventories.inv do
+      if droneInventories.inv[i].status == "free" or (allowInput and droneInventories.inv[i].status == "input") then
+        for address, _ in pairs(workers.robotConnections[i]) do
+          if workers.availableRobots[address] then
+            return i
+          end
+        end
+      end
+    end
+    return -1
+  end
+  
+  -- Search for an available spot in droneInventories and reserve it.
+  -- Inventories with "free" status are chosen first, but if none are found then
+  -- the first "input" inventory is flushed to make space. Updates the status of
+  -- the inventory and ticket, and returns the index of the inventory. If no
+  -- space could be made, returns -1.
+  local function allocateDroneInventory(ticketName, usage, needRobots)
+    dlog.checkArgs(ticketName, "string,nil", usage, "string", needRobots, "boolean,nil")
+    assert(usage == "input" or usage == "output", "Provided usage is not valid.")
+    needRobots = needRobots or false
+    
+    local droneInvIndex
+    if not needRobots then
+      -- Check if invalid firstFree, and rescan from the beginning to update it.
+      if droneInventories.firstFree <= 0 then
+        droneInventories.firstFree = findNextFreeDroneInv(1, true)
+        if droneInventories.firstFree <= 0 then
+          return -1
+        end
+        -- If found an input inventory, flush it back to storage.
+        if droneInventories.inv[droneInventories.firstFree].status == "input" then
+          assert(flushDroneInventory(droneInventories.firstFree), "Failed to flush drone inventory " .. droneInventories.firstFree .. " to storage.")
+        end
+      end
+      
+      droneInvIndex = droneInventories.firstFree
+      droneInventories.firstFree = findNextFreeDroneInv(droneInventories.firstFree + 1, false)
+      droneInventories.firstFreeWithRobot = findNextFreeDroneInvWithRobot(droneInventories.firstFreeWithRobot, false)
+    else
+      -- Check if invalid firstFreeWithRobot, and rescan from the beginning to update it.
+      if droneInventories.firstFreeWithRobot <= 0 then
+        droneInventories.firstFreeWithRobot = findNextFreeDroneInvWithRobot(1, true)
+        if droneInventories.firstFreeWithRobot <= 0 then
+          return -1
+        end
+        -- If found an input inventory, flush it back to storage.
+        if droneInventories.inv[droneInventories.firstFreeWithRobot].status == "input" then
+          assert(flushDroneInventory(droneInventories.firstFreeWithRobot), "Failed to flush drone inventory " .. droneInventories.firstFreeWithRobot .. " to storage.")
+        end
+      end
+      
+      droneInvIndex = droneInventories.firstFreeWithRobot
+      droneInventories.firstFree = findNextFreeDroneInv(droneInventories.firstFree, false)
+      droneInventories.firstFreeWithRobot = findNextFreeDroneInvWithRobot(droneInventories.firstFreeWithRobot + 1, false)
+    end
+    
+    droneInventories.inv[droneInvIndex].status = usage
+    droneInventories.inv[droneInvIndex].status = ticketName
+    
+    return droneInvIndex
+  end
+  
+  -- Sends a request to storage to move the contents of the drone inventory back
+  -- into the network. If waitForCompletion is true, this function blocks until
+  -- a response from storage server is received in modem thread. The ticketName
+  -- can be nil. Returns true if flush succeeded (or waitForCompletion is
+  -- false), or false if it did not.
+  local function flushDroneInventory(ticketName, droneInvIndex, waitForCompletion)
+    dlog.checkArgs(ticketName, "string,nil", droneInvIndex, "number", waitForCompletion, "boolean")
+    ticketName = ticketName or ""
+    
+    droneInventories.pendingInsert = "pending"
+    wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_insert," .. droneInvIndex .. "," .. ticketName)
+    
+    local result = true
+    if waitForCompletion then
+      local i = 1
+      while droneInventories.pendingInsert == "pending" do
+        -- If insert request has not completed in 30 seconds, we assume there has been a problem.
+        if i > 600 then
+          dlog.out("d", "Oof, insert request took too long (over 30s)")
+          error("Craft failed")
+        end
+        os.sleep(0.05)
+        i = i + 1
+      end
+      
+      result = (droneInventories.pendingInsert == "ok")
+      droneInventories.pendingInsert = nil
+      -- Remove any marker that this is a supply inventory, since it has just been emptied.
+      if ticketName then
+        activeCraftRequests[ticketName].supplyIndices[droneInvIndex] = nil
+      end
+    end
+    
+    return result
+  end
+  
+  --[[
+  
+  Note about assigning robots work:
+    When an inventory is allocated for robot work, the robot must finish and
+  return items to the inventory (which then gets marked as an input). The robot
+  is added back to the available list. The robot CANNOT accept more work from
+  that inventory until it is allocated again. We must not get into a situation
+  where a robot goes from free to busy without updating the firstFreeWithRobot
+  index (robot could be shared between two inventories and giving it new work
+  could invalidate our index).
+  
+  --]]
+  
+  -- 
+  local function updateCraftRequest(ticketName, craftRequest)
+    -- Return early if drone extract is pending (avoid queuing up another request so that we don't overwhelm storage server).
+    if droneInventories.pendingExtract == "pending" then
+      return
+    elseif droneInventories.pendingExtract then
+      if droneInventories.pendingExtract ~= "ok" then
+        dlog.out("d", "Oh no, drone extract request failed?!")
+        error("Craft failed")
+      end
+      
+      dlog.out("d", "Extract request completed, go robots!")
+      droneInventories.pendingExtract = nil
+    end
+    
+    -- FIXME don't loop through all of them, start at recipeStartIndex
+    
+    for i, recipeStatus in ipairs(craftRequest.recipeStatus) do
+      if craftRequest.recipeBatches[i] > 0 then
+        local recipe = recipes[craftRequest.recipeIndices[i]]
+        
+        -- Re-calculate the max amount of batches we can craft and time of most recently crafted item if recipe inputs changed.
+        if recipeStatus.dirty then
+          local maxLastTime = 0
+          local maxBatch = math.huge
+          
+          -- FIXME may want to factor in the fact that drone inventories are limited, and items have max stack size.
+          -- proposed fix: run this in a loop. count up the number of occupied slots as we go and if we run over the inventory size, cut the maxBatch in half and try again.
+          -- if reach zero and maxBatch had been reduced in previous iteration, throw error because we are supposed to craft at least some of the item and items don't fit in inventory.
+          
+          -- For each input item in recipe, scale the maxBatch down if the amount we have is limiting and increase maxLastTime to the max lastTime.
+          for _, input in ipairs(recipe.inp) do
+            local recipeItemAmount = (recipe.station and input[2] or #input - 1)
+            maxBatch = math.min(maxBatch, math.floor(craftRequest.storedItems[input[1]].total / recipeItemAmount))
+            maxLastTime = math.max(maxLastTime, craftRequest.storedItems[input[1]].lastTime)
+          end
+          
+          recipeStatus.dirty = false
+          recipeStatus.available = maxBatch
+          recipeStatus.maxLastTime = maxLastTime
+        end
+        
+        -- FIXME: For now we assume all recipes are crafting here ############################################################
+        
+        -- Check if we can make some batches now, and that some robots/drones are available to work.
+        if recipeStatus.available > 0 then
+          local freeIndex = allocateDroneInventory(ticketName, "output", not recipe.station)
+          
+          if not recipe.station and freeIndex > 0 then
+            local extractList = {}
+            for i, input in ipairs(recipe.inp) do
+              extractList[i] = {input[1], recipeStatus.available * (#input - 1)}
+            end
+            extractList.supplyIndices = craftRequest.supplyIndices
+            
+            -- Collect robots ready for this task. Do this here so we can guarantee there hasn't been a context switch after the call to allocateDroneInventory() ends.
+            -- Otherwise, some robots could finish their tasks and we could give work to the wrong bots.
+            local readyWorkers = {}
+            for address, side in pairs(workers.robotConnections[freeIndex]) do
+              if workers.availableRobots[address] then
+                readyWorkers[address] = side
+              end
+            end
+            
+            -- FIXME update availableRobots here (not above), not all of the robots will be given a job depending on how resources are divided up. #####################################
+            
+            dlog.out("d", "Need to send job request to these bots:", readyWorkers)
+            
+            --droneInventories.pendingExtract = {}
+            --droneInventories.pendingExtract.extractList = extractList    -- FIXME probably don't care about the extract list, we really want to cache the instructions that need to go to robots. #######################################
+            droneInventories.pendingExtract = "pending"
+            wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract," .. droneInventories.firstFreeWithRobot .. "," .. ticketName .. ";" .. serialization.serialize(extractList))
+            
+            -- FIXME now we should update the storedItems (which should update recipeStatus), droneInventories and firstFree, availableRobots and firstFreeWithRobot, we don't touch supplyIndices
+            -- done! (i think)
+            
+            -- Remove the requested extract items from craftRequest.storedItems, then confirm later that the request succeeded.
+            for i, extractItem in ipairs(extractList) do
+              updateStoredItem(craftRequest, extractItem[1], -(extractItem[2]))
+            end
+            dlog.out("d", "craftRequest.storedItems is:", craftRequest.storedItems)
+            
+            
+            -- FIXME need to confirm that extract request succeeded in modem thread, otherwise throw error.
+            -- done!
+            
+            
+            
+          elseif recipe.station and freeIndex > 0 then
+            
+          end
+          
+          
+          
+        end
+      end
+    end
+  end
+  
+  -- 
+  local craftingThread = thread.create(function()
+    local done = false
+    while true do
+      if not done then
+        for ticketName, craftRequest in pairs(activeCraftRequests) do
+          updateCraftRequest(ticketName, craftRequest)
+          done = true
+          dlog.out("craftingThread", "craftRequest:", craftRequest)
+        end
+      end
+      os.sleep(0.05)
+    end
   end)
   
   -- Waits for commands from user-input and executes them.
@@ -944,6 +1469,8 @@ local function main()
         dlog.setFileOut(input[2] or "")
       elseif input[1] == "dlog_std" then    -- Command dlog_std <0 or 1>
         dlog.setStdOut(input[2] == "1")
+      elseif input[1] == "dbg" then
+        dlog.out("dbg", "droneItems:", droneItems)
       elseif input[1] == "help" then    -- Command help
         io.write("Commands:\n")
         io.write("  dlog [<subsystem> <0, 1, or nil>]\n")
@@ -971,12 +1498,13 @@ local function main()
   end)
   
   
-  waitThreads({interruptThread, modemThread, commandThread})
+  waitThreads({interruptThread, modemThread, craftingThread, commandThread})
   
   
   dlog.out("main", "Killing threads and stopping program.")
   interruptThread:kill()
   modemThread:kill()
+  craftingThread:kill()
   commandThread:kill()
 end
 
