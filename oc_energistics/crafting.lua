@@ -1062,8 +1062,10 @@ local function main()
           local droneItemsDiff = serialization.unserialize(string.sub(data, #operation + #result + 3))
           
           if operation == "insert" and droneInventories.pendingInsert then
+            assert(droneInventories.pendingInsert == "pending")
             droneInventories.pendingInsert = result
           elseif operation == "extract" and droneInventories.pendingExtract then
+            assert(droneInventories.pendingExtract == "pending")
             droneInventories.pendingExtract = result
           end
           
@@ -1123,11 +1125,7 @@ local function main()
     firstFree: <index of first free inventory, or -1>
     firstFreeWithRobot: <index of first free inventory with available robots, or -1>
     pendingInsert: nil|<status>    -- Either "pending", or result of insert operation.
-    pendingExtract: nil|{    -- Pending drone extract request and instructions to robots/drones on what to do when items ready.
-      FIXME lets remove this, request sent over network immediately and then started later
-      hol up, we might need this to avoid flooding storage server with extract requests.
-      however we also want to get drones in position when extract starts, so maybe change this to be a boolean.
-    }
+    pendingExtract: nil|<status>
     inv: {
       1: {
         status: free|input|output
@@ -1241,6 +1239,9 @@ local function main()
     droneInventories.inv[droneInvIndex].status = usage
     droneInventories.inv[droneInvIndex].status = ticketName
     
+    dlog.out("allocateDroneInventory", "Allocated index " .. droneInvIndex .. " as an " .. usage .. " for ticket " .. ticketName)
+    dlog.out("allocateDroneInventory", "firstFree = " .. droneInventories.firstFree .. ", firstFreeWithRobot = " .. droneInventories.firstFreeWithRobot)
+    
     return droneInvIndex
   end
   
@@ -1252,6 +1253,8 @@ local function main()
   local function flushDroneInventory(ticketName, droneInvIndex, waitForCompletion)
     dlog.checkArgs(ticketName, "string,nil", droneInvIndex, "number", waitForCompletion, "boolean")
     ticketName = ticketName or ""
+    
+    dlog.out("flushDroneInventory", "Requesting flush for index " .. droneInvIndex)
     
     droneInventories.pendingInsert = "pending"
     wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_insert," .. droneInvIndex .. "," .. ticketName)
@@ -1269,11 +1272,25 @@ local function main()
         i = i + 1
       end
       
+      dlog.out("flushDroneInventory", "Result is " .. droneInventories.pendingInsert)
+      
       result = (droneInventories.pendingInsert == "ok")
       droneInventories.pendingInsert = nil
-      -- Remove any marker that this is a supply inventory, since it has just been emptied.
-      if ticketName then
-        activeCraftRequests[ticketName].supplyIndices[droneInvIndex] = nil
+      if result then
+        -- Inventory goes back to free, and we need to check if the firstFree indices need to be moved back.
+        droneInventories.inv[droneInvIndex].status = "free"
+        
+        if droneInventories.firstFree <= 0 or droneInvIndex < droneInventories.firstFree then
+          droneInventories.firstFree = droneInvIndex
+        end
+        if droneInventories.firstFreeWithRobot <= 0 or droneInvIndex < droneInventories.firstFreeWithRobot then
+          droneInventories.firstFreeWithRobot = findNextFreeDroneInvWithRobot(droneInvIndex, false)
+        end
+        
+        -- Remove any marker that this is a supply inventory, since it has just been emptied.
+        if ticketName then
+          activeCraftRequests[ticketName].supplyIndices[droneInvIndex] = nil
+        end
       end
     end
     
@@ -1361,13 +1378,8 @@ local function main()
             
             dlog.out("d", "Need to send job request to these bots:", readyWorkers)
             
-            --droneInventories.pendingExtract = {}
-            --droneInventories.pendingExtract.extractList = extractList    -- FIXME probably don't care about the extract list, we really want to cache the instructions that need to go to robots. #######################################
             droneInventories.pendingExtract = "pending"
-            wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract," .. droneInventories.firstFreeWithRobot .. "," .. ticketName .. ";" .. serialization.serialize(extractList))
-            
-            -- FIXME now we should update the storedItems (which should update recipeStatus), droneInventories and firstFree, availableRobots and firstFreeWithRobot, we don't touch supplyIndices
-            -- done! (i think)
+            wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract," .. freeIndex .. "," .. ticketName .. ";" .. serialization.serialize(extractList))
             
             -- Remove the requested extract items from craftRequest.storedItems, then confirm later that the request succeeded.
             for i, extractItem in ipairs(extractList) do
@@ -1375,13 +1387,7 @@ local function main()
             end
             dlog.out("d", "craftRequest.storedItems is:", craftRequest.storedItems)
             
-            
-            -- FIXME need to confirm that extract request succeeded in modem thread, otherwise throw error.
-            -- done!
-            
-            
-            
-          elseif recipe.station and freeIndex > 0 then
+          elseif recipe.station and freeIndex > 0 and next(workers.availableDrones) ~= nil then
             
           end
           
