@@ -20,7 +20,9 @@ local dlog = {}
 dlog.fileOutput = nil
 dlog.stdOutput = true
 dlog.enableOutput = true
-dlog.subsystems = {}
+dlog.subsystems = {
+  ["*"] = true
+}
 dlog.env2 = nil
 
 -- dlog.errorWithTraceback(message: string)
