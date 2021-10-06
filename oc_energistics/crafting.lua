@@ -17,6 +17,7 @@ local thread = require("thread")
 local dlog = require("dlog")
 dlog.osBlockNewGlobals(true)
 local common = require("common")
+local packer = require("packer")
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
@@ -762,7 +763,7 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
       -- Confirm we will not have problems with a crafting recipe that needs robots when we have none (same for drones).
       if (not requiresRobots or workers.totalRobots > 0) and (not requiresDrones or workers.totalDrones > 0) then
         wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
-        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_reserve," .. ticketName .. ";" .. serialization.serialize(requiredItems))
+        wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_reserve(ticketName, requiredItems))
       else
         local errorMessage = "Recipe requires "
         if requiresRobots then
@@ -866,7 +867,7 @@ local function main()
         lastAttemptTime = computer.uptime()
         term.clearLine()
         io.write("Trying to contact storage server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
-        wnet.send(modem, nil, COMMS_PORT, "stor:discover,")
+        wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_discover())
         attemptNumber = attemptNumber + 1
       end
       local address, port, data = wnet.receive(0.1)
@@ -932,7 +933,7 @@ local function main()
     workers.totalDrones = 0
     workers.availableDrones = {}
     
-    wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:get_drone_item_list,")
+    wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_get_drone_item_list())
     
     threadSuccess = true
     dlog.out("main", "Setup thread ends.")
@@ -968,7 +969,7 @@ local function main()
           end
         elseif dataHeader == "any:stor_started" then
           -- If we get a broadcast that storage started, it must have just rebooted and we need to discover new storageItems.
-          wnet.send(modem, address, COMMS_PORT, "stor:discover,")
+          wnet.send(modem, address, COMMS_PORT, packer.pack.stor_discover())
         elseif dataHeader == "any:item_list" then
           -- New item list, update storageItems.
           storageItems = serialization.unserialize(data)
@@ -996,7 +997,7 @@ local function main()
           -- Interface is requesting to start crafting operation. Forward request to storage and move entry in pendingCraftRequests to active.
           if pendingCraftRequests[data] then
             assert(not activeCraftRequests[data], "Attempt to start recipe for ticket " .. data .. " which is already running.")
-            wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_start," .. data)
+            wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_start(data))
             activeCraftRequests[data] = pendingCraftRequests[data]
             pendingCraftRequests[data] = nil
             
@@ -1040,7 +1041,7 @@ local function main()
           end
         elseif dataHeader == "craft:recipe_cancel" then
           -- Interface is requesting to cancel crafting operation. Forward request to storage and clear entry in pendingCraftRequests.
-          wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:recipe_cancel," .. data)
+          wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_cancel(data))
           pendingCraftRequests[data] = nil
         elseif dataHeader == "any:drone_item_list" then
           -- Storage is reporting contents of the drone inventories (the inventory type in the network, not from actual drones).
@@ -1252,12 +1253,11 @@ local function main()
   -- false), or false if it did not.
   local function flushDroneInventory(ticketName, droneInvIndex, waitForCompletion)
     dlog.checkArgs(ticketName, "string,nil", droneInvIndex, "number", waitForCompletion, "boolean")
-    ticketName = ticketName or ""
     
     dlog.out("flushDroneInventory", "Requesting flush for index " .. droneInvIndex)
     
     droneInventories.pendingInsert = "pending"
-    wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_insert," .. droneInvIndex .. "," .. ticketName)
+    wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(droneInvIndex, ticketName))
     
     local result = true
     if waitForCompletion then
@@ -1379,7 +1379,7 @@ local function main()
             dlog.out("d", "Need to send job request to these bots:", readyWorkers)
             
             droneInventories.pendingExtract = "pending"
-            wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract," .. freeIndex .. "," .. ticketName .. ";" .. serialization.serialize(extractList))
+            wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(freeIndex, ticketName, extractList))
             
             -- Remove the requested extract items from craftRequest.storedItems, then confirm later that the request succeeded.
             for i, extractItem in ipairs(extractList) do
@@ -1435,10 +1435,7 @@ local function main()
         wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. sourceCode)
       elseif input[1] == "insert" then
         local ticket = next(pendingCraftRequests)
-        if not ticket then
-          ticket = ""
-        end
-        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_insert,1," .. ticket)
+        wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(1, ticket))
       elseif input[1] == "extract" then
         local t = {}
         --t[#t + 1] = {"minecraft:cobblestone/0", 1000}
@@ -1451,10 +1448,7 @@ local function main()
         t.supplyIndices[2] = true
         t.supplyIndices[1] = false
         local ticket = next(pendingCraftRequests)
-        if not ticket then
-          ticket = ""
-        end
-        wnet.send(modem, storageServerAddress, COMMS_PORT, "stor:drone_extract,4," .. ticket .. ";" .. serialization.serialize(t))
+        wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(4, ticket, t))
       elseif input[1] == "dlog" then    -- Command dlog [<subsystem> <0, 1, or nil>]
         if input[2] then
           if input[3] == "0" then

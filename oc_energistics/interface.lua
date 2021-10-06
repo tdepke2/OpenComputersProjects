@@ -18,6 +18,7 @@ local thread = require("thread")
 
 local dlog = require("dlog")
 dlog.osBlockNewGlobals(true)
+local packer = require("packer")
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
@@ -949,7 +950,7 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
             if self.textBox.requestedCrafting then
               wnet.send(modem, self.craftingServerAddress, COMMS_PORT, "craft:check_recipe," .. self.textBox.requestedItem .. "," .. amount)
             else
-              wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor:extract," .. self.textBox.requestedItem .. "," .. amount)
+              wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_extract(self.textBox.requestedItem, amount))
             end
           end
           
@@ -1061,7 +1062,7 @@ function Gui:requestItem(itemName, button)
         amount = math.ceil(math.min(self.storageItems[itemName].maxSize, self.storageItems[itemName].total) / 2)
       end
     end
-    wnet.send(modem, self.storageServerAddress, COMMS_PORT, "stor:extract," .. itemName .. "," .. amount)
+    wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_extract(itemName, amount))
   end
 end
 
@@ -1166,7 +1167,7 @@ local function main()
         lastAttemptTime = computer.uptime()
         term.clearLine()
         io.write("Trying to contact storage server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
-        wnet.send(modem, nil, COMMS_PORT, "stor:discover,")
+        wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_discover())
         attemptNumber = attemptNumber + 1
       end
       local address, port, data = wnet.receive(0.1)
@@ -1244,7 +1245,7 @@ local function main()
           gui:updateSortingKeys()
         elseif dataHeader == "any:stor_started" then
           -- If we get a broadcast that storage started, it must have just rebooted and we need to discover new storageItems.
-          wnet.send(modem, address, COMMS_PORT, "stor:discover,")
+          wnet.send(modem, address, COMMS_PORT, packer.pack.stor_discover())
         elseif dataHeader == "any:item_list" then
           -- New item list, update storageItems and GUI.
           storageItems = serialization.unserialize(data)

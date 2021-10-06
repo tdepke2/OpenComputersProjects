@@ -21,8 +21,14 @@ dlog.fileOutput = nil
 dlog.stdOutput = true
 dlog.enableOutput = true
 dlog.subsystems = {
-  ["*"] = true
-}
+  ["*"] = true,
+  ["wnet:d"] = false,
+  routeItems = false,
+  insertStor = false,
+  extractStor = false,
+  addStor = false,
+  removeStor = false,
+} -- FIXME just setting some defaults for when I reboot servers, should change this table back to empty later on. #################################################################
 dlog.env2 = nil
 
 -- dlog.errorWithTraceback(message: string)

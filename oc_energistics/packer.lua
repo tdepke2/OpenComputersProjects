@@ -67,6 +67,9 @@ setmetatable(packer.callbacks, {
   end
 })
 
+-- packer.handlePacket(obj: table, address: string, port: number,
+--   message: string)
+-- 
 -- Looks up the packet handler in packer.callbacks for the given packet, and
 -- executes the action. If no callback is registered, behavior depends on the
 -- metatable of packer.callbacks (nothing happens by default). The obj argument
@@ -88,35 +91,100 @@ end
 
 
 
-function packer.pack.stor_drone_insert(droneInvIndex, ticket)
-  return "stor_drone_insert," .. droneInvIndex .. "," .. ticket
+-- Find the address of the storage server.
+function packer.pack.stor_discover()
+  return "stor_discover,"
+end
+function packer.unpack.stor_discover(data)
+  return nil
 end
 
+-- Request items to be inserted into storage network.
+function packer.pack.stor_insert()
+  return "stor_insert,"
+end
+function packer.unpack.stor_insert(data)
+  return nil
+end
+
+-- Request items to be extracted from storage network.
+function packer.pack.stor_extract(itemName, amount)
+  return "stor_extract," .. (itemName or "") .. "," .. amount
+end
+function packer.unpack.stor_extract(data)
+  local itemName = string.match(data, "[^,]*")
+  local amount = string.sub(data, #itemName + 2)
+  if itemName == "" then
+    itemName = nil
+  end
+  return itemName, tonumber(amount)
+end
+
+-- Request storage to reserve items in network for crafting operation.
+function packer.pack.stor_recipe_reserve(ticketName, requiredItems)
+  return "stor_recipe_reserve," .. ticketName .. ";" .. serialization.serialize(requiredItems)
+end
+function packer.unpack.stor_recipe_reserve(data)
+  local ticketName = string.match(data, "[^;]*")
+  local requiredItems = serialization.unserialize(string.sub(data, #ticketName + 2))
+  return ticketName, requiredItems
+end
+
+-- Request storage to start crafting operation.
+function packer.pack.stor_recipe_start(ticketName)
+  return "stor_recipe_start," .. ticketName
+end
+function packer.unpack.stor_recipe_start(data)
+  return data
+end
+
+-- Request storage to cancel crafting operation.
+function packer.pack.stor_recipe_cancel(ticketName)
+  return "stor_recipe_cancel," .. ticketName
+end
+function packer.unpack.stor_recipe_cancel(data)
+  return data
+end
+
+-- Get the storage's drone inventories item list.
+function packer.pack.stor_get_drone_item_list()
+  return "stor_get_drone_item_list,"
+end
+function packer.unpack.stor_get_drone_item_list(data)
+  return nil
+end
+
+-- Request storage to flush items from drone inventory into network.
+function packer.pack.stor_drone_insert(droneInvIndex, ticket)
+  return "stor_drone_insert," .. droneInvIndex .. "," .. (ticket or "")
+end
 function packer.unpack.stor_drone_insert(data)
   local droneInvIndex = string.match(data, "[^,]*")
   local ticket = string.sub(data, #droneInvIndex + 2)
-  droneInvIndex = tonumber(droneInvIndex)
   if ticket == "" then
     ticket = nil
   end
-  return droneInvIndex, ticket
+  return tonumber(droneInvIndex), ticket
 end
 
-
-
+-- Request storage to pull items from network into drone inventory.
 function packer.pack.stor_drone_extract(droneInvIndex, ticket, extractList)
-  return "stor_drone_extract," .. droneInvIndex .. "," .. ticket .. ";" .. extractList
+  return "stor_drone_extract," .. droneInvIndex .. "," .. (ticket or "") .. ";" .. serialization.serialize(extractList)
 end
-
 function packer.unpack.stor_drone_extract(data)
   local droneInvIndex = string.match(data, "[^,]*")
   local ticket = string.match(data, "[^;]*", #droneInvIndex + 2)
   local extractList = serialization.unserialize(string.sub(data, #droneInvIndex + #ticket + 3))
-  droneInvIndex = tonumber(droneInvIndex)
   if ticket == "" then
     ticket = nil
   end
-  return droneInvIndex, ticket, extractList
+  return tonumber(droneInvIndex), ticket, extractList
 end
+
+
+
+-- FIXME need to update all the "ticketName" to be "ticket", a ticket is just a name. ##################################################
+
+
 
 return packer

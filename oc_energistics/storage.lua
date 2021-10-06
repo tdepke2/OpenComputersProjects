@@ -17,6 +17,7 @@ local thread = require("thread")
 local dlog = require("dlog")
 dlog.osBlockNewGlobals(true)
 local common = require("common")
+local packer = require("packer")
 local wnet = require("wnet")
 
 local COMMS_PORT = 0xE298
@@ -808,14 +809,14 @@ local function flushInventoriesToOutput(transposers, routing, invType)
 end
 
 
--- Send data over network to each address in the table (or broadcast if nil).
-local function sendToAddresses(addresses, data)
+-- Send message over network to each address in the table (or broadcast if nil).
+local function sendToAddresses(addresses, message)
   if addresses then
     for address, _ in pairs(addresses) do
-      wnet.send(modem, address, COMMS_PORT, data)
+      wnet.send(modem, address, COMMS_PORT, message)
     end
   else
-    wnet.send(modem, nil, COMMS_PORT, data)
+    wnet.send(modem, nil, COMMS_PORT, message)
   end
 end
 
@@ -901,7 +902,9 @@ local function changeReservedItemAmount(reservedItems, itemName, amount)
 end
 
 
--- 
+-- Updates an item stack at an index and slot of droneItems. Marks the whole
+-- index as dirty if the item amount changed (so that a diff can be sent later
+-- to update servers that keep a copy of this table).
 local function setDroneItemsSlot(droneItems, i, slot, size, maxSize, fullName)
   if size == 0 then
     if droneItems[i][slot] then
@@ -928,7 +931,126 @@ local craftInterServerAddresses, pendingCraftRequests, activeCraftRequests, dron
 
 
 
-local function handleDroneInsert(address, droneInvIndex, ticket)
+
+
+-- Device is searching for this storage server, respond with storage items list.
+local function handleStorDiscover(_, address, _)
+  craftInterServerAddresses[address] = true
+  sendAvailableItems({[address]=true}, storageItems, reservedItems)
+end
+packer.callbacks.stor_discover = handleStorDiscover
+
+
+-- Device requested to insert items into the network.
+local function handleStorInsert(_, _, _)
+  dlog.out("cmdInsert", "result = ", insertStorage(transposers, routing, storageItems, "input", 1))
+  sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+end
+packer.callbacks.stor_insert = handleStorInsert
+
+
+-- Device has requested to extract items from network.
+local function handleStorExtract(_, _, _, itemName, amount)
+  dlog.out("cmdExtract", "Extract with item " .. tostring(itemName) .. " and amount " .. amount .. ".")
+  -- Continuously extract item until we reach the amount or run out (or output full).
+  while amount > 0 do
+    local success, amountTransferred = extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, amount, reservedItems)
+    dlog.out("cmdExtract", "result = ", success, amountTransferred)
+    if not success then
+      break
+    end
+    amount = amount - amountTransferred
+  end
+  sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+end
+packer.callbacks.stor_extract = handleStorExtract
+
+
+-- Crafting server is requesting to reserve items for crafting operation.
+local function handleStorRecipeReserve(_, address, _, ticketName, requiredItems)
+  -- Check for expired tickets and remove them.
+  for ticketName2, request in pairs(pendingCraftRequests) do
+    if computer.uptime() > request.creationTime + 10 then
+      dlog.out("cmdRecipeReserve", "Ticket " .. ticketName2 .. " has expired")
+      
+      for itemName, amount in pairs(request.reserved) do
+        changeReservedItemAmount(reservedItems, itemName, -amount)
+      end
+      pendingCraftRequests[ticketName2] = nil
+    end
+  end
+  
+  -- Add all required items for crafting directly to the reserved list.
+  -- This includes the negative ones (recipe outputs), a negative reservation means the item can be reserved later once inserted into network but will show up anyways.
+  local reserveFailed = false
+  for itemName, amount in pairs(requiredItems) do
+    changeReservedItemAmount(reservedItems, itemName, amount)
+    if (reservedItems[itemName] or 0) > (storageItems[itemName] and storageItems[itemName].total or 0) then
+      reserveFailed = true
+    end
+  end
+  
+  -- If we successfully reserved the items then add the ticket to pending. Otherwise we undo the reservation.
+  if not reserveFailed then
+    pendingCraftRequests[ticketName] = {}
+    pendingCraftRequests[ticketName].creationTime = computer.uptime()
+    pendingCraftRequests[ticketName].reserved = requiredItems
+  else
+    for itemName, amount in pairs(requiredItems) do
+      changeReservedItemAmount(reservedItems, itemName, -amount)
+    end
+    wnet.send(modem, address, COMMS_PORT, "craft:recipe_cancel," .. ticketName)
+  end
+  
+  sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+end
+packer.callbacks.stor_recipe_reserve = handleStorRecipeReserve
+
+
+-- Crafting server is requesting to start a crafting operation.
+local function handleStorRecipeStart(_, _, _, ticketName)
+  if pendingCraftRequests[ticketName] then
+    assert(not activeCraftRequests[ticketName], "Attempt to start recipe for ticket " .. ticketName .. " which is already running.")
+    activeCraftRequests[ticketName] = pendingCraftRequests[ticketName]
+    activeCraftRequests[ticketName].startTime = computer.uptime()
+    pendingCraftRequests[ticketName] = nil
+  end
+end
+packer.callbacks.stor_recipe_start = handleStorRecipeStart
+
+
+-- Crafting server is requesting to cancel a crafting operation.
+local function handleStorRecipeCancel(_, _, _, ticketName)
+  if pendingCraftRequests[ticketName] then
+    for itemName, amount in pairs(pendingCraftRequests[ticketName].reserved) do
+      changeReservedItemAmount(reservedItems, itemName, -amount)
+    end
+    pendingCraftRequests[ticketName] = nil
+    
+    sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+  end
+end
+packer.callbacks.stor_recipe_cancel = handleStorRecipeCancel
+
+
+-- Send the droneItems table upon request.
+local function handleStorGetDroneItemList(_, address, _)
+  --[[
+  this may not be a great idea to maintain drone item info here (well actually maybe it works well). 2 options:
+    store all drone inventory data with crafting, only send info about number of inventories and number of slots here
+    store it all here, then crafting requests bulk of items needed in an inventory, storage responds with did it succeed and diff of just that inventory index (in one packet)
+      also need to let crafting tell storage to suck all of inventory back into network (when items need to be returned). yikes what happens if full??
+  --]]
+  -- FIXME I think (hope) this has been sorted out already ################################
+  
+  wnet.send(modem, address, COMMS_PORT, "any:drone_item_list," .. serialization.serialize(droneItems))
+end
+packer.callbacks.stor_get_drone_item_list = handleStorGetDroneItemList
+
+
+-- Crafting server is requesting to flush items in drone inventory back into the
+-- storage network.
+local function handleDroneInsert(_, address, _, droneInvIndex, ticket)
   local result = "ok"
   dlog.out("hDroneInsert", "reservedItems before:", reservedItems)
   dlog.out("hDroneInsert", "droneItems before:", droneItems)
@@ -975,10 +1097,13 @@ local function handleDroneInsert(address, droneInvIndex, ticket)
   sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
   wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff,insert," .. result .. "," .. serialization.serialize(droneItemsDiff))
 end
+packer.callbacks.stor_drone_insert = handleDroneInsert
 
 
--- Note: it is an error to specify a supply index that is the same as droneInvIndex.
-local function handleDroneExtract(address, droneInvIndex, ticket, extractList)
+-- Crafting server is requesting to pull items from network into a drone
+-- inventory. Note: it is an error to specify a supply index that is the same as
+-- droneInvIndex.
+local function handleDroneExtract(_, address, _, droneInvIndex, ticket, extractList)
   local extractIdx = 1
   local extractItemName = extractList[extractIdx][1]
   local extractItemAmount = extractList[extractIdx][2]
@@ -1137,6 +1262,7 @@ local function handleDroneExtract(address, droneInvIndex, ticket, extractList)
   wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff,extract," .. result .. "," .. serialization.serialize(droneItemsDiff))
   
 end
+packer.callbacks.stor_drone_extract = handleDroneExtract
 
 
 -- Main program starts here. Runs a few threads to do setup work, listen for
@@ -1239,131 +1365,8 @@ local function main()
     dlog.out("main", "Modem thread starts.")
     io.write("Listening for commands on port " .. COMMS_PORT .. "...\n")
     while true do
-      local address, port, data = wnet.receive()
-      if port == COMMS_PORT then
-        local dataHeader = string.match(data, "[^,]*")
-        data = string.sub(data, #dataHeader + 2)
-        
-        if dataHeader == "stor:discover" then
-          -- Device is searching for this storage server, respond with storage items list.
-          craftInterServerAddresses[address] = true
-          sendAvailableItems({[address]=true}, storageItems, reservedItems)
-        elseif dataHeader == "stor:insert" then
-          -- Device requested to insert items into the network.
-          dlog.out("cmdInsert", "result = ", insertStorage(transposers, routing, storageItems, "input", 1))
-          sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-        elseif dataHeader == "stor:extract" then
-          -- Device has requested to extract items from network.
-          local itemName = string.match(data, "[^,]*")
-          local amount = string.match(data, "[^,]*", #itemName + 2)
-          if itemName == "" then
-            itemName = nil
-          end
-          dlog.out("cmdExtract", "Extract with item " .. tostring(itemName) .. " and amount " .. amount .. ".")
-          -- Continuously extract item until we reach the amount or run out (or output full).
-          amount = tonumber(amount)
-          while amount > 0 do
-            local success, amountTransferred = extractStorage(transposers, routing, storageItems, "output", 1, nil, itemName, amount, reservedItems)
-            dlog.out("cmdExtract", "result = ", success, amountTransferred)
-            if not success then
-              break
-            end
-            amount = amount - amountTransferred
-          end
-          sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-        elseif dataHeader == "stor:recipe_reserve" then
-          -- Crafting server is requesting to reserve items for crafting operation.
-          local ticket = string.match(data, "[^;]*")
-          data = string.sub(data, #ticket + 2)
-          
-          -- Check for expired tickets and remove them.
-          for ticketName, request in pairs(pendingCraftRequests) do
-            if computer.uptime() > request.creationTime + 10 then
-              dlog.out("cmdRecipeReserve", "Ticket " .. ticketName .. " has expired")
-              
-              for itemName, amount in pairs(request.reserved) do
-                changeReservedItemAmount(reservedItems, itemName, -amount)
-              end
-              pendingCraftRequests[ticketName] = nil
-            end
-          end
-          
-          -- Add all required items for crafting directly to the reserved list.
-          -- This includes the negative ones (recipe outputs), a negative reservation means the item can be reserved later once inserted into network but will show up anyways.
-          local requiredItems = serialization.unserialize(data)
-          local reserveFailed = false
-          for itemName, amount in pairs(requiredItems) do
-            changeReservedItemAmount(reservedItems, itemName, amount)
-            if (reservedItems[itemName] or 0) > (storageItems[itemName] and storageItems[itemName].total or 0) then
-              reserveFailed = true
-            end
-          end
-          
-          -- If we successfully reserved the items then add the ticket to pending. Otherwise we undo the reservation.
-          if not reserveFailed then
-            pendingCraftRequests[ticket] = {}
-            pendingCraftRequests[ticket].creationTime = computer.uptime()
-            pendingCraftRequests[ticket].reserved = requiredItems
-          else
-            for itemName, amount in pairs(requiredItems) do
-              changeReservedItemAmount(reservedItems, itemName, -amount)
-            end
-            wnet.send(modem, address, COMMS_PORT, "craft:recipe_cancel," .. ticket)
-          end
-          
-          sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-        elseif dataHeader == "stor:recipe_start" then
-          -- Crafting server is requesting to start a crafting operation.
-          if pendingCraftRequests[data] then
-            assert(not activeCraftRequests[data], "Attempt to start recipe for ticket " .. data .. " which is already running.")
-            activeCraftRequests[data] = pendingCraftRequests[data]
-            activeCraftRequests[data].startTime = computer.uptime()
-            pendingCraftRequests[data] = nil
-          end
-        elseif dataHeader == "stor:recipe_cancel" then
-          -- Crafting server is requesting to cancel a crafting operation.
-          if pendingCraftRequests[data] then
-            for itemName, amount in pairs(pendingCraftRequests[data].reserved) do
-              changeReservedItemAmount(reservedItems, itemName, -amount)
-            end
-            pendingCraftRequests[data] = nil
-            
-            sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-          end
-        elseif dataHeader == "stor:get_drone_item_list" then
-          --[[
-          this may not be a great idea to maintain drone item info here (well actually maybe it works well). 2 options:
-            store all drone inventory data with crafting, only send info about number of inventories and number of slots here
-            store it all here, then crafting requests bulk of items needed in an inventory, storage responds with did it succeed and diff of just that inventory index (in one packet)
-              also need to let crafting tell storage to suck all of inventory back into network (when items need to be returned). yikes what happens if full??
-          --]]
-          
-          wnet.send(modem, address, COMMS_PORT, "any:drone_item_list," .. serialization.serialize(droneItems))
-        elseif dataHeader == "stor:drone_insert" then
-          local droneInvIndex = string.match(data, "[^,]*")
-          local ticket = string.sub(data, #droneInvIndex + 2)
-          droneInvIndex = tonumber(droneInvIndex)
-          if ticket == "" then
-            ticket = nil
-          end
-          
-          handleDroneInsert(address, droneInvIndex, ticket)
-          
-        elseif dataHeader == "stor:drone_extract" then
-          local droneInvIndex = string.match(data, "[^,]*")
-          local ticket = string.match(data, "[^;]*", #droneInvIndex + 2)
-          local extractList = serialization.unserialize(string.sub(data, #droneInvIndex + #ticket + 3))
-          droneInvIndex = tonumber(droneInvIndex)
-          if ticket == "" then
-            ticket = nil
-          end
-          
-          handleDroneExtract(address, droneInvIndex, ticket, extractList)
-          
-        elseif dataHeader == "stor:debug" then
-          dlog.out("cmdDebug", "storageItems:", storageItems)
-        end
-      end
+      local address, port, message = wnet.receive()
+      packer.handlePacket(nil, address, port, message)
     end
     dlog.out("main", "Modem thread ends.")
   end)
