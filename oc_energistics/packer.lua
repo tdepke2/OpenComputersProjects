@@ -39,7 +39,7 @@ not be the best idea, but it does seem a lot better than before.
 
 
 
-FIXME need to refactor wnet to be more consistent with the message = header + data thing (maybe look back at wnet.waitReceive too, should this return message as one thing?) ###################################################
+FIXME need to refactor wnet to be more consistent with the message = header + data thing (maybe look back at wnet.waitReceive too, should this return message as one thing? actually maybe not) ###################################################
 --]]
 
 local serialization = require("serialization")
@@ -83,15 +83,32 @@ setmetatable(packer.callbacks, {
 -- corresponding unpack operation. If that happens, this function will throw an
 -- exception if a packet with that header is received.
 function packer.handlePacket(obj, address, port, message)
+  if not address then
+    return
+  end
   local header = string.match(message, "[^,]*")
   if packer.callbacks[header] then
     packer.callbacks[header](obj, address, port, packer.unpack[header](string.sub(message, #header + 2)))
   end
 end
 
+-- packer.extractPacket(address: string, port: number, message: string):
+--     nil|string, number, string, string
+-- 
+-- Convenience function to break a packet's header and data segments into
+-- separate parts. Removes the extra step of doing this when manually handling a
+-- packet. If address is nil, returns nil.
+function packer.extractPacket(address, port, message)
+  if not address then
+    return nil
+  end
+  local header = string.match(message, "[^,]*")
+  return address, port, header, string.sub(message, #header + 2)
+end
 
 
--- Find the address of the storage server.
+
+-- Request storage server address.
 function packer.pack.stor_discover()
   return "stor_discover,"
 end
@@ -99,7 +116,7 @@ function packer.unpack.stor_discover(data)
   return nil
 end
 
--- Request items to be inserted into storage network.
+-- Request storage to insert items into storage network.
 function packer.pack.stor_insert()
   return "stor_insert,"
 end
@@ -107,7 +124,7 @@ function packer.unpack.stor_insert(data)
   return nil
 end
 
--- Request items to be extracted from storage network.
+-- Request storage to extract items from storage network.
 function packer.pack.stor_extract(itemName, amount)
   return "stor_extract," .. (itemName or "") .. "," .. amount
 end
@@ -146,7 +163,7 @@ function packer.unpack.stor_recipe_cancel(data)
   return data
 end
 
--- Get the storage's drone inventories item list.
+-- Request storage's drone inventories item list.
 function packer.pack.stor_get_drone_item_list()
   return "stor_get_drone_item_list,"
 end
@@ -179,6 +196,108 @@ function packer.unpack.stor_drone_extract(data)
     ticket = nil
   end
   return tonumber(droneInvIndex), ticket, extractList
+end
+
+-- Storage is reporting system has started up.
+function packer.pack.stor_started()
+  return "stor_started,"
+end
+function packer.unpack.stor_started(data)
+  return nil
+end
+
+-- Storage is reporting the (trimmed) contents of storageItems.
+function packer.pack.stor_item_list(items)
+  return "stor_item_list," .. serialization.serialize(items)
+end
+function packer.unpack.stor_item_list(data)
+  local items = serialization.unserialize(data)
+  return items
+end
+
+-- Storage is reporting a change in storageItems.
+function packer.pack.stor_item_diff(itemsDiff)
+  return "stor_item_diff," .. serialization.serialize(itemsDiff)
+end
+function packer.unpack.stor_item_diff(data)
+  local itemsDiff = serialization.unserialize(data)
+  return itemsDiff
+end
+
+-- Storage is reporting the contents of droneItems.
+function packer.pack.stor_drone_item_list(droneItems)
+  return "stor_drone_item_list," .. serialization.serialize(droneItems)
+end
+function packer.unpack.stor_drone_item_list(data)
+  local droneItems = serialization.unserialize(data)
+  return droneItems
+end
+
+-- Storage is reporting a change in droneItems.
+function packer.pack.stor_drone_item_diff(operation, result, droneItemsDiff)
+  return "stor_drone_item_diff," .. operation .. "," .. result .. "," .. serialization.serialize(droneItemsDiff)
+end
+function packer.unpack.stor_drone_item_diff(data)
+  local operation = string.match(data, "[^,]*")
+  local result = string.match(data, "[^,]*", #operation + 2)
+  local droneItemsDiff = serialization.unserialize(string.sub(data, #operation + #result + 3))
+  return operation, result, droneItemsDiff
+end
+
+
+
+-- Request crafting server address.
+function packer.pack.craft_discover()
+  return "craft_discover,"
+end
+function packer.unpack.craft_discover(data)
+  return nil
+end
+
+-- Request crafting to compute a crafting operation and create a ticket.
+function packer.pack.craft_check_recipe(itemName, amount)
+  return "craft_check_recipe," .. itemName .. "," .. amount
+end
+function packer.unpack.craft_check_recipe(data)
+  local itemName = string.match(data, "[^,]*")
+  local amount = string.match(data, "[^,]*", #itemName + 2)
+  return itemName, tonumber(amount)
+end
+
+-- Request crafting to start a crafting operation.
+function packer.pack.craft_recipe_start(ticket)
+  return "craft_recipe_start," .. ticket
+end
+function packer.unpack.craft_recipe_start(data)
+  return data
+end
+
+-- Request crafting to cancel a crafting operation.
+function packer.pack.craft_recipe_cancel(ticket)
+  return "craft_recipe_cancel," .. ticket
+end
+function packer.unpack.craft_recipe_cancel(data)
+  return data
+end
+
+
+
+-- Drone is reporting compile/runtime error.
+function packer.pack.drone_error(errType, errMessage)
+  return "drone_error," .. errType .. "," .. errMessage
+end
+function packer.unpack.drone_error(data)
+  return errType, errMessage
+end
+
+
+
+-- Robot is reporting compile/runtime error.
+function packer.pack.robot_error(errType, errMessage)
+  return "robot_error," .. errType .. "," .. errMessage
+end
+function packer.unpack.robot_error(data)
+  return errType, errMessage
 end
 
 

@@ -52,16 +52,6 @@ local function applyDroneItemsDiff(droneItems, droneItemsDiff)
   end
 end
 
--- Handle the any:drone_item_diff packet type.
-local function handleDroneItemDiff(droneItems, data)
-  local operation = string.match(data, "[^,]*")
-  local result = string.match(data, "[^,]*", #operation + 2)
-  local droneItemsDiff = serialization.unserialize(string.sub(data, #operation + #result + 3))
-  applyDroneItemsDiff(droneItems, droneItemsDiff)
-  
-  return operation, result, droneItemsDiff
-end
-
 local function main()
   modem.open(COMMS_PORT)
   
@@ -91,12 +81,10 @@ local function main()
       wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_discover())
       attemptNumber = attemptNumber + 1
     end
-    local address, port, data = wnet.receive(0.1)
+    local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
     if port == COMMS_PORT then
-      local dataHeader = string.match(data, "[^,]*")
-      data = string.sub(data, #dataHeader + 2)
-      if dataHeader == "any:item_list" then
-        storageItems = serialization.unserialize(data)
+      if header == "stor_item_list" then
+        storageItems = packer.unpack.stor_item_list(data)
         storageServerAddress = address
       end
     end
@@ -156,9 +144,9 @@ local function main()
   -- Get the droneItems table to get a count of the number of drone inventories.
   local droneItems
   wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_get_drone_item_list())
-  local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:drone_item_list,", 5)
+  local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "stor_drone_item_list,", 5)
   assert(address, "Lost connection with storage server (request timed out).")
-  droneItems = serialization.unserialize(data)
+  droneItems = packer.unpack.stor_drone_item_list(data)
   
   -- Create a table to track the connections of robots for each drone inventory, and make a copy of robotAddresses to check off the list.
   local robotConnections = {}
@@ -178,9 +166,10 @@ local function main()
     io.write("Checking robot access for drone inventory " .. i .. ".\n")
     
     wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(i, nil, extractList))
-    local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:drone_item_diff,", 5)
+    local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "stor_drone_item_diff,", 5)
     assert(address, "Lost connection with storage server (request timed out).")
-    local _, result = handleDroneItemDiff(droneItems, data)
+    local _, result, droneItemsDiff = packer.unpack.stor_drone_item_diff(data)
+    applyDroneItemsDiff(droneItems, droneItemsDiff)
     assert(result ~= "missing", "Item \"" .. setupConfig.searchItem .. "\" was not found in storage.")
     assert(result == "ok", "Extract to drone inventory failed.")
     assert(droneItems[i][1].fullName == setupConfig.searchItem and not droneItems[i][2], "Unexpected contents in inventory.")
@@ -203,9 +192,10 @@ local function main()
   
   -- Add residual item back into storage system.
   wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(#droneItems, nil))
-  local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:drone_item_diff,", 5)
+  local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "stor_drone_item_diff,", 5)
   assert(address, "Lost connection with storage server (request timed out).")
-  local _, result = handleDroneItemDiff(droneItems, data)
+  local _, result, droneItemsDiff = packer.unpack.stor_drone_item_diff(data)
+  applyDroneItemsDiff(droneItems, droneItemsDiff)
   assert(result == "ok", "Insert from drone inventory to storage failed.")
   
   if next(remainingRobotAddresses) then

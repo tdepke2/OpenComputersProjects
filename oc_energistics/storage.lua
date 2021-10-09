@@ -834,8 +834,7 @@ local function sendAvailableItems(addresses, storageItems, reservedItems)
       items[itemName].total = itemDetails.total - math.max(reservedItems[itemName] or 0, 0)
     end
   end
-  items = serialization.serialize(items)
-  sendToAddresses(addresses, "any:item_list," .. items)
+  sendToAddresses(addresses, packer.pack.stor_item_list(items))
 end
 
 
@@ -876,8 +875,7 @@ local function sendAvailableItemsDiff(addresses, storageItems, reservedItems)
     reservedItems.data.changes[itemName] = nil
   end
   if next(itemsDiff) ~= nil then
-    itemsDiff = serialization.serialize(itemsDiff)
-    sendToAddresses(addresses, "any:item_diff," .. itemsDiff)
+    sendToAddresses(addresses, packer.pack.stor_item_diff(itemsDiff))
   end
 end
 
@@ -941,7 +939,7 @@ end
 packer.callbacks.stor_discover = handleStorDiscover
 
 
--- Device requested to insert items into the network.
+-- Insert items into the storage network.
 local function handleStorInsert(_, _, _)
   dlog.out("cmdInsert", "result = ", insertStorage(transposers, routing, storageItems, "input", 1))
   sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
@@ -949,7 +947,7 @@ end
 packer.callbacks.stor_insert = handleStorInsert
 
 
--- Device has requested to extract items from network.
+-- Extract items from storage network.
 local function handleStorExtract(_, _, _, itemName, amount)
   dlog.out("cmdExtract", "Extract with item " .. tostring(itemName) .. " and amount " .. amount .. ".")
   -- Continuously extract item until we reach the amount or run out (or output full).
@@ -966,7 +964,7 @@ end
 packer.callbacks.stor_extract = handleStorExtract
 
 
--- Crafting server is requesting to reserve items for crafting operation.
+-- Reserve items for crafting operation.
 local function handleStorRecipeReserve(_, address, _, ticketName, requiredItems)
   -- Check for expired tickets and remove them.
   for ticketName2, request in pairs(pendingCraftRequests) do
@@ -999,7 +997,7 @@ local function handleStorRecipeReserve(_, address, _, ticketName, requiredItems)
     for itemName, amount in pairs(requiredItems) do
       changeReservedItemAmount(reservedItems, itemName, -amount)
     end
-    wnet.send(modem, address, COMMS_PORT, "craft:recipe_cancel," .. ticketName)
+    wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_cancel(ticketName))
   end
   
   sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
@@ -1007,7 +1005,7 @@ end
 packer.callbacks.stor_recipe_reserve = handleStorRecipeReserve
 
 
--- Crafting server is requesting to start a crafting operation.
+-- Start a crafting operation. The pending ticket just moves to active.
 local function handleStorRecipeStart(_, _, _, ticketName)
   if pendingCraftRequests[ticketName] then
     assert(not activeCraftRequests[ticketName], "Attempt to start recipe for ticket " .. ticketName .. " which is already running.")
@@ -1019,7 +1017,7 @@ end
 packer.callbacks.stor_recipe_start = handleStorRecipeStart
 
 
--- Crafting server is requesting to cancel a crafting operation.
+-- Cancel a crafting operation.
 local function handleStorRecipeCancel(_, _, _, ticketName)
   if pendingCraftRequests[ticketName] then
     for itemName, amount in pairs(pendingCraftRequests[ticketName].reserved) do
@@ -1033,7 +1031,7 @@ end
 packer.callbacks.stor_recipe_cancel = handleStorRecipeCancel
 
 
--- Send the droneItems table upon request.
+-- Send a copy of the droneItems table.
 local function handleStorGetDroneItemList(_, address, _)
   --[[
   this may not be a great idea to maintain drone item info here (well actually maybe it works well). 2 options:
@@ -1043,13 +1041,12 @@ local function handleStorGetDroneItemList(_, address, _)
   --]]
   -- FIXME I think (hope) this has been sorted out already ################################
   
-  wnet.send(modem, address, COMMS_PORT, "any:drone_item_list," .. serialization.serialize(droneItems))
+  wnet.send(modem, address, COMMS_PORT, packer.pack.stor_drone_item_list(droneItems))
 end
 packer.callbacks.stor_get_drone_item_list = handleStorGetDroneItemList
 
 
--- Crafting server is requesting to flush items in drone inventory back into the
--- storage network.
+-- Flush items in drone inventory back into the storage network.
 local function handleDroneInsert(_, address, _, droneInvIndex, ticket)
   local result = "ok"
   dlog.out("hDroneInsert", "reservedItems before:", reservedItems)
@@ -1095,14 +1092,13 @@ local function handleDroneInsert(_, address, _, droneInvIndex, ticket)
   droneItemsDiff[droneInvIndex] = droneItems[droneInvIndex]
   
   sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-  wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff,insert," .. result .. "," .. serialization.serialize(droneItemsDiff))
+  wnet.send(modem, address, COMMS_PORT, packer.pack.stor_drone_item_diff("insert", result, droneItemsDiff))
 end
 packer.callbacks.stor_drone_insert = handleDroneInsert
 
 
--- Crafting server is requesting to pull items from network into a drone
--- inventory. Note: it is an error to specify a supply index that is the same as
--- droneInvIndex.
+-- Pull items from network into a drone inventory. Note: it is an error to
+-- specify a supply index that is the same as droneInvIndex.
 local function handleDroneExtract(_, address, _, droneInvIndex, ticket, extractList)
   local extractIdx = 1
   local extractItemName = extractList[extractIdx][1]
@@ -1259,7 +1255,7 @@ local function handleDroneExtract(_, address, _, droneInvIndex, ticket, extractL
     end
   end
   sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
-  wnet.send(modem, address, COMMS_PORT, "any:drone_item_diff,extract," .. result .. "," .. serialization.serialize(droneItemsDiff))
+  wnet.send(modem, address, COMMS_PORT, packer.pack.stor_drone_item_diff("extract", result, droneItemsDiff))
   
 end
 packer.callbacks.stor_drone_extract = handleDroneExtract
@@ -1350,7 +1346,7 @@ local function main()
     --dlog.out("setup", "items:", storageItems)
     
     -- Report system started to other listening devices (so they can re-discover the storage).
-    wnet.send(modem, nil, COMMS_PORT, "any:stor_started,")
+    wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_started())
     
     threadSuccess = true
     dlog.out("main", "Setup thread ends.")
@@ -1366,7 +1362,9 @@ local function main()
     io.write("Listening for commands on port " .. COMMS_PORT .. "...\n")
     while true do
       local address, port, message = wnet.receive()
-      packer.handlePacket(nil, address, port, message)
+      if port == COMMS_PORT then
+        packer.handlePacket(nil, address, port, message)
+      end
     end
     dlog.out("main", "Modem thread ends.")
   end)

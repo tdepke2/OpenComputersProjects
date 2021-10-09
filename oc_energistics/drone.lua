@@ -88,10 +88,10 @@ while true do
         wnet.send(modem, address, COMMS_PORT, "any:drone_start,")
         local status, err = pcall(fn)
         if not status then
-          wnet.send(modem, address, COMMS_PORT, "any:drone_error,runtime," .. err)
+          wnet.send(modem, address, COMMS_PORT, "drone_error,runtime," .. err)
         end
       else
-        wnet.send(modem, address, COMMS_PORT, "any:drone_error,compile," .. err)
+        wnet.send(modem, address, COMMS_PORT, "drone_error,compile," .. err)
       end
       drone.setStatusText("Done.")
     elseif dataHeader == "robot:upload" and not drone then
@@ -101,10 +101,10 @@ while true do
         wnet.send(modem, address, COMMS_PORT, "any:robot_start,")
         local status, err = pcall(fn)
         if not status then
-          wnet.send(modem, address, COMMS_PORT, "any:robot_error,runtime," .. err)
+          wnet.send(modem, address, COMMS_PORT, "robot_error,runtime," .. err)
         end
       else
-        wnet.send(modem, address, COMMS_PORT, "any:robot_error,compile," .. err)
+        wnet.send(modem, address, COMMS_PORT, "robot_error,compile," .. err)
       end
       gpu.set(1, 1, "Done.     ")
     end

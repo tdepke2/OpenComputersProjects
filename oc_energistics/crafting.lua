@@ -807,6 +807,187 @@ local function updateStoredItem(craftRequest, itemName, deltaAmount)
   end
 end
 
+local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses
+local pendingCraftRequests, activeCraftRequests, droneItems, droneInventories, workers
+
+
+
+
+
+
+
+-- If we get a broadcast that storage started, it must have just rebooted and we
+-- need to discover new storageItems.
+local function handleStorStarted(_, address, _)
+  wnet.send(modem, address, COMMS_PORT, packer.pack.stor_discover())
+end
+packer.callbacks.stor_started = handleStorStarted
+
+
+-- New item list, update storageItems.
+local function handleStorItemList(_, address, _, items)
+  storageItems = items
+  storageServerAddress = address
+end
+packer.callbacks.stor_item_list = handleStorItemList
+
+
+-- Apply the items diff to storageItems to keep the table synced up.
+local function handleStorItemDiff(_, _, _, itemsDiff)
+  for itemName, diff in pairs(itemsDiff) do
+    if diff.total == 0 then
+      storageItems[itemName] = nil
+    elseif storageItems[itemName] then
+      storageItems[itemName].total = diff.total
+    else
+      storageItems[itemName] = {}
+      storageItems[itemName].maxSize = diff.maxSize
+      storageItems[itemName].label = diff.label
+      storageItems[itemName].total = diff.total
+    end
+  end
+end
+packer.callbacks.stor_item_diff = handleStorItemDiff
+
+
+-- Set the contents of the drone inventories (the inventory type in the network,
+-- not from actual drones).
+local function handleStorDroneItemList(_, _, _, droneItems2)
+  droneItems = droneItems2
+  
+  -- Set the droneInventories for each drone inventory we have, and initialize to free (not in use).
+  droneInventories = {}
+  droneInventories.inv = {}
+  for i, inventoryDetails in ipairs(droneItems) do
+    droneInventories.inv[i] = {}
+    droneInventories.inv[i].status = "free"
+  end
+  droneInventories.firstFree = -1
+  droneInventories.firstFreeWithRobot = -1
+end
+packer.callbacks.stor_drone_item_list = handleStorDroneItemList
+
+
+-- Contents of drone inventories has changed (result of insertion or extraction
+-- request). Apply the diff to keep it synced.
+local function handleStorDroneItemDiff(_, _, _, operation, result, droneItemsDiff)
+  if operation == "insert" and droneInventories.pendingInsert then
+    assert(droneInventories.pendingInsert == "pending")
+    droneInventories.pendingInsert = result
+  elseif operation == "extract" and droneInventories.pendingExtract then
+    assert(droneInventories.pendingExtract == "pending")
+    droneInventories.pendingExtract = result
+  end
+  
+  for invIndex, diff in pairs(droneItemsDiff) do
+    droneItems[invIndex] = diff
+  end
+end
+packer.callbacks.stor_drone_item_diff = handleStorDroneItemDiff
+
+
+-- Device is searching for this crafting server, respond with list of recipes.
+local function handleCraftDiscover(_, address, _)
+  interfaceServerAddresses[address] = true
+  local recipeItems = {}
+  for k, v in pairs(recipes) do
+    if type(k) == "string" then
+      recipeItems[k] = {}
+      recipeItems[k].maxSize = v.maxSize
+      recipeItems[k].label = v.label
+    end
+  end
+  wnet.send(modem, address, COMMS_PORT, "any:recipe_list," .. serialization.serialize(recipeItems))
+end
+packer.callbacks.craft_discover = handleCraftDiscover
+
+
+-- Prepare to craft an item. Compute the recipe dependencies and reserve a
+-- ticket for the operation if successful.
+local function handleCraftCheckRecipe(_, address, _, itemName, amount)
+  interfaceServerAddresses[address] = true
+  checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, workers, address, itemName, amount)
+end
+packer.callbacks.craft_check_recipe = handleCraftCheckRecipe
+
+
+-- Start crafting operation. Forward request to storage and move entry in
+-- pendingCraftRequests to active.
+local function handleCraftRecipeStart(_, _, _, ticket)
+  if not pendingCraftRequests[ticket] then
+    return
+  end
+  assert(not activeCraftRequests[ticket], "Attempt to start recipe for ticket " .. ticket .. " which is already running.")
+  wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_start(ticket))
+  activeCraftRequests[ticket] = pendingCraftRequests[ticket]
+  pendingCraftRequests[ticket] = nil
+  
+  -- Add/update an item in the storedItems table. The dependentIndex
+  -- is the recipe index that includes this item as an input.
+  local function initializeStoredItem(storedItems, itemName, dependentIndex)
+    if not storedItems[itemName] then
+      storedItems[itemName] = {}
+      storedItems[itemName].total = 0
+      storedItems[itemName].lastTime = computer.uptime()
+      storedItems[itemName].dependents = {}
+    end
+    storedItems[itemName].dependents[#storedItems[itemName].dependents + 1] = dependentIndex
+  end
+  
+  activeCraftRequests[ticket].startTime = computer.uptime()
+  activeCraftRequests[ticket].storedItems = {}
+  activeCraftRequests[ticket].recipeStartIndex = 1
+  activeCraftRequests[ticket].recipeStatus = {}
+  activeCraftRequests[ticket].supplyIndices = {}
+  -- Add each recipe used and inputs/outputs to storedItems.
+  for i, recipeIndex in ipairs(activeCraftRequests[ticket].recipeIndices) do
+    for _, input in ipairs(recipes[recipeIndex].inp) do
+      initializeStoredItem(activeCraftRequests[ticket].storedItems, input[1], recipeIndex)
+    end
+    for output, amount in pairs(recipes[recipeIndex].out) do
+      initializeStoredItem(activeCraftRequests[ticket].storedItems, output, nil)
+    end
+    activeCraftRequests[ticket].recipeStatus[i] = {}
+    activeCraftRequests[ticket].recipeStatus[i].dirty = true
+    activeCraftRequests[ticket].recipeStatus[i].available = 0
+    activeCraftRequests[ticket].recipeStatus[i].maxLastTime = 0
+  end
+  
+  -- Update the totals for storedItems from the requiredItems (these have been reserved already in storage).
+  for itemName, amount in pairs(activeCraftRequests[ticket].requiredItems) do
+    activeCraftRequests[ticket].storedItems[itemName].total = amount
+  end
+  
+  dlog.out("d", "end of craft_recipe_start, storedItems is:", activeCraftRequests[ticket].storedItems)
+end
+packer.callbacks.craft_recipe_start = handleCraftRecipeStart
+
+
+-- Cancel crafting operation. Forward request to storage and clear entry in
+-- pendingCraftRequests.
+local function handleCraftRecipeCancel(_, _, _, ticket)
+  wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_cancel(ticket))
+  pendingCraftRequests[ticket] = nil
+end
+packer.callbacks.craft_recipe_cancel = handleCraftRecipeCancel
+
+
+-- Drone has encountered a compile/runtime error.
+local function handleDroneError(_, _, _, errType, errMessage)
+  dlog.out("drone", "Drone " .. errType .. " error: " .. string.format("%q", errMessage))
+end
+packer.callbacks.drone_error = handleDroneError
+
+
+-- Robot has encountered a compile/runtime error.
+local function handleRobotError(_, _, _, errType, errMessage)
+  dlog.out("robot", "Robot " .. errType .. " error: " .. string.format("%q", errMessage))
+end
+packer.callbacks.robot_error = handleRobotError
+
+
+
+
 
 
 local function main()
@@ -831,8 +1012,6 @@ local function main()
     threadSuccess = false
   end
   
-  local stations, recipes, storageServerAddress, storageItems, interfaceServerAddresses
-  local pendingCraftRequests, activeCraftRequests, droneItems, droneInventories, workers
   dlog.setFileOut("/tmp/messages", "w")
   
   -- Performs setup and initialization tasks.
@@ -870,12 +1049,10 @@ local function main()
         wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_discover())
         attemptNumber = attemptNumber + 1
       end
-      local address, port, data = wnet.receive(0.1)
+      local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
       if port == COMMS_PORT then
-        local dataHeader = string.match(data, "[^,]*")
-        data = string.sub(data, #dataHeader + 2)
-        if dataHeader == "any:item_list" then
-          storageItems = serialization.unserialize(data)
+        if header == "stor_item_list" then
+          storageItems = packer.unpack.stor_item_list(data)
           storageServerAddress = address
         end
       end
@@ -947,137 +1124,9 @@ local function main()
   local modemThread = thread.create(function()
     dlog.out("main", "Modem thread starts.")
     while true do
-      local address, port, data = wnet.receive()
+      local address, port, message = wnet.receive()
       if port == COMMS_PORT then
-        local dataHeader = string.match(data, "[^,]*")
-        data = string.sub(data, #dataHeader + 2)
-        
-        if dataHeader == "any:item_diff" then
-          -- Apply the items diff to storageItems to keep the table synced up.
-          local itemsDiff = serialization.unserialize(data)
-          for itemName, diff in pairs(itemsDiff) do
-            if diff.total == 0 then
-              storageItems[itemName] = nil
-            elseif storageItems[itemName] then
-              storageItems[itemName].total = diff.total
-            else
-              storageItems[itemName] = {}
-              storageItems[itemName].maxSize = diff.maxSize
-              storageItems[itemName].label = diff.label
-              storageItems[itemName].total = diff.total
-            end
-          end
-        elseif dataHeader == "any:stor_started" then
-          -- If we get a broadcast that storage started, it must have just rebooted and we need to discover new storageItems.
-          wnet.send(modem, address, COMMS_PORT, packer.pack.stor_discover())
-        elseif dataHeader == "any:item_list" then
-          -- New item list, update storageItems.
-          storageItems = serialization.unserialize(data)
-          storageServerAddress = address
-        elseif dataHeader == "craft:discover" then
-          -- Interface is searching for this crafting server, respond with list of recipes.
-          interfaceServerAddresses[address] = true
-          local recipeItems = {}
-          for k, v in pairs(recipes) do
-            if type(k) == "string" then
-              recipeItems[k] = {}
-              recipeItems[k].maxSize = v.maxSize
-              recipeItems[k].label = v.label
-            end
-          end
-          wnet.send(modem, address, COMMS_PORT, "any:recipe_list," .. serialization.serialize(recipeItems))
-        elseif dataHeader == "craft:check_recipe" then
-          -- Interface is requesting to craft an item, compute the recipe dependencies and reserve a ticket for the operation if successful.
-          interfaceServerAddresses[address] = true
-          local itemName = string.match(data, "[^,]*")
-          local amount = string.match(data, "[^,]*", #itemName + 2)
-          
-          checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, workers, address, itemName, tonumber(amount))
-        elseif dataHeader == "craft:recipe_start" then
-          -- Interface is requesting to start crafting operation. Forward request to storage and move entry in pendingCraftRequests to active.
-          if pendingCraftRequests[data] then
-            assert(not activeCraftRequests[data], "Attempt to start recipe for ticket " .. data .. " which is already running.")
-            wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_start(data))
-            activeCraftRequests[data] = pendingCraftRequests[data]
-            pendingCraftRequests[data] = nil
-            
-            -- Add/update an item in the storedItems table. The dependentIndex
-            -- is the recipe index that includes this item as an input.
-            local function initializeStoredItem(storedItems, itemName, dependentIndex)
-              if not storedItems[itemName] then
-                storedItems[itemName] = {}
-                storedItems[itemName].total = 0
-                storedItems[itemName].lastTime = computer.uptime()
-                storedItems[itemName].dependents = {}
-              end
-              storedItems[itemName].dependents[#storedItems[itemName].dependents + 1] = dependentIndex
-            end
-            
-            activeCraftRequests[data].startTime = computer.uptime()
-            activeCraftRequests[data].storedItems = {}
-            activeCraftRequests[data].recipeStartIndex = 1
-            activeCraftRequests[data].recipeStatus = {}
-            activeCraftRequests[data].supplyIndices = {}
-            -- Add each recipe used and inputs/outputs to storedItems.
-            for i, recipeIndex in ipairs(activeCraftRequests[data].recipeIndices) do
-              for _, input in ipairs(recipes[recipeIndex].inp) do
-                initializeStoredItem(activeCraftRequests[data].storedItems, input[1], recipeIndex)
-              end
-              for output, amount in pairs(recipes[recipeIndex].out) do
-                initializeStoredItem(activeCraftRequests[data].storedItems, output, nil)
-              end
-              activeCraftRequests[data].recipeStatus[i] = {}
-              activeCraftRequests[data].recipeStatus[i].dirty = true
-              activeCraftRequests[data].recipeStatus[i].available = 0
-              activeCraftRequests[data].recipeStatus[i].maxLastTime = 0
-            end
-            
-            -- Update the totals for storedItems from the requiredItems (these have been reserved already in storage).
-            for itemName, amount in pairs(activeCraftRequests[data].requiredItems) do
-              activeCraftRequests[data].storedItems[itemName].total = amount
-            end
-            
-            dlog.out("d", "end of craft:recipe_start, storedItems is:", activeCraftRequests[data].storedItems)
-          end
-        elseif dataHeader == "craft:recipe_cancel" then
-          -- Interface is requesting to cancel crafting operation. Forward request to storage and clear entry in pendingCraftRequests.
-          wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_cancel(data))
-          pendingCraftRequests[data] = nil
-        elseif dataHeader == "any:drone_item_list" then
-          -- Storage is reporting contents of the drone inventories (the inventory type in the network, not from actual drones).
-          droneItems = serialization.unserialize(data)
-          
-          -- Set the droneInventories for each drone inventory we have, and initialize to free (not in use).
-          droneInventories = {}
-          droneInventories.inv = {}
-          for i, inventoryDetails in ipairs(droneItems) do
-            droneInventories.inv[i] = {}
-            droneInventories.inv[i].status = "free"
-          end
-          droneInventories.firstFree = -1
-          droneInventories.firstFreeWithRobot = -1
-        elseif dataHeader == "any:drone_item_diff" then
-          -- Storage is reporting changed contents of drone inventories (result of insertion or extraction request).
-          local operation = string.match(data, "[^,]*")
-          local result = string.match(data, "[^,]*", #operation + 2)
-          local droneItemsDiff = serialization.unserialize(string.sub(data, #operation + #result + 3))
-          
-          if operation == "insert" and droneInventories.pendingInsert then
-            assert(droneInventories.pendingInsert == "pending")
-            droneInventories.pendingInsert = result
-          elseif operation == "extract" and droneInventories.pendingExtract then
-            assert(droneInventories.pendingExtract == "pending")
-            droneInventories.pendingExtract = result
-          end
-          
-          for invIndex, diff in pairs(droneItemsDiff) do
-            droneItems[invIndex] = diff
-          end
-        elseif dataHeader == "any:drone_error" then
-          dlog.out("drone", "Drone error: " .. string.format("%q", data))
-        elseif dataHeader == "any:robot_error" then
-          dlog.out("robot", "Robot error: " .. string.format("%q", data))
-        end
+        packer.handlePacket(nil, address, port, message)
       end
     end
     dlog.out("main", "Modem thread ends.")

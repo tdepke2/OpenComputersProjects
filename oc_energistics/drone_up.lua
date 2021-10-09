@@ -77,7 +77,7 @@ local function main()
     if not status then
       computer.beep(300, 0.2)
       computer.beep(300, 0.2)
-      wnet.send(modem, nil, COMMS_PORT, "any:drone_error,runtime," .. msg)
+      wnet.send(modem, nil, COMMS_PORT, "drone_error,runtime," .. msg)    -- FIXME can we change this to use packer? ########################################
       break
     end
   end
