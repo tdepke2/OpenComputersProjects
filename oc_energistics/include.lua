@@ -56,12 +56,12 @@ function include.load(libraryName)
   
   -- Attempt to reload library if it doesn't appear in package, we don't know the modification time, or modification time changed.
   if not package.loaded[libraryName] or (include.loaded[libraryName] or -1) ~= modifiedTime then
-    print("Reloading library " .. libraryName)
+    --print("Reloading library " .. libraryName)
     package.loaded[libraryName] = nil
     mod = require(libraryName)
     include.loaded[libraryName] = modifiedTime
   else
-    print("Keeping library " .. libraryName)
+    --print("Keeping library " .. libraryName)
     mod = package.loaded[libraryName]
   end
   return mod

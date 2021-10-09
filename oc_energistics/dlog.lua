@@ -8,7 +8,7 @@ also prefix the message with a timestamp, much like how syslog output appears on
 unix systems.
 
 Subsystem names can be any strings like "storage", "command:info",
-"main():debug", etc. Note that logging output is only show for enabled
+"main():debug", etc. Note that logging output is only shown for enabled
 subsystems, see dlog.setSubsystems() and dlog.setSubsystem(). Also note that
 through the magic of require(), the active subsystems will persist even after a
 restart of the program that is being tested.

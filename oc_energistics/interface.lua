@@ -4,6 +4,7 @@ Interface server application code.
 
 --]]
 
+-- OS libraries.
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
@@ -16,10 +17,12 @@ local term = require("term")
 local text = require("text")
 local thread = require("thread")
 
-local dlog = require("dlog")
+-- User libraries.
+local include = require("include")
+local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
-local packer = require("packer")
-local wnet = require("wnet")
+local packer = include("packer")
+local wnet = include("wnet")
 
 local COMMS_PORT = 0xE298
 

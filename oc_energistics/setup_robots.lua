@@ -12,15 +12,19 @@ sequentially. Each time, the robots scan inventories adjacent to them (all 6
 sides) and report if they can see the target item.
 --]]
 
+-- OS libraries.
 local component = require("component")
 local computer = require("computer")
 local modem = component.modem
 local serialization = require("serialization")
 local term = require("term")
 
-local dlog = require("dlog")
-local packer = require("packer")
-local wnet = require("wnet")
+-- User libraries.
+local include = require("include")
+local dlog = include("dlog")
+dlog.osBlockNewGlobals(true)
+local packer = include("packer")
+local wnet = include("wnet")
 
 local COMMS_PORT = 0xE298
 
@@ -220,4 +224,6 @@ local function main()
   io.write("\nSetup completed, saved configuration file to \"" .. OUTPUT_FILENAME .. "\".\n")
 end
 
-main()
+local status, err = pcall(main)
+dlog.osBlockNewGlobals(false)
+assert(status, err)

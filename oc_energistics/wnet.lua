@@ -14,7 +14,8 @@ local component = require("component")
 local computer = require("computer")
 local event = require("event")
 
-local dlog = require("dlog")
+local include = require("include")
+local dlog = include("dlog")
 
 local wnet = {}
 

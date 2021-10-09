@@ -44,7 +44,8 @@ FIXME need to refactor wnet to be more consistent with the message = header + da
 
 local serialization = require("serialization")
 
-local dlog = require("dlog")
+local include = require("include")
+local dlog = include("dlog")
 
 local packer = {}
 
