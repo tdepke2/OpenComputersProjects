@@ -708,28 +708,28 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
   end
   
   -- Check for expired tickets and remove them.
-  for ticketName, request in pairs(pendingCraftRequests) do
+  for ticket, request in pairs(pendingCraftRequests) do
     if computer.uptime() > request.creationTime + 10 then
-      dlog.out("checkRecipe", "Ticket " .. ticketName .. " has expired")
-      pendingCraftRequests[ticketName] = nil
+      dlog.out("checkRecipe", "Ticket " .. ticket .. " has expired")
+      pendingCraftRequests[ticket] = nil
     end
   end
   
   -- Reserve a ticket for the crafting request if good to go.
-  local ticketName = ""
+  local ticket = ""
   if status == "ok" then
     while true do
-      ticketName = "id" .. math.floor(math.random(0, 999)) .. "," .. itemName .. "," .. amount
-      if not pendingCraftRequests[ticketName] then
+      ticket = "id" .. math.floor(math.random(0, 999)) .. "," .. itemName .. "," .. amount
+      if not pendingCraftRequests[ticket] then
         break
       end
     end
-    dlog.out("checkRecipe", "Creating ticket " .. ticketName)
-    pendingCraftRequests[ticketName] = {}
-    pendingCraftRequests[ticketName].creationTime = computer.uptime()
-    pendingCraftRequests[ticketName].recipeIndices = recipeIndices
-    pendingCraftRequests[ticketName].recipeBatches = recipeBatches
-    pendingCraftRequests[ticketName].requiredItems = requiredItems
+    dlog.out("checkRecipe", "Creating ticket " .. ticket)
+    pendingCraftRequests[ticket] = {}
+    pendingCraftRequests[ticket].creationTime = computer.uptime()
+    pendingCraftRequests[ticket].recipeIndices = recipeIndices
+    pendingCraftRequests[ticket].recipeBatches = recipeBatches
+    pendingCraftRequests[ticket].requiredItems = requiredItems
   end
   
   -- Compute the craftProgress table if possible and send to interface/crafting servers. Otherwise we report the error.
@@ -762,8 +762,8 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
     if status == "ok" then
       -- Confirm we will not have problems with a crafting recipe that needs robots when we have none (same for drones).
       if (not requiresRobots or workers.totalRobots > 0) and (not requiresDrones or workers.totalDrones > 0) then
-        wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm," .. ticketName .. ";" .. serialization.serialize(craftProgress))
-        wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_reserve(ticketName, requiredItems))
+        wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm," .. ticket .. ";" .. serialization.serialize(craftProgress))
+        wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_reserve(ticket, requiredItems))
       else
         local errorMessage = "Recipe requires "
         if requiresRobots then
@@ -1179,7 +1179,7 @@ local function main()
     inv: {
       1: {
         status: free|input|output
-        ticketName: nil|<ticket name of corresponding craft request>
+        ticket: nil|<ticket of corresponding craft request>
       }
       ...
     }
@@ -1246,8 +1246,8 @@ local function main()
   -- the first "input" inventory is flushed to make space. Updates the status of
   -- the inventory and ticket, and returns the index of the inventory. If no
   -- space could be made, returns -1.
-  local function allocateDroneInventory(ticketName, usage, needRobots)
-    dlog.checkArgs(ticketName, "string,nil", usage, "string", needRobots, "boolean,nil")
+  local function allocateDroneInventory(ticket, usage, needRobots)
+    dlog.checkArgs(ticket, "string,nil", usage, "string", needRobots, "boolean,nil")
     assert(usage == "input" or usage == "output", "Provided usage is not valid.")
     needRobots = needRobots or false
     
@@ -1287,9 +1287,9 @@ local function main()
     end
     
     droneInventories.inv[droneInvIndex].status = usage
-    droneInventories.inv[droneInvIndex].status = ticketName
+    droneInventories.inv[droneInvIndex].ticket = ticket
     
-    dlog.out("allocateDroneInventory", "Allocated index " .. droneInvIndex .. " as an " .. usage .. " for ticket " .. ticketName)
+    dlog.out("allocateDroneInventory", "Allocated index " .. droneInvIndex .. " as an " .. usage .. " for ticket " .. ticket)
     dlog.out("allocateDroneInventory", "firstFree = " .. droneInventories.firstFree .. ", firstFreeWithRobot = " .. droneInventories.firstFreeWithRobot)
     
     return droneInvIndex
@@ -1297,16 +1297,16 @@ local function main()
   
   -- Sends a request to storage to move the contents of the drone inventory back
   -- into the network. If waitForCompletion is true, this function blocks until
-  -- a response from storage server is received in modem thread. The ticketName
-  -- can be nil. Returns true if flush succeeded (or waitForCompletion is
-  -- false), or false if it did not.
-  local function flushDroneInventory(ticketName, droneInvIndex, waitForCompletion)
-    dlog.checkArgs(ticketName, "string,nil", droneInvIndex, "number", waitForCompletion, "boolean")
+  -- a response from storage server is received in modem thread. The ticket can
+  -- be nil. Returns true if flush succeeded (or waitForCompletion is false), or
+  -- false if it did not.
+  local function flushDroneInventory(ticket, droneInvIndex, waitForCompletion)
+    dlog.checkArgs(ticket, "string,nil", droneInvIndex, "number", waitForCompletion, "boolean")
     
     dlog.out("flushDroneInventory", "Requesting flush for index " .. droneInvIndex)
     
     droneInventories.pendingInsert = "pending"
-    wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(droneInvIndex, ticketName))
+    wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(droneInvIndex, ticket))
     
     local result = true
     if waitForCompletion then
@@ -1337,8 +1337,8 @@ local function main()
         end
         
         -- Remove any marker that this is a supply inventory, since it has just been emptied.
-        if ticketName then
-          activeCraftRequests[ticketName].supplyIndices[droneInvIndex] = nil
+        if ticket then
+          activeCraftRequests[ticket].supplyIndices[droneInvIndex] = nil
         end
       end
     end
@@ -1360,7 +1360,7 @@ local function main()
   --]]
   
   -- 
-  local function updateCraftRequest(ticketName, craftRequest)
+  local function updateCraftRequest(ticket, craftRequest)
     -- Return early if drone extract is pending (avoid queuing up another request so that we don't overwhelm storage server).
     if droneInventories.pendingExtract == "pending" then
       return
@@ -1405,7 +1405,7 @@ local function main()
         
         -- Check if we can make some batches now, and that some robots/drones are available to work.
         if recipeStatus.available > 0 then
-          local freeIndex = allocateDroneInventory(ticketName, "output", not recipe.station)
+          local freeIndex = allocateDroneInventory(ticket, "output", not recipe.station)
           
           if not recipe.station and freeIndex > 0 then
             local extractList = {}
@@ -1428,7 +1428,7 @@ local function main()
             dlog.out("d", "Need to send job request to these bots:", readyWorkers)
             
             droneInventories.pendingExtract = "pending"
-            wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(freeIndex, ticketName, extractList))
+            wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(freeIndex, ticket, extractList))
             
             -- Remove the requested extract items from craftRequest.storedItems, then confirm later that the request succeeded.
             for i, extractItem in ipairs(extractList) do
@@ -1452,8 +1452,8 @@ local function main()
     local done = false
     while true do
       if not done then
-        for ticketName, craftRequest in pairs(activeCraftRequests) do
-          updateCraftRequest(ticketName, craftRequest)
+        for ticket, craftRequest in pairs(activeCraftRequests) do
+          updateCraftRequest(ticket, craftRequest)
           done = true
           dlog.out("craftingThread", "craftRequest:", craftRequest)
         end

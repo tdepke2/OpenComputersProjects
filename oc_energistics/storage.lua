@@ -965,16 +965,16 @@ packer.callbacks.stor_extract = handleStorExtract
 
 
 -- Reserve items for crafting operation.
-local function handleStorRecipeReserve(_, address, _, ticketName, requiredItems)
+local function handleStorRecipeReserve(_, address, _, ticket, requiredItems)
   -- Check for expired tickets and remove them.
-  for ticketName2, request in pairs(pendingCraftRequests) do
+  for ticket2, request in pairs(pendingCraftRequests) do
     if computer.uptime() > request.creationTime + 10 then
-      dlog.out("cmdRecipeReserve", "Ticket " .. ticketName2 .. " has expired")
+      dlog.out("cmdRecipeReserve", "Ticket " .. ticket2 .. " has expired")
       
       for itemName, amount in pairs(request.reserved) do
         changeReservedItemAmount(reservedItems, itemName, -amount)
       end
-      pendingCraftRequests[ticketName2] = nil
+      pendingCraftRequests[ticket2] = nil
     end
   end
   
@@ -990,14 +990,14 @@ local function handleStorRecipeReserve(_, address, _, ticketName, requiredItems)
   
   -- If we successfully reserved the items then add the ticket to pending. Otherwise we undo the reservation.
   if not reserveFailed then
-    pendingCraftRequests[ticketName] = {}
-    pendingCraftRequests[ticketName].creationTime = computer.uptime()
-    pendingCraftRequests[ticketName].reserved = requiredItems
+    pendingCraftRequests[ticket] = {}
+    pendingCraftRequests[ticket].creationTime = computer.uptime()
+    pendingCraftRequests[ticket].reserved = requiredItems
   else
     for itemName, amount in pairs(requiredItems) do
       changeReservedItemAmount(reservedItems, itemName, -amount)
     end
-    wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_cancel(ticketName))
+    wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_cancel(ticket))
   end
   
   sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
@@ -1006,24 +1006,24 @@ packer.callbacks.stor_recipe_reserve = handleStorRecipeReserve
 
 
 -- Start a crafting operation. The pending ticket just moves to active.
-local function handleStorRecipeStart(_, _, _, ticketName)
-  if pendingCraftRequests[ticketName] then
-    assert(not activeCraftRequests[ticketName], "Attempt to start recipe for ticket " .. ticketName .. " which is already running.")
-    activeCraftRequests[ticketName] = pendingCraftRequests[ticketName]
-    activeCraftRequests[ticketName].startTime = computer.uptime()
-    pendingCraftRequests[ticketName] = nil
+local function handleStorRecipeStart(_, _, _, ticket)
+  if pendingCraftRequests[ticket] then
+    assert(not activeCraftRequests[ticket], "Attempt to start recipe for ticket " .. ticket .. " which is already running.")
+    activeCraftRequests[ticket] = pendingCraftRequests[ticket]
+    activeCraftRequests[ticket].startTime = computer.uptime()
+    pendingCraftRequests[ticket] = nil
   end
 end
 packer.callbacks.stor_recipe_start = handleStorRecipeStart
 
 
 -- Cancel a crafting operation.
-local function handleStorRecipeCancel(_, _, _, ticketName)
-  if pendingCraftRequests[ticketName] then
-    for itemName, amount in pairs(pendingCraftRequests[ticketName].reserved) do
+local function handleStorRecipeCancel(_, _, _, ticket)
+  if pendingCraftRequests[ticket] then
+    for itemName, amount in pairs(pendingCraftRequests[ticket].reserved) do
       changeReservedItemAmount(reservedItems, itemName, -amount)
     end
-    pendingCraftRequests[ticketName] = nil
+    pendingCraftRequests[ticket] = nil
     
     sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
   end

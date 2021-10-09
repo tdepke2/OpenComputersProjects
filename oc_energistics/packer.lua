@@ -138,26 +138,26 @@ function packer.unpack.stor_extract(data)
 end
 
 -- Request storage to reserve items in network for crafting operation.
-function packer.pack.stor_recipe_reserve(ticketName, requiredItems)
-  return "stor_recipe_reserve," .. ticketName .. ";" .. serialization.serialize(requiredItems)
+function packer.pack.stor_recipe_reserve(ticket, requiredItems)
+  return "stor_recipe_reserve," .. ticket .. ";" .. serialization.serialize(requiredItems)
 end
 function packer.unpack.stor_recipe_reserve(data)
-  local ticketName = string.match(data, "[^;]*")
-  local requiredItems = serialization.unserialize(string.sub(data, #ticketName + 2))
-  return ticketName, requiredItems
+  local ticket = string.match(data, "[^;]*")
+  local requiredItems = serialization.unserialize(string.sub(data, #ticket + 2))
+  return ticket, requiredItems
 end
 
 -- Request storage to start crafting operation.
-function packer.pack.stor_recipe_start(ticketName)
-  return "stor_recipe_start," .. ticketName
+function packer.pack.stor_recipe_start(ticket)
+  return "stor_recipe_start," .. ticket
 end
 function packer.unpack.stor_recipe_start(data)
   return data
 end
 
 -- Request storage to cancel crafting operation.
-function packer.pack.stor_recipe_cancel(ticketName)
-  return "stor_recipe_cancel," .. ticketName
+function packer.pack.stor_recipe_cancel(ticket)
+  return "stor_recipe_cancel," .. ticket
 end
 function packer.unpack.stor_recipe_cancel(data)
   return data
@@ -299,10 +299,6 @@ end
 function packer.unpack.robot_error(data)
   return errType, errMessage
 end
-
-
-
--- FIXME need to update all the "ticketName" to be "ticket", a ticket is just a name. ##################################################
 
 
 
