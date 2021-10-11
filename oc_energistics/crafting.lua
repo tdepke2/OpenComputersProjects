@@ -765,7 +765,7 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
     if status == "ok" then
       -- Confirm we will not have problems with a crafting recipe that needs robots when we have none (same for drones).
       if (not requiresRobots or workers.totalRobots > 0) and (not requiresDrones or workers.totalDrones > 0) then
-        wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm," .. ticket .. ";" .. serialization.serialize(craftProgress))
+        wnet.send(modem, senderAddress, COMMS_PORT, packer.pack.craft_recipe_confirm(ticket, craftProgress))
         wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_reserve(ticket, requiredItems))
       else
         local errorMessage = "Recipe requires "
@@ -780,14 +780,14 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
         end
         errorMessage = errorMessage .. ", but only " .. workers.totalRobots .. " robots and " .. workers.totalDrones .. " drones are active."
         
-        wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,error;" .. errorMessage)
+        wnet.send(modem, senderAddress, COMMS_PORT, packer.pack.craft_recipe_error("check", errorMessage))
       end
     else
-      wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,missing;" .. serialization.serialize(craftProgress))
+      wnet.send(modem, senderAddress, COMMS_PORT, packer.pack.craft_recipe_confirm("missing", craftProgress))
     end
   else
     -- Error status was returned from solveDependencyGraph(), the second return value recipeIndices contains the error message.
-    wnet.send(modem, senderAddress, COMMS_PORT, "inter:recipe_confirm,error;" .. recipeIndices)
+    wnet.send(modem, senderAddress, COMMS_PORT, packer.pack.craft_recipe_error("check", recipeIndices))
   end
 end
 
@@ -900,7 +900,7 @@ local function handleCraftDiscover(_, address, _)
       recipeItems[k].label = v.label
     end
   end
-  wnet.send(modem, address, COMMS_PORT, "any:recipe_list," .. serialization.serialize(recipeItems))
+  wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_list(recipeItems))
 end
 packer.callbacks.craft_discover = handleCraftDiscover
 
@@ -1080,18 +1080,18 @@ local function main()
     --end
     
     -- Report system started to other listening devices (so they can re-discover the crafting server).
-    wnet.send(modem, nil, COMMS_PORT, "any:craft_started,")
+    wnet.send(modem, nil, COMMS_PORT, packer.pack.craft_started())
     
     io.write("\nStarting up robots...\n")
     -- Reset any running robots.
-    wnet.send(modem, nil, COMMS_PORT, "robot:halt,")
+    wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_halt())
     os.sleep(1)
     
     -- Send robot code to active robots.
     local robotUpFile = io.open("robot_up.lua")
     local dlogWnetState = dlog.subsystems.wnet
     dlog.setSubsystem("wnet", false)
-    wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. robotUpFile:read("a"))
+    wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(robotUpFile:read("a")))
     dlog.setSubsystem("wnet", dlogWnetState)
     robotUpFile:close()
     
@@ -1099,7 +1099,7 @@ local function main()
     workers.totalRobots = 0
     workers.availableRobots = {}
     while true do
-      local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:robot_start,", 2)
+      local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "robot_started,", 2)
       if address then
         workers.totalRobots = workers.totalRobots + (workers.availableRobots[address] and 0 or 1)
         workers.availableRobots[address] = true
@@ -1479,12 +1479,12 @@ local function main()
         local file = io.open("drone_up.lua")
         local sourceCode = file:read(10000000)
         io.write("Uploading \"drone_up.lua\"...\n")
-        wnet.send(modem, nil, COMMS_PORT, "drone:upload," .. sourceCode)
+        wnet.send(modem, nil, COMMS_PORT, packer.pack.drone_upload(sourceCode))
       elseif input[1] == "rup" then
         local file = io.open("robot_up.lua")
         local sourceCode = file:read(10000000)
         io.write("Uploading \"robot_up.lua\"...\n")
-        wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. sourceCode)
+        wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(sourceCode))
       elseif input[1] == "insert" then
         local ticket = next(pendingCraftRequests)
         wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(1, ticket))

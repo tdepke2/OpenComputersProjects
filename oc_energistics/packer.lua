@@ -40,6 +40,13 @@ not be the best idea, but it does seem a lot better than before.
 
 
 FIXME need to refactor wnet to be more consistent with the message = header + data thing (maybe look back at wnet.waitReceive too, should this return message as one thing? actually maybe not) ###################################################
+same thing needs to be done for drone.lua, and drone/robot upload code
+
+FIXME confirm no more dataHeader or data strings. #################################
+confirmed no more stor:, craft:, inter:, any:, robot:, drone:
+adjust code by packer.extractPacket calls (discover stuff) to combine "port ==" and "header ==" together.
+
+
 --]]
 
 local serialization = require("serialization")
@@ -281,7 +288,62 @@ function packer.unpack.craft_recipe_cancel(data)
   return data
 end
 
+-- Crafting is reporting system has started up.
+function packer.pack.craft_started()
+  return "craft_started,"
+end
+function packer.unpack.craft_started(data)
+  return nil
+end
 
+-- Crafting is reporting the available craftable items from the recipes table.
+function packer.pack.craft_recipe_list(recipeItems)
+  return "craft_recipe_list," .. serialization.serialize(recipeItems)
+end
+function packer.unpack.craft_recipe_list(data)
+  local recipeItems = serialization.unserialize(data)
+  return recipeItems
+end
+
+-- Crafting is reporting "success" or "missing items" results from a recent
+-- craft_recipe_start request.
+function packer.pack.craft_recipe_confirm(ticket, craftProgress)
+  return "craft_recipe_confirm," .. ticket .. ";" .. serialization.serialize(craftProgress)
+end
+function packer.unpack.craft_recipe_confirm(data)
+  local ticket = string.match(data, "[^;]*")
+  local craftProgress = serialization.unserialize(string.sub(data, #ticket + 2))
+  return ticket, craftProgress
+end
+
+-- Crafting is reporting failure of a recent craft_recipe_start request, or a
+-- running crafting operation.
+function packer.pack.craft_recipe_error(ticket, errMessage)
+  return "craft_recipe_error," .. ticket .. ";" .. errMessage
+end
+function packer.unpack.craft_recipe_error(data)
+  local ticket = string.match(data, "[^;]*")
+  local errMessage = string.sub(data, #ticket + 2)
+  return ticket, errMessage
+end
+
+
+
+-- Request drone to run a software update.
+function packer.pack.drone_upload(sourceCode)
+  return "drone_upload," .. sourceCode
+end
+function packer.unpack.drone_upload(data)
+  return data
+end
+
+-- Drone is reporting system has started up.
+function packer.pack.drone_started()
+  return "drone_started,"
+end
+function packer.unpack.drone_started(data)
+  return nil
+end
 
 -- Drone is reporting compile/runtime error.
 function packer.pack.drone_error(errType, errMessage)
@@ -292,6 +354,48 @@ function packer.unpack.drone_error(data)
 end
 
 
+
+-- Request robot to run a software update.
+function packer.pack.robot_upload(sourceCode)
+  return "robot_upload," .. sourceCode
+end
+function packer.unpack.robot_upload(data)
+  return data
+end
+
+-- Request robot to scan adjacent inventories for target item.
+function packer.pack.robot_scan_adjacent(itemName, slotNum)
+  return "robot_scan_adjacent," .. itemName .. "," .. slotNum
+end
+function packer.unpack.robot_scan_adjacent(data)
+  local itemName = string.match(data, "[^,]*")
+  local slotNum = string.match(data, "[^,]*", #itemName + 2)
+  return itemName, tonumber(slotNum)
+end
+
+-- Request robot to exit software (return to firmware loop).
+function packer.pack.robot_halt()
+  return "robot_halt,"
+end
+function packer.unpack.robot_halt(data)
+  return nil
+end
+
+-- Robot is reporting system has started up.
+function packer.pack.robot_started()
+  return "robot_started,"
+end
+function packer.unpack.robot_started(data)
+  return nil
+end
+
+-- Robot is reporting result of request to scan adjacent inventories.
+function packer.pack.robot_scan_adjacent_result(foundSide)
+  return "robot_scan_adjacent_result," .. tostring(foundSide)
+end
+function packer.unpack.robot_scan_adjacent_result(data)
+  return tonumber(data)
+end
 
 -- Robot is reporting compile/runtime error.
 function packer.pack.robot_error(errType, errMessage)

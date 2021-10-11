@@ -81,11 +81,11 @@ while true do
     local dataHeader = string.match(data, "[^,]*")
     data = string.sub(data, #dataHeader + 2)
     
-    if dataHeader == "drone:upload" and drone then
+    if dataHeader == "drone_upload" and drone then
       drone.setStatusText("Running.")
       local fn, err = load(data)
       if fn then
-        wnet.send(modem, address, COMMS_PORT, "any:drone_start,")
+        wnet.send(modem, address, COMMS_PORT, "drone_started,")
         local status, err = pcall(fn)
         if not status then
           wnet.send(modem, address, COMMS_PORT, "drone_error,runtime," .. err)
@@ -94,11 +94,11 @@ while true do
         wnet.send(modem, address, COMMS_PORT, "drone_error,compile," .. err)
       end
       drone.setStatusText("Done.")
-    elseif dataHeader == "robot:upload" and not drone then
+    elseif dataHeader == "robot_upload" and not drone then
       gpu.set(1, 1, "Running.  ")
       local fn, err = load(data)
       if fn then
-        wnet.send(modem, address, COMMS_PORT, "any:robot_start,")
+        wnet.send(modem, address, COMMS_PORT, "robot_started,")
         local status, err = pcall(fn)
         if not status then
           wnet.send(modem, address, COMMS_PORT, "robot_error,runtime," .. err)

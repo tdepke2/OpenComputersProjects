@@ -35,7 +35,7 @@ local function main()
       local dataHeader = string.match(data, "[^,]*")
       data = string.sub(data, #dataHeader + 2)
       
-      if dataHeader == "robot:scan_adjacent" then
+      if dataHeader == "robot_scan_adjacent" then
         local itemName = string.match(data, "[^,]*")
         local slotNum = tonumber(string.match(data, "[^,]*", #itemName + 2))
         local foundSide
@@ -61,8 +61,8 @@ local function main()
         robot.turn(true)
         
         gpu.set(1, 4, "foundSide = " .. tostring(foundSide))
-        wnet.send(modem, address, COMMS_PORT, "any:scan_adjacent_result," .. tostring(foundSide))
-      elseif dataHeader == "robot:halt" then
+        wnet.send(modem, address, COMMS_PORT, "robot_scan_adjacent_result," .. tostring(foundSide))
+      elseif dataHeader == "robot_halt" then
         computer.pullSignal(math.random() * 0.4)
         computer.beep(800, 0.05)
         computer.beep(600, 0.05)

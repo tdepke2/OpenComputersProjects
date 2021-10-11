@@ -117,7 +117,7 @@ local function main()
   end
   
   -- Reset any running robots.
-  wnet.send(modem, nil, COMMS_PORT, "robot:halt,")
+  wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_halt())
   os.sleep(1)
   
   -- Send robot code to active robots.
@@ -125,7 +125,7 @@ local function main()
   io.write("\nUploading \"robot_up.lua\"...\n")
   local dlogWnetState = dlog.subsystems.wnet
   dlog.setSubsystem("wnet", false)
-  wnet.send(modem, nil, COMMS_PORT, "robot:upload," .. robotUpFile:read("a"))
+  wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(robotUpFile:read("a")))
   dlog.setSubsystem("wnet", dlogWnetState)
   robotUpFile:close()
   
@@ -133,7 +133,7 @@ local function main()
   local robotAddresses = {}
   local numRobotAddresses = 0
   while true do
-    local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:robot_start,", 2)
+    local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "robot_started,", 2)
     if address then
       numRobotAddresses = numRobotAddresses + (robotAddresses[address] and 0 or 1)
       robotAddresses[address] = true
@@ -183,12 +183,13 @@ local function main()
     extractList.supplyIndices[i] = false
     
     -- Request robots to scan for the item in adjacent inventories, and wait for response from all.
-    wnet.send(modem, nil, COMMS_PORT, "robot:scan_adjacent," .. setupConfig.searchItem .. ",1")
+    wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_scan_adjacent(setupConfig.searchItem, 1))
     for j = 1, numRobotAddresses do
-      local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "any:scan_adjacent_result,", 5)
+      local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "robot_scan_adjacent_result,", 5)
       assert(address, "Communication with robot failed, got responses from " .. j - 1 .. " of " .. numRobotAddresses .. " bots.")
-      robotConnections[i][address] = tonumber(data)
-      if tonumber(data) then
+      local foundSide = packer.unpack.robot_scan_adjacent_result(data)
+      robotConnections[i][address] = foundSide
+      if foundSide then
         remainingRobotAddresses[address] = nil
       end
     end

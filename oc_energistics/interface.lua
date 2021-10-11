@@ -1132,6 +1132,81 @@ end
 
 
 
+local storageItems, storageServerAddress, recipeItems, craftingServerAddress, gui
+
+
+
+-- Apply the items diff to storageItems to keep the table synced up.
+local function handleStorItemDiff(_, _, _, itemsDiff)
+  for itemName, diff in pairs(itemsDiff) do
+    if diff.total == 0 then
+      gui:removedStorageItem(itemName)
+      storageItems[itemName] = nil
+    elseif storageItems[itemName] then
+      storageItems[itemName].total = diff.total
+    else
+      storageItems[itemName] = {}
+      storageItems[itemName].maxSize = diff.maxSize
+      storageItems[itemName].label = diff.label
+      storageItems[itemName].total = diff.total
+      gui:addedStorageItem(itemName)
+    end
+  end
+  gui:updateSortingKeys()
+end
+packer.callbacks.stor_item_diff = handleStorItemDiff
+
+
+-- If we get a broadcast that storage started, it must have just rebooted and we
+-- need to discover new storageItems.
+local function handleStorStarted(_, address, _)
+  wnet.send(modem, address, COMMS_PORT, packer.pack.stor_discover())
+end
+packer.callbacks.stor_started = handleStorStarted
+
+
+-- New item list, update storageItems and GUI.
+local function handleStorItemList(_, address, _, items)
+  storageItems = items
+  storageServerAddress = address
+  gui:setStorageItems(storageItems)
+  gui.storageServerAddress = address
+end
+packer.callbacks.stor_item_list = handleStorItemList
+
+
+-- 
+local function handleCraftStarted(_, _, _)
+  -- TODO #######################################################################################################################################################################
+end
+packer.callbacks.craft_started = handleCraftStarted
+
+
+-- 
+local function handleCraftRecipeList(_, _, _, recipeItems)
+  
+end
+packer.callbacks.craft_recipe_list = handleCraftRecipeList
+
+
+-- Got a response from crafting request, update in GUI to show required items
+-- for crafting operation.
+local function handleCraftRecipeConfirm(_, _, _, ticket, craftProgress)
+  gui:addPendingCraftRequest(ticket, craftProgress)
+end
+packer.callbacks.craft_recipe_confirm = handleCraftRecipeConfirm
+
+
+-- Got error response from crafting request, or failure during crafting.
+local function handleCraftRecipeError(_, _, _, ticket, errMessage)
+  io.write("Error in recipe: " .. ticket .. ", " .. errMessage .. "\n")    -- FIXME show error in gui ################################################################
+end
+packer.callbacks.craft_recipe_error = handleCraftRecipeError
+
+
+
+
+
 local function main()
   local threadSuccess = false
   -- Captures the interrupt signal to stop program.
@@ -1154,7 +1229,6 @@ local function main()
     threadSuccess = false
   end
   
-  local storageItems, storageServerAddress, recipeItems, craftingServerAddress, gui
   --dlog.setFileOut("/tmp/messages", "w")
   
   -- Performs setup and initialization tasks.
@@ -1194,12 +1268,10 @@ local function main()
         wnet.send(modem, nil, COMMS_PORT, packer.pack.craft_discover())
         attemptNumber = attemptNumber + 1
       end
-      local address, port, data = wnet.receive(0.1)
+      local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
       if port == COMMS_PORT then
-        local dataHeader = string.match(data, "[^,]*")
-        data = string.sub(data, #dataHeader + 2)
-        if dataHeader == "any:recipe_list" then
-          recipeItems = serialization.unserialize(data)
+        if header == "craft_recipe_list" then
+          recipeItems = packer.unpack.craft_recipe_list(data)
           craftingServerAddress = address
         end
       end
@@ -1221,52 +1293,9 @@ local function main()
   -- Listens for incoming packets over the network and deals with them.
   local modemThread = thread.create(function()
     while true do
-      local address, port, data = wnet.receive()
+      local address, port, message = wnet.receive()
       if port == COMMS_PORT then
-        local dataHeader = string.match(data, "[^,]*")
-        data = string.sub(data, #dataHeader + 2)
-        
-        if dataHeader == "stor_item_diff" then
-          -- Apply the items diff to storageItems to keep the table synced up.
-          local itemsDiff = serialization.unserialize(data)
-          for itemName, diff in pairs(itemsDiff) do
-            if diff.total == 0 then
-              gui:removedStorageItem(itemName)
-              storageItems[itemName] = nil
-            elseif storageItems[itemName] then
-              storageItems[itemName].total = diff.total
-            else
-              storageItems[itemName] = {}
-              storageItems[itemName].maxSize = diff.maxSize
-              storageItems[itemName].label = diff.label
-              storageItems[itemName].total = diff.total
-              gui:addedStorageItem(itemName)
-            end
-          end
-          gui:updateSortingKeys()
-        elseif dataHeader == "stor_started" then
-          -- If we get a broadcast that storage started, it must have just rebooted and we need to discover new storageItems.
-          wnet.send(modem, address, COMMS_PORT, packer.pack.stor_discover())
-        elseif dataHeader == "stor_item_list" then
-          -- New item list, update storageItems and GUI.
-          storageItems = serialization.unserialize(data)
-          storageServerAddress = address
-          gui:setStorageItems(storageItems)
-          gui.storageServerAddress = address
-        elseif dataHeader == "any:craft_started" then
-          -- TODO #######################################################################################################################################################################
-        elseif dataHeader == "any:recipe_list" then
-          
-        elseif dataHeader == "inter:recipe_confirm" then
-          local ticket = string.match(data, "[^;]*")
-          data = string.sub(data, #ticket + 2)
-          if ticket ~= "error" then
-            data = serialization.unserialize(data)
-            gui:addPendingCraftRequest(ticket, data)
-          else
-            io.write("Error in recipe confirm: " .. data .. "\n")    -- FIXME show error in gui ################################################################
-          end
-        end
+        packer.handlePacket(nil, address, port, message)
       end
     end
   end)
