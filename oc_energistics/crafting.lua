@@ -1053,11 +1053,9 @@ local function main()
         attemptNumber = attemptNumber + 1
       end
       local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
-      if port == COMMS_PORT then
-        if header == "stor_item_list" then
-          storageItems = packer.unpack.stor_item_list(data)
-          storageServerAddress = address
-        end
+      if port == COMMS_PORT and header == "stor_item_list" then
+        storageItems = packer.unpack.stor_item_list(data)
+        storageServerAddress = address
       end
     end
     io.write("\nSuccess.\n")

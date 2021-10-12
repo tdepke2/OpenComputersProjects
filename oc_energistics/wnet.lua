@@ -22,44 +22,45 @@ local wnet = {}
 -- Maximum lifetime of a buffered packet (in seconds). Note that packets are only dropped when a new one is received.
 wnet.maxPacketLife = 5
 
--- The string can be up to the max packet size, minus a bit to make sure the packet can send.
-wnet.maxDataLength = computer.getDeviceInfo()[component.modem.address].capacity - 32
+-- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
+wnet.maxLength = computer.getDeviceInfo()[component.modem.address].capacity - 32
 
 wnet.packetNumber = 1
 wnet.packetBuffer = {}
 
--- wnet.send(modem: table, address: string|nil, port: number, data: string)
+
+-- wnet.send(modem: table, address: string|nil, port: number, message: string)
 -- 
--- Send a message over the network containing the data packet (must be a
--- string). If the address is nil, message is sent as a broadcast. The data
--- packet is broken up into smaller pieces if it is too big for the max packet
--- size.
-function wnet.send(modem, address, port, data)
-  dlog.checkArgs(modem, "table", address, "string,nil", port, "number", data, "string")
+-- Send some data over the network containing the message (must be a string). If
+-- the address is nil, message is sent as a broadcast. The message is broken up
+-- into smaller pieces if it is too big for the max packet size.
+function wnet.send(modem, address, port, message)
+  dlog.checkArgs(modem, "table", address, "string,nil", port, "number", message, "string")
   
-  if #data <= wnet.maxDataLength then
-    -- Data is small enough, send it in one packet.
+  if #message <= wnet.maxLength then
+    -- Message is small enough, send it in one packet.
     if address then
-      modem.send(address, port, wnet.packetNumber .. "/1", data)
+      modem.send(address, port, wnet.packetNumber .. "/1", message)
     else
-      modem.broadcast(port, wnet.packetNumber .. "/1", data)
+      modem.broadcast(port, wnet.packetNumber .. "/1", message)
     end
-    dlog.out("wnet", "Packet to " .. (address == nil and "BROAD" or string.sub(address, 1, 5)) .. ":" .. port .. " -> " .. wnet.packetNumber .. "/1", data)
+    dlog.out("wnet", "Packet to " .. (address == nil and "BROAD" or string.sub(address, 1, 5)) .. ":" .. port .. " -> " .. wnet.packetNumber .. "/1", message)
     wnet.packetNumber = wnet.packetNumber + 1
   else
-    -- Substring data into multiple pieces and send each. The first one includes a "/<packet count>" after the packet number.
-    local packetCount = math.ceil(#data / wnet.maxDataLength)
+    -- Substring message into multiple pieces and send each. The first one includes a "/<packet count>" after the packet number.
+    local packetCount = math.ceil(#message / wnet.maxLength)
     for i = 1, packetCount do
       if address then
-        modem.send(address, port, wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(data, (i - 1) * wnet.maxDataLength + 1, i * wnet.maxDataLength))
+        modem.send(address, port, wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(message, (i - 1) * wnet.maxLength + 1, i * wnet.maxLength))
       else
-        modem.broadcast(port, wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(data, (i - 1) * wnet.maxDataLength + 1, i * wnet.maxDataLength))
+        modem.broadcast(port, wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(message, (i - 1) * wnet.maxLength + 1, i * wnet.maxLength))
       end
-      dlog.out("wnet", "Packet to " .. (address == nil and "BROAD" or string.sub(address, 1, 5)) .. ":" .. port .. " -> " .. wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(data, (i - 1) * wnet.maxDataLength + 1, i * wnet.maxDataLength))
+      dlog.out("wnet", "Packet to " .. (address == nil and "BROAD" or string.sub(address, 1, 5)) .. ":" .. port .. " -> " .. wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(message, (i - 1) * wnet.maxLength + 1, i * wnet.maxLength))
       wnet.packetNumber = wnet.packetNumber + 1
     end
   end
 end
+
 
 -- wnet.receive([timeout: number]): string, number, string
 -- 
@@ -67,15 +68,15 @@ end
 -- is specified, this function only waits for that many seconds before
 -- returning. If a message was split into multiple packets, combines them before
 -- returning the result. Returns nil if timeout reached, or address, port, and
--- data if received.
+-- message if received.
 function wnet.receive(timeout)
   dlog.checkArgs(timeout, "number,nil")
-  local eventType, _, senderAddress, senderPort, _, sequence, data = event.pull(timeout, "modem_message")
-  if not (eventType and type(sequence) == "string" and type(data) == "string" and string.find(sequence, "^%d+")) then
+  local eventType, _, senderAddress, senderPort, _, sequence, message = event.pull(timeout, "modem_message")
+  if not (eventType and type(sequence) == "string" and type(message) == "string" and string.find(sequence, "^%d+")) then
     return nil
   end
   senderPort = math.floor(senderPort)
-  dlog.out("wnet", "Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence, data)
+  dlog.out("wnet", "Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence, message)
   
   if string.match(sequence, "/(%d+)") == "1" then
     -- Got a packet without any pending ones. Do a quick clean of dead packets and return this one.
@@ -86,10 +87,10 @@ function wnet.receive(timeout)
         wnet.packetBuffer[k] = nil
       end
     end
-    return senderAddress, senderPort, data
+    return senderAddress, senderPort, message
   end
   while true do
-    wnet.packetBuffer[senderAddress .. ":" .. senderPort .. "," .. sequence] = {computer.uptime(), data}
+    wnet.packetBuffer[senderAddress .. ":" .. senderPort .. "," .. sequence] = {computer.uptime(), message}
     
     -- Iterate through packet buffer to check if we have enough to return some data.
     for k, v in pairs(wnet.packetBuffer) do
@@ -102,60 +103,61 @@ function wnet.receive(timeout)
         dlog.out("wnet:d", "Dropping packet: " .. k)
         wnet.packetBuffer[k] = nil
       elseif kPacketCount and (kPacketCount == 1 or wnet.packetBuffer[kAddress .. ":" .. kPort .. "," .. (kPacketNum + kPacketCount - 1)]) then
-        -- Found a start packet and the corresponding end packet was received, try to form the full data.
+        -- Found a start packet and the corresponding end packet was received, try to form the full message.
         dlog.out("wnet:d", "Found begin and end packets, checking...")
-        data = ""
+        message = ""
         for i = 1, kPacketCount do
           if not wnet.packetBuffer[kAddress .. ":" .. kPort .. "," .. (kPacketNum + i - 1) .. (i == 1 and "/" .. kPacketCount or "")] then
-            data = nil
+            message = nil
             break
           end
         end
         
-        -- Confirm we really have all the packets before forming the data and deleting them from the buffer (a packet could have been lost or is still in transit).
-        if data then
+        -- Confirm we really have all the packets before forming the message and deleting them from the buffer (a packet could have been lost or is still in transit).
+        if message then
           for i = 1, kPacketCount do
             local k2 = kAddress .. ":" .. kPort .. "," .. (kPacketNum + i - 1) .. (i == 1 and "/" .. kPacketCount or "")
-            data = data .. wnet.packetBuffer[k2][2]
+            message = message .. wnet.packetBuffer[k2][2]
             wnet.packetBuffer[k2] = nil
           end
-          return kAddress, tonumber(kPort), data
+          return kAddress, tonumber(kPort), message
         end
         dlog.out("wnet:d", "Nope, need more.")
       end
     end
     
     -- Don't have enough packets yet, wait for more.
-    eventType, _, senderAddress, senderPort, _, sequence, data = event.pull(timeout, "modem_message")
-    if not (eventType and type(sequence) == "string" and type(data) == "string" and string.find(sequence, "^%d+")) then
+    eventType, _, senderAddress, senderPort, _, sequence, message = event.pull(timeout, "modem_message")
+    if not (eventType and type(sequence) == "string" and type(message) == "string" and string.find(sequence, "^%d+")) then
       return nil
     end
     senderPort = math.floor(senderPort)
-    dlog.out("wnet", "Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence, data)
+    dlog.out("wnet", "Packet from " .. string.sub(senderAddress, 1, 5) .. ":" .. senderPort .. " <- " .. sequence, message)
   end
 end
 
+
 -- wnet.waitReceive(targetAddress: string|nil, targetPort: number|nil,
---   dataHeader: string|nil, timeout: number): string, number, string, string
+--   header: string|nil, timeout: number): string, number, string, string
 -- 
 -- Similar to wnet.receive(), but blocks until a message that meets the criteria
 -- is found or timeout is reached. Any of the targetAddress, targetPort, or
--- dataHeader arguments can be nil to ignore matching of this type. Returns nil
--- if timeout reached, or address, port, dataHeader, and data if received (the
--- returned data value has the dataHeader stripped off).
-function wnet.waitReceive(targetAddress, targetPort, dataHeader, timeout)
-  dlog.checkArgs(targetAddress, "string,nil", targetPort, "number,nil", dataHeader, "string,nil", timeout, "number")
+-- header arguments can be nil to ignore matching of this type. Returns nil if
+-- timeout reached, or address, port, header, and data if received (the returned
+-- data value has the header stripped off).
+function wnet.waitReceive(targetAddress, targetPort, header, timeout)
+  dlog.checkArgs(targetAddress, "string,nil", targetPort, "number,nil", header, "string,nil", timeout, "number")
   local stopTime = computer.uptime() + timeout
   repeat
     dlog.out("wnet:d", "Waiting for next packet to match.")
-    local address, port, data = wnet.receive(math.min(timeout, 1))
+    local address, port, message = wnet.receive(math.min(timeout, 1))
     if address and (not targetAddress or address == targetAddress) and (not targetPort or port == targetPort) then
       local foundHeader = ""
-      if dataHeader then
-        foundHeader = string.match(data, "^" .. dataHeader)
+      if header then
+        foundHeader = string.match(message, "^" .. header)
       end
       if foundHeader then
-        return address, port, foundHeader, string.sub(data, #foundHeader + 1)
+        return address, port, foundHeader, string.sub(message, #foundHeader + 1)
       end
     end
   until computer.uptime() >= stopTime
@@ -172,9 +174,9 @@ return wnet
 -- in the drone code within a loop:
 -- 
 -- local ev = {computer.pullSignal()}
--- local address, port, data = wnet.receive(ev)
+-- local address, port, message = wnet.receive(ev)
 -- if port == <my port> then
---   Do stuff with data...
+--   Do stuff with message...
 -- end
 -- 
 -- Compressed wnet starts here:

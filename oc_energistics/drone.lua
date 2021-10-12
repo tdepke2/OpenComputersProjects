@@ -78,10 +78,10 @@ while true do
   local address, port, data = wnet.receive(ev)
   
   if port == COMMS_PORT then
-    local dataHeader = string.match(data, "[^,]*")
-    data = string.sub(data, #dataHeader + 2)
+    local header = string.match(data, "[^,]*")
+    data = string.sub(data, #header + 2)
     
-    if dataHeader == "drone_upload" and drone then
+    if header == "drone_upload" and drone then
       drone.setStatusText("Running.")
       local fn, err = load(data)
       if fn then
@@ -94,7 +94,7 @@ while true do
         wnet.send(modem, address, COMMS_PORT, "drone_error,compile," .. err)
       end
       drone.setStatusText("Done.")
-    elseif dataHeader == "robot_upload" and not drone then
+    elseif header == "robot_upload" and not drone then
       gpu.set(1, 1, "Running.  ")
       local fn, err = load(data)
       if fn then

@@ -34,19 +34,6 @@ segment because the parsing had to be updated in a few different places. It also
 didn't help that I used one big switch-case kind of function to manage all
 packet actions, yikes! Unifying all packet types into one module like this may
 not be the best idea, but it does seem a lot better than before.
-
-
-
-
-
-FIXME need to refactor wnet to be more consistent with the message = header + data thing (maybe look back at wnet.waitReceive too, should this return message as one thing? actually maybe not) ###################################################
-same thing needs to be done for drone.lua, and drone/robot upload code
-
-FIXME confirm no more dataHeader or data strings. #################################
-confirmed no more stor:, craft:, inter:, any:, robot:, drone:
-adjust code by packer.extractPacket calls (discover stuff) to combine "port ==" and "header ==" together.
-
-
 --]]
 
 local serialization = require("serialization")
