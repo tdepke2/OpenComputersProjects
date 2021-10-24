@@ -1,5 +1,3 @@
--- FIXME we now use this for both drones and robots, name should change ###########################################################
-
 local drone
 if component.list("drone")() then
   drone = component.proxy(component.list("drone")())
@@ -107,6 +105,17 @@ while true do
         wnet.send(modem, address, COMMS_PORT, "robot_error,compile," .. err)
       end
       gpu.set(1, 1, "Done.     ")
+    elseif header == "robot_upload_lib" and not drone then
+      local fn, err = load(data)
+      if fn then
+        wnet.send(modem, address, COMMS_PORT, "robot_started,")
+        local status, err = pcall(fn)
+        if not status then
+          wnet.send(modem, address, COMMS_PORT, "robot_error,runtime," .. err)
+        end
+      else
+        wnet.send(modem, address, COMMS_PORT, "robot_error,compile," .. err)
+      end
     end
   end
 end

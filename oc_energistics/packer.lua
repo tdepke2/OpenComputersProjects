@@ -38,9 +38,6 @@ not be the best idea, but it does seem a lot better than before.
 
 local serialization = require("serialization")
 
-local include = require("include")
-local dlog = include("dlog")
-
 local packer = {}
 
 -- Functions to "pack" the data arguments into the message.
@@ -57,7 +54,8 @@ packer.callbacks = {}
 -- metatable to log the event here or even throw an error.
 setmetatable(packer.callbacks, {
   __index = function(t, key)
-    dlog.out("packer", "No callback registered for header \"" .. key .. "\"")
+    --dlog.out("packer", "No callback registered for header \"" .. key .. "\"")
+    print("No callback registered for packet header \"" .. key .. "\".")
     return nil
   end
 })
@@ -255,7 +253,7 @@ function packer.pack.craft_check_recipe(itemName, amount)
 end
 function packer.unpack.craft_check_recipe(data)
   local itemName = string.match(data, "[^,]*")
-  local amount = string.match(data, "[^,]*", #itemName + 2)
+  local amount = string.sub(data, #itemName + 2)
   return itemName, tonumber(amount)
 end
 
@@ -337,17 +335,21 @@ function packer.pack.drone_error(errType, errMessage)
   return "drone_error," .. errType .. "," .. errMessage
 end
 function packer.unpack.drone_error(data)
+  local errType = string.match(data, "[^,]*")
+  local errMessage = string.sub(data, #errType + 2)
   return errType, errMessage
 end
 
 
 
--- Request robot to run a software update.
-function packer.pack.robot_upload(sourceCode)
-  return "robot_upload," .. sourceCode
+-- Request robot to run a software update (run program or cache library code).
+function packer.pack.robot_upload(libName, srcCode)
+  return "robot_upload," .. libName .. "," .. srcCode
 end
 function packer.unpack.robot_upload(data)
-  return data
+  local libName = string.match(data, "[^,]*")
+  local srcCode = string.sub(data, #libName + 2)
+  return libName, srcCode
 end
 
 -- Request robot to scan adjacent inventories for target item.
@@ -356,8 +358,25 @@ function packer.pack.robot_scan_adjacent(itemName, slotNum)
 end
 function packer.unpack.robot_scan_adjacent(data)
   local itemName = string.match(data, "[^,]*")
-  local slotNum = string.match(data, "[^,]*", #itemName + 2)
+  local slotNum = string.sub(data, #itemName + 2)
   return itemName, tonumber(slotNum)
+end
+
+-- Request robot to prepare to craft a number of items.
+function packer.pack.robot_prepare_craft(craftingTask)
+  return "robot_prepare_craft," .. serialization.serialize(craftingTask)
+end
+function packer.unpack.robot_prepare_craft(data)
+  local craftingTask = serialization.unserialize(data)
+  return craftingTask
+end
+
+-- Request robot to start a pending crafting request.
+function packer.pack.robot_start_craft()
+  return "robot_start_craft,"
+end
+function packer.unpack.robot_start_craft(data)
+  return nil
 end
 
 -- Request robot to exit software (return to firmware loop).
@@ -384,11 +403,21 @@ function packer.unpack.robot_scan_adjacent_result(data)
   return tonumber(data)
 end
 
+-- Robot is reporting result of crafting request.
+function packer.pack.robot_finished_craft()
+  return "robot_finished_craft,"
+end
+function packer.unpack.robot_finished_craft(data)
+  return nil
+end
+
 -- Robot is reporting compile/runtime error.
 function packer.pack.robot_error(errType, errMessage)
   return "robot_error," .. errType .. "," .. errMessage
 end
 function packer.unpack.robot_error(data)
+  local errType = string.match(data, "[^,]*")
+  local errMessage = string.sub(data, #errType + 2)
   return errType, errMessage
 end
 

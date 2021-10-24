@@ -11,24 +11,26 @@ TODO
 * Add some dynamic port assignment maybe (start with default port, and switch everybody to new port when they first chat).
 * Would be neat to have some security. When system first set up we could keep track of all addresses in a file and validate packets with these.
     * This could also be a performance issue, may want to use broadcasts when communicating with interfaces.
-* Something needs to be done about the network communication. Instead of the <intended recipient>:<packet type> structure, use <class>:<type>.
-    * Might be good to create a new network module to keep track of all packet types. We would have a function for each packet that can be sent/received.
-    * Modem thread should be adjusted to be more generic and not check the packet headers for each type.
 * May be an improvement to have packer module not store a global table of callbacks, and instead allow callbacks to be passed into handlePacket().
     * This would allow callback tables for different network ports running on same server.
+* There is a way to have a device set its own Lua version with component.computer.setArchitecture(), might be a good idea (instead of adding compat with 5.2).
 
 DONE
 * Using os.sleep() may be evil, same thing for event.pull() with filter.
     * Need to investigate how signals get dropped and possibly make a separate event library that queues signals.
     * Solution for now: os.sleep() is fine as long as it's not used within a thread that must catch events.
 * wnet needs some adjustments to handle invalid data format (drop these packets).
+* Something needs to be done about the network communication. Instead of the <intended recipient>:<packet type> structure, use <class>:<type>.
+    * Might be good to create a new network module to keep track of all packet types. We would have a function for each packet that can be sent/received.
+    * Modem thread should be adjusted to be more generic and not check the packet headers for each type.
 
 --------------------------------------------------------------------------------
 Storage Tasks:
 TODO
 * May want to add optional feature to import constantly, the redstone sensor is cool but not really needed.
 * Might be good to allow setup script to "merge" a previous config.
-    *This would allow user to add a few more inventories on network and then run setup for just the new ones.
+    * This would allow user to add a few more inventories on network and then run setup for just the new ones.
+* Verify all transposers are correct in config when app starts. Make sure all ones listed are there and there are no extras in system.
 
 DONE
 * Storage auto imports with redstone comparator and redstone I/O.

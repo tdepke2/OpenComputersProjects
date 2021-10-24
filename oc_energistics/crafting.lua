@@ -401,7 +401,7 @@ local function solveDependencyGraph(stations, recipes, storageItems, itemName, a
       for outputName, amount in pairs(recipes[recipeIndex].out) do
         dlog.out("recipeSolver", spacing .. "Add " .. -mult * amount .. " of output " .. outputName)
         requiredItems[outputName] = requiredItems[outputName] - mult * amount
-        if requiredItems[outputName] == 0 then
+        if requiredItems[outputName] == 0 then    -- FIXME this might be a bug? do we allow zeros in requiredItems or no? seems useful to have. if not bug then need to update any modifications to requiredItems to check for zero! ##################################################
           requiredItems[outputName] = nil
         end
       end
@@ -815,6 +815,102 @@ local pendingCraftRequests, activeCraftRequests, droneItems, droneInventories, w
 
 
 
+--[[
+
+pendingCraftRequests: {
+  <ticket>: {
+    creationTime: <time>
+    recipeIndices: {    -- Indices of the recipes to craft, ordered by raw materials first to final product last.
+      1: <recipeIndex>
+      2: <recipeIndex>
+      ...
+    }
+    recipeBatches: {    -- Number of batches (multiplied with item output amount to get total number to craft) for each recipe index.
+      1: <batchSize>
+      2: <batchSize>
+      ...
+    }
+    requiredItems: {    -- All items used in recipes and the total amount required. Negative values mean a net amount of the item is generated.
+      <item name>: <amount>    -- FIXME is above really true? see note in solveDependencyGraph() about this. may want to update some other places (like storedItems) that assume requiredItems does NOT have all used items. #############################################
+      ...
+    }
+  }
+  ...
+}
+
+activeCraftRequests: {
+  <ticket>: {
+    <all of the same stuff from pendingCraftRequests>
+    
+    startTime: <time>
+    storedItems: {    -- Initialized with requiredItems and all items used in recipe.
+      <item name>: {
+        total: <total count>
+        lastTime: <time>    -- Last time the item was crafted.
+        dependents: {    -- All recipes in the request that require this item as an input.
+          1: <recipeIndex>
+          2: <recipeIndex>
+          ...
+        }
+      }
+      ...
+    }
+    recipeStartIndex: <index>    -- Index of first nonzero batchSize in recipeBatches.
+    recipeStatus: {    -- Correspond to the recipeIndices and recipeBatches.
+      1: {
+        dirty: <boolean>    -- True if any of the recipe input amounts changed, false otherwise.
+        available: <amount>    -- Number of batches we can craft with current storedItems.
+        maxLastTime: <time>    -- Maximum lastTime of all recipe inputs.
+      }
+      ...
+    }
+    supplyIndices: {
+      <droneInvIndex>: <boolean>    -- True if dirty (inventory scan needed), false otherwise.
+      ...
+    }
+  }
+}
+
+droneInventories: {
+  firstFree: <droneInvIndex>    -- Index of first free inventory, or -1.
+  firstFreeWithRobot: <droneInvIndex>    -- Index of first free inventory with available robots, or -1.
+  pendingInsert: nil|<status>    -- Either nil, "pending", or result of insert operation.
+  pendingExtract: nil|<status>
+  inv: {
+    1: {
+      status: free|input|output
+      ticket: nil|<ticket>    -- Ticket of corresponding craft request.
+    }
+    ...
+  }
+}
+
+workers: {
+  robotConnections: {
+    1: {
+      <address>: <side>    -- The address of the robot that can access the inventory, and what side the robot sees the inventory.
+      ...
+    }
+    ...
+  }
+  totalRobots: <amount>
+  availableRobots: {
+    <address>: true
+    ...
+  }
+  pendingRobots: {
+    <address>: true
+    ...
+  }
+  totalDrones: <amount>
+  availableDrones: {
+    <address>: true
+    ...
+  }
+}
+
+--]]
+
 
 
 
@@ -1086,16 +1182,17 @@ local function main()
     os.sleep(1)
     
     -- Send robot code to active robots.
-    local robotUpFile = io.open("robot_up.lua")
     local dlogWnetState = dlog.subsystems.wnet
     dlog.setSubsystem("wnet", false)
-    wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(robotUpFile:read("a")))
+    for libName, srcCode in include.iterateSrcDependencies("robot_up.lua") do
+      wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(libName, srcCode))
+    end
     dlog.setSubsystem("wnet", dlogWnetState)
-    robotUpFile:close()
     
     -- Wait for robots to receive the software update and keep track of their addresses.
     workers.totalRobots = 0
     workers.availableRobots = {}
+    workers.pendingRobots = {}
     while true do
       local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "robot_started,", 2)
       if address then
@@ -1133,79 +1230,6 @@ local function main()
     dlog.out("main", "Modem thread ends.")
   end)
   
-  --[[
-  crafting process:
-    crafting ticket moves to active
-    for each active ticket
-      check what new resources have been generated
-      if resources needed for current recipe and they are now available, queue up more crafting for it
-      
-    end
-  
-  which inventories in use, by who? what for?
-  what resources have been crafted?
-  last time each resource was crafted? how fast are they being crafted? (we need to decide how much to batch before sending items into next craft operation to allow pipelining)
-  when resource gets created, which recipes does it apply to?
-  
-  craftRequest.storedItems: {    -- Initialized with requiredItems and all items used in recipe
-    <item full name>: {
-      total: <total count>
-      lastTime: <computer uptime, last time the item was crafted>
-      dependents: {    -- All recipes in the request that require this item as an input.
-        1: <recipe index>
-        2: <recipe index>
-        ...
-      }
-    }
-  }
-  
-  craftRequest.recipeStatus: {
-    1: {
-      dirty: <true if any of the recipe input amounts changed, false otherwise>
-      available: <number of batches we can craft with current storedItems>
-      maxLastTime: <maximum lastTime of all recipe inputs>
-    }
-    ...
-  }
-  
-  craftRequest.supplyIndices: {
-    <index of drone inventory>: <true if dirty (inventory scan needed), false otherwise>
-  }
-  
-  droneInventories: {
-    firstFree: <index of first free inventory, or -1>
-    firstFreeWithRobot: <index of first free inventory with available robots, or -1>
-    pendingInsert: nil|<status>    -- Either "pending", or result of insert operation.
-    pendingExtract: nil|<status>
-    inv: {
-      1: {
-        status: free|input|output
-        ticket: nil|<ticket of corresponding craft request>
-      }
-      ...
-    }
-  }
-  
-  workers: {
-    robotConnections: {
-      1: {
-        <address>: <side>    -- The address of the robot that can access the inventory, and what side the robot sees the inventory.
-        ...
-      }
-      ...
-    }
-    totalRobots: <amount>
-    availableRobots: {
-      <address>: true
-      ...
-    }
-    totalDrones: <amount>
-    availableDrones: {
-      <address>: true
-      ...
-    }
-  }
-  --]]
   
   -- Iterate the droneInventories starting from startIndex. Stop and return
   -- index if we find one with "free" status, or allowInput is true and we find
@@ -1358,6 +1382,19 @@ local function main()
   index (robot could be shared between two inventories and giving it new work
   could invalidate our index).
   
+  crafting process:
+    crafting ticket moves to active
+    for each active ticket
+      check what new resources have been generated
+      if resources needed for current recipe and they are now available, queue up more crafting for it
+      
+    end
+  
+  which inventories in use, by who? what for?
+  what resources have been crafted?
+  last time each resource was crafted? how fast are they being crafted? (we need to decide how much to batch before sending items into next craft operation to allow pipelining)
+  when resource gets created, which recipes does it apply to?
+  
   --]]
   
   -- 
@@ -1372,6 +1409,20 @@ local function main()
       end
       
       dlog.out("d", "Extract request completed, go robots!")
+      for address, _ in pairs(workers.pendingRobots) do
+        wnet.send(modem, address, COMMS_PORT, packer.pack.robot_start_craft())
+        
+        
+        
+        
+        -- FIXME yo can we like not do multiple tablkes for bot status? maybe just keep one with a string status idk #################################
+        
+        
+        
+        
+        
+        workers.pendingRobots[address] = nil
+      end
       droneInventories.pendingExtract = nil
     end
     
@@ -1418,15 +1469,45 @@ local function main()
             -- Collect robots ready for this task. Do this here so we can guarantee there hasn't been a context switch after the call to allocateDroneInventory() ends.
             -- Otherwise, some robots could finish their tasks and we could give work to the wrong bots.
             local readyWorkers = {}
+            local numReadyWorkers = 0
             for address, side in pairs(workers.robotConnections[freeIndex]) do
               if workers.availableRobots[address] then
                 readyWorkers[address] = side
+                numReadyWorkers = numReadyWorkers + 1
               end
             end
             
-            -- FIXME update availableRobots here (not above), not all of the robots will be given a job depending on how resources are divided up. #####################################
+            --[[
+            craftingTask: {
+              droneInvIndex: <number>
+              side: <number>
+              numBatches: <number>
+              ticket: <ticket>
+              recipe: <single recipe entry from recipes table>
+            }
+            --]]
             
-            dlog.out("d", "Need to send job request to these bots:", readyWorkers)
+            -- Assign jobs to each of the robots (not all of the readyWorkers will be given a task though, depends on number of robots and number of batches).
+            local craftingTask = {}
+            craftingTask.droneInvIndex = freeIndex
+            craftingTask.numBatches = math.ceil(recipeStatus.available / numReadyWorkers)
+            craftingTask.ticket = ticket
+            craftingTask.recipe = recipe
+            for address, side in pairs(readyWorkers) do
+              craftingTask.side = side
+              craftingTask.numBatches = math.min(craftingTask.numBatches, recipeStatus.available)
+              wnet.send(modem, address, COMMS_PORT, packer.pack.robot_prepare_craft(craftingTask))
+              
+              workers.pendingRobots[address] = true
+              workers.availableRobots[address] = nil
+              
+              -- Reduce the total batches-to-craft from the craftRequest, and same for available amount. If no more batches left for next bots we break early.
+              craftRequest.recipeBatches[i] = craftRequest.recipeBatches[i] - craftingTask.numBatches
+              recipeStatus.available = recipeStatus.available - craftingTask.numBatches
+              if recipeStatus.available == 0 then
+                break
+              end
+            end
             
             droneInventories.pendingExtract = "pending"
             wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(freeIndex, ticket, extractList))
@@ -1473,17 +1554,7 @@ local function main()
         input = "exit"
       end
       input = text.tokenize(input)
-      if input[1] == "dup" then
-        local file = io.open("drone_up.lua")
-        local sourceCode = file:read(10000000)
-        io.write("Uploading \"drone_up.lua\"...\n")
-        wnet.send(modem, nil, COMMS_PORT, packer.pack.drone_upload(sourceCode))
-      elseif input[1] == "rup" then
-        local file = io.open("robot_up.lua")
-        local sourceCode = file:read(10000000)
-        io.write("Uploading \"robot_up.lua\"...\n")
-        wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(sourceCode))
-      elseif input[1] == "insert" then
+      if input[1] == "insert" then
         local ticket = next(pendingCraftRequests)
         wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(1, ticket))
       elseif input[1] == "extract" then
