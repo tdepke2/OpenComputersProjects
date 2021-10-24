@@ -119,13 +119,13 @@ local function main()
   os.sleep(1)
   
   -- Send robot code to active robots.
-  local robotUpFile = io.open("robot_up.lua")
   io.write("\nUploading \"robot_up.lua\"...\n")
   local dlogWnetState = dlog.subsystems.wnet
   dlog.setSubsystem("wnet", false)
-  wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(robotUpFile:read("a")))
+  for libName, srcCode in include.iterateSrcDependencies("robot_up.lua") do
+    wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(libName, srcCode))
+  end
   dlog.setSubsystem("wnet", dlogWnetState)
-  robotUpFile:close()
   
   -- Wait for robots to receive the software update and keep track of their addresses.
   local robotAddresses = {}

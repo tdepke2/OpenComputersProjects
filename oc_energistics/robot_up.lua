@@ -2,7 +2,6 @@ local crafting = requireComponent("crafting")
 local ic = requireComponent("inventory_controller")
 local modem = requireComponent("modem")
 local robot = requireComponent("robot")
-local serialization = require("serialization")
 local sides = require("sides")
 
 local include = require("include")
@@ -38,9 +37,9 @@ local function rotateToSide(side)
 end
 
 
-local function handleRobotScanAdjacent(_, _, _)
-  local itemName = string.match(data, "[^,]*")
-  local slotNum = tonumber(string.match(data, "[^,]*", #itemName + 2))
+-- Scan inventories on all sides. Find one that has the requested item in the
+-- slot and report the side number back.
+local function handleRobotScanAdjacent(_, address, _, itemName, slotNum)
   local foundSide
   print("name = " .. itemName)
   print("slot = " .. slotNum)
@@ -64,17 +63,17 @@ local function handleRobotScanAdjacent(_, _, _)
   robot.turn(true)
   
   print("foundSide = " .. tostring(foundSide))
-  wnet.send(modem, address, COMMS_PORT, "robot_scan_adjacent_result," .. tostring(foundSide))
+  wnet.send(modem, address, COMMS_PORT, packer.pack.robot_scan_adjacent_result(foundSide))
 end
 packer.callbacks.robot_scan_adjacent = handleRobotScanAdjacent
 
-local function handleRobotPrepareCraft(_, _, _)
-  local craftingTask = serialization.unserialize(data)
-  
+-- 
+local function handleRobotPrepareCraft(_, _, _, craftingTask)
   print("cool")
 end
 packer.callbacks.robot_prepare_craft = handleRobotPrepareCraft
 
+-- Exit program and return control to firmware.
 local function handleRobotHalt(_, _, _)
   os.exit()
 end
