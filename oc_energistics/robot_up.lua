@@ -1,4 +1,5 @@
 local crafting = requireComponent("crafting")
+local eeprom = requireComponent("eeprom")
 local ic = requireComponent("inventory_controller")
 local modem = requireComponent("modem")
 local robot = requireComponent("robot")
@@ -36,6 +37,13 @@ local function rotateToSide(side)
   facingSide = side
 end
 
+
+-- Replace EEPROM contents and power off device.
+local function handleRobotUploadEeprom(_, _, _, srcCode)
+  eeprom.set(srcCode)
+  computer.shutdown()
+end
+packer.callbacks.robot_upload_eeprom = handleRobotUploadEeprom
 
 -- Scan inventories on all sides. Find one that has the requested item in the
 -- slot and report the side number back.
@@ -84,6 +92,9 @@ local function main()
   computer.pullSignal(math.random() * 0.4)
   computer.beep(600, 0.05)
   computer.beep(800, 0.05)
+  
+  -- FIXME should change to include modem address? then we don't have to worry about extra delay before sending beep when robot starts (because each device has a unique packet to start it) #################
+  modem.setWakeMessage("robot_activate")
   
   local mainThread = coroutine.create(function()
     while true do

@@ -160,9 +160,9 @@ function include.iterateSrcDependencies(sourceFilename, libPattern)
     end
     assert(srcPath, "Failed searching dependencies for \"" .. sourceFilename .. "\": cannot find source file \"" .. srcTop .. "\" in search path.")
     print("Checking file " .. srcPath)
-    local srcFile, errMessage = io.open(srcPath)
+    local srcFile, errMessage = io.open(srcPath, "rb")
     assert(srcFile, "Failed searching dependencies for \"" .. sourceFilename .. "\": cannot open source file \"" .. srcTop .. "\": " .. tostring(errMessage))
-    local srcCode = srcFile:read("a")
+    local srcCode = srcFile:read("*a")
     srcFile:close()
     
     -- Look for the libPattern or 'include("")' strings. Only count ones we haven't searched before (to protect against circular dependencies).

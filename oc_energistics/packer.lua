@@ -352,6 +352,14 @@ function packer.unpack.robot_upload(data)
   return libName, srcCode
 end
 
+-- Request robot to run a firmware update.
+function packer.pack.robot_upload_eeprom(srcCode)
+  return "robot_upload_eeprom," .. srcCode
+end
+function packer.unpack.robot_upload_eeprom(data)
+  return data
+end
+
 -- Request robot to scan adjacent inventories for target item.
 function packer.pack.robot_scan_adjacent(itemName, slotNum)
   return "robot_scan_adjacent," .. itemName .. "," .. slotNum

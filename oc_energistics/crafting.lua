@@ -1554,7 +1554,7 @@ local function main()
         input = "exit"
       end
       input = text.tokenize(input)
-      if input[1] == "insert" then
+      if input[1] == "insert" then    -- FIXME remove these two later, just for testing. ##########################
         local ticket = next(pendingCraftRequests)
         wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(1, ticket))
       elseif input[1] == "extract" then
@@ -1570,6 +1570,22 @@ local function main()
         t.supplyIndices[1] = false
         local ticket = next(pendingCraftRequests)
         wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(4, ticket, t))
+      elseif input[1] == "update_firmware" then    -- Command update_firmware. Updates firmware on all active devices (robots, drones, etc).
+        io.write("Broadcasting firmware to active devices...\n")
+        local srcFile, errMessage = io.open("robot.lua", "rb")
+        assert(srcFile, "Cannot open source file \"robot.lua\": " .. tostring(errMessage))
+        local dlogWnetState = dlog.subsystems.wnet
+        dlog.setSubsystem("wnet", false)
+        wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload_eeprom(srcFile:read("*a")))
+        dlog.setSubsystem("wnet", dlogWnetState)
+        srcFile:close()
+        
+        -- Wait a little bit for devices to reprogram themselves and shutdown. Then wake them back up.
+        os.sleep(3)
+        modem.broadcast(COMMS_PORT, "robot_activate")
+        io.write("Update finished. Please start crafting server application again.\n")
+        threadSuccess = true
+        break
       elseif input[1] == "dlog" then    -- Command dlog [<subsystem> <0, 1, or nil>]
         if input[2] then
           if input[3] == "0" then
@@ -1594,10 +1610,14 @@ local function main()
         dlog.out("dbg", "droneItems:", droneItems)
       elseif input[1] == "help" then    -- Command help
         io.write("Commands:\n")
+        io.write("  update_firmware\n")
+        io.write("    Reprograms EEPROMs on all active robots and drones (the devices must be\n")
+        io.write("    powered on and have been discovered during initialization stage). This only\n")
+        io.write("    works for devices with an existing programmed EEPROM.\n")
         io.write("  dlog [<subsystem> <0, 1, or nil>]\n")
         io.write("    Display diagnostics log info (when called with no arguments), or enable/\n")
-        io.write("    disable logging for a subsystem. Use a \"*\" to refer to all subsystems, except\n")
-        io.write("    ones that are explicitly disabled.\n")
+        io.write("    disable logging for a subsystem. Use a \"*\" to refer to all subsystems,\n")
+        io.write("    except ones that are explicitly disabled.\n")
         io.write("    Ex: Run \"dlog * 1\" then \"dlog wnet:d 0\" to enable all logs except \"wnet:d\".\n")
         io.write("  dlog_file [<filename>]\n")
         io.write("    Set logging output file. Skip the filename argument to disable file output.\n")
