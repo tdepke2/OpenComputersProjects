@@ -1027,7 +1027,12 @@ local function handleStorRecipeCancel(_, _, _, ticket)
       changeReservedItemAmount(reservedItems, itemName, -amount)
     end
     pendingCraftRequests[ticket] = nil
-    
+    sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
+  elseif activeCraftRequests[ticket] then
+    for itemName, amount in pairs(activeCraftRequests[ticket].reserved) do
+      changeReservedItemAmount(reservedItems, itemName, -amount)
+    end
+    activeCraftRequests[ticket] = nil
     sendAvailableItemsDiff(craftInterServerAddresses, storageItems, reservedItems)
   end
 end

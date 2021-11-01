@@ -11,6 +11,9 @@ local packer = include("packer")
 local COMMS_PORT = 0xE298
 
 local facingSide = sides.front
+local craftingServerAddress
+local craftingTask2
+local craftingState
 
 local function getItemFullName(item)
   return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
@@ -28,13 +31,24 @@ local function rotateToSide(side)
   local facingRotation = facingSide - 2 + (facingSide % 2) * 3
   local diffRotation = (rotation - facingRotation + 2) % 8 - 2
   if diffRotation == 2 then
-    robot.turnLeft()
+    robot.turn(false)
   elseif diffRotation == 4 then
-    robot.turnAround()
+    robot.turn(true)
+    robot.turn(true)
   elseif diffRotation == -2 then
-    robot.turnRight()
+    robot.turn(true)
   end
   facingSide = side
+end
+
+-- Stop the currently running crafting task and report error back to crafting
+-- server. This is different from throwing an exception because exceptions
+-- indicate an error that will require a manual restart of system(s). We can
+-- still recover from a failed crafting task.
+local function cancelCraftingTask(errMessage)
+  print("Error: " .. errMessage)
+  wnet.send(modem, craftingServerAddress, COMMS_PORT, packer.pack.robot_error("crafting_failed", craftingTask2.ticket .. ";" .. errMessage))
+  rotateToSide(sides.front)
 end
 
 
@@ -76,10 +90,153 @@ end
 packer.callbacks.robot_scan_adjacent = handleRobotScanAdjacent
 
 -- 
-local function handleRobotPrepareCraft(_, _, _, craftingTask)
-  print("cool")
+local function handleRobotPrepareCraft(_, address, _, craftingTask)
+  print("prepare")
+  craftingServerAddress = address
+  assert(not craftingTask2, "Attempt to start crafting task that is already pending.")
+  assert(not craftingTask.recipe.station, "Attempt to start crafting task with non-crafting recipe.")
+  rotateToSide(craftingTask.side)
+  craftingTask2 = craftingTask
 end
 packer.callbacks.robot_prepare_craft = handleRobotPrepareCraft
+
+-- Pull items from drone inventory on targetSide (should only be top, front, or
+-- bottom). The item totals are reduced from craftingState.extractRemaining so
+-- we don't pull more than we need.
+local function fillCraftingSlots(targetSide)
+  -- FIXME this format should probably be used for other getAllStacks() calls. also, note that getAllStacks() is not listed in documentation for ic but it is there. ###############################
+  -- also, just for reference the iter from getAllStacks() takes a snapshot of the inventory (that's why it blocks for 1 tick only). calling reset() does not take a new snapshot, you have to call getAllStacks() for new iter. ############
+  -- Scan target inventory for the extract items.
+  local slot = 1
+  for item in ic.getAllStacks(targetSide) do
+    if next(item) ~= nil then
+      local fullName = getItemFullName(item)
+      
+      -- If item is one we need, go through each slot where it is needed and try to extract it there.
+      if craftingState.extractRemaining[fullName] then
+        for destSlot, amount in pairs(craftingState.extractRemaining[fullName]) do
+          -- Transform destSlot from crafting indexed (1 to 9) to robot indexed (1 to 16). Compute the remaining amount we can actually extract too.
+          local destSlotRobot = destSlot + math.floor((destSlot - 1) / 3)
+          local extractAmount = math.min(amount, math.floor(robot.space(destSlotRobot)))
+          if extractAmount > 0 then
+            robot.select(destSlotRobot)
+            craftingState.extractRemaining[fullName][destSlot] = amount - math.floor(ic.suckFromSlot(targetSide, slot, extractAmount) or 0)
+            
+            -- Remove slot entry if amount is zero, and whole item entry if table is empty.
+            if craftingState.extractRemaining[fullName][destSlot] == 0 then
+              craftingState.extractRemaining[fullName][destSlot] = nil
+              if next(craftingState.extractRemaining[fullName]) == nil then
+                craftingState.extractRemaining[fullName] = nil
+                break
+              end
+            end
+          end
+        end
+      end
+    end
+    slot = slot + 1
+  end
+end
+
+-- Get a comma-separated string of recipe output item types. This is used to
+-- identify the recipe for the user.
+local function getRecipeOutputStr(recipe)
+  local str = ""
+  for outputName, _ in pairs(recipe.out) do
+    str = str .. outputName .. ", "
+  end
+  return string.sub(str, 1, -3)
+end
+
+-- 
+local function handleRobotStartCraft(_, _, _)
+  print("start")
+  assert(craftingTask2, "Attempt to start nil crafting task.")
+  
+  -- multiple iterations of pull-craft-push may be needed.
+  -- always pull batchSize (or amount remaining) into slot, we may or may not get all of the items depending on if other bots grabbed them or if max slot size reached.
+  
+  -- The side to interact with will be in front, top, or bottom only.
+  local targetSide = sides.front
+  if craftingTask2.side == sides.top or craftingTask2.side == sides.bottom then
+    targetSide = craftingTask2.side
+  end
+  
+  --[[
+  craftingState: {
+    extractRemaining: {
+      <item name>: {
+        <slot>: <remaining amount>
+        ...
+      }
+      ...
+    }
+    insertRemaining: {
+      <item name>: <remaining amount>
+      ...
+    }
+  }
+  --]]
+  
+  if not craftingState then
+    craftingState = {}
+    
+    -- Keep track of remaining items to pull from inventory (and slot numbers to put them).
+    craftingState.extractRemaining = {}
+    for _, input in ipairs(craftingTask2.recipe.inp) do
+      craftingState.extractRemaining[input[1]] = {}
+      for i = 2, #input do
+        craftingState.extractRemaining[input[1]][input[i]] = craftingTask2.numBatches
+      end
+    end
+    
+    -- Keep track of remaining items to push back into inventory.
+    craftingState.insertRemaining = {}
+    for outputName, amount in pairs(craftingTask2.recipe.out) do
+      craftingState.insertRemaining[outputName] = amount * craftingTask2.numBatches
+    end
+  else
+    -- DroneInv must have been full, so it got emptied out a bit and start-craft called again.
+    -- we should try to push items in selected slot and continue.
+  end
+  
+  while next(craftingState.extractRemaining) ~= nil do
+    fillCraftingSlots(targetSide)
+    
+    robot.select(13)
+    if not crafting.craft() then
+      cancelCraftingTask("Recipe for " .. getRecipeOutputStr(craftingTask2.recipe) .. " failed to craft. Please check recipe.")
+      return
+    end
+    
+    
+    -- FIXME need to break this up to run asynchronous with packet handler thread
+    
+    
+    local craftedItem = ic.getStackInInternalSlot(13)
+    local craftedItemName = getItemFullName(craftedItem)
+    craftingState.insertRemaining[craftedItemName] = craftingState.insertRemaining[craftedItemName] - math.floor(craftedItem.size)
+    if craftingState.insertRemaining[craftedItemName] == 0 then
+      craftingState.insertRemaining[craftedItemName] = nil
+    elseif craftingState.insertRemaining[craftedItemName] < 0 then
+      print("error! we crafted some extra " .. craftedItemName)    -- FIXME need to throw error to crafting and cancel operation #########
+    end
+    
+    if not robot.drop(targetSide) then
+      -- FIXME need to report full and return
+    end
+  end
+  
+  --print("ready to craft, extractRemaining=")
+  --for k, _ in pairs(craftingState.extractRemaining) do
+  --  print("fullName -> " .. k)
+  --end
+  
+  rotateToSide(sides.front)
+  craftingTask2 = nil
+  craftingState = nil
+end
+packer.callbacks.robot_start_craft = handleRobotStartCraft
 
 -- Exit program and return control to firmware.
 local function handleRobotHalt(_, _, _)
@@ -95,6 +252,62 @@ local function main()
   
   -- FIXME should change to include modem address? then we don't have to worry about extra delay before sending beep when robot starts (because each device has a unique packet to start it) #################
   modem.setWakeMessage("robot_activate")
+  
+  --[[
+  
+  --delet this
+  
+  
+  
+  
+  local s = ""
+  for k, v in pairs(robot) do
+    s = s .. k .. ", "
+  end
+  print(s)
+  
+  --print(tostring(robot.drop(sides.front, 1)))
+  --print(tostring(robot.drop(sides.top, 1)))
+  --print(tostring(robot.drop(sides.bottom, 1)))
+  --print(tostring(robot.drop(sides.back, 1))) -- unsupported side error
+  --print(tostring(robot.drop(sides.left, 1)))
+  --print(tostring(robot.drop(sides.right, 1))) -- unsupported side error
+  --
+  local ret = {ic.suckFromSlot(sides.front, 2, 5)}
+  for _, v in pairs(ret) do
+    print(tostring(v))
+  end
+  print("doing it")
+  
+  --
+  for i = 1, 80 do
+    robot.select((i % 16) + 1)
+  end
+  print("finished 80 calls to select()")
+  
+  for i = 1, 80 do
+    robot.space((i % 16) + 1)
+  end
+  print("finished 80 calls to space()")    -- actually a free operation!
+  
+  for i = 1, 80 do
+    robot.count((i % 16) + 1)
+  end
+  print("finished 80 calls to count()")    -- actually a free operation!
+  
+  for i = 1, 80 do
+    ic.getStackInInternalSlot(1)
+  end
+  print("finished 80 calls to getStackInInternalSlot()")
+  for i = 1, 80 do
+    ic.getSlotStackSize(sides.front, 1)
+  end
+  print("finished 80 calls to getSlotStackSize()")
+  for i = 1, 80 do
+    ic.getStackInSlot(sides.front, 1)
+  end
+  print("finished 80 calls to getStackInSlot()")
+  --]]
   
   local mainThread = coroutine.create(function()
     while true do

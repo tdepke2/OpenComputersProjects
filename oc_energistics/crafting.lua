@@ -697,8 +697,8 @@ we iterate tables in reverse to find the sequence of steps to run in parallel.
 
 --]]
 
-local function checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, workers, senderAddress, itemName, amount)
-  dlog.checkArgs(stations, "table", recipes, "table", storageServerAddress, "string", storageItems, "table", pendingCraftRequests, "table", workers, "table", senderAddress, "string", itemName, "string", amount, "number")
+local function checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, activeCraftRequests, workers, senderAddress, itemName, amount)
+  dlog.checkArgs(stations, "table", recipes, "table", storageServerAddress, "string", storageItems, "table", pendingCraftRequests, "table", activeCraftRequests, "table", workers, "table", senderAddress, "string", itemName, "string", amount, "number")
   local status, recipeIndices, recipeBatches, requiredItems = solveDependencyGraph(stations, recipes, storageItems, itemName, amount)
   
   dlog.out("checkRecipe", "status = " .. status)
@@ -723,7 +723,7 @@ local function checkRecipe(stations, recipes, storageServerAddress, storageItems
   if status == "ok" then
     while true do
       ticket = "id" .. math.floor(math.random(0, 999)) .. "," .. itemName .. "," .. amount
-      if not pendingCraftRequests[ticket] then
+      if not pendingCraftRequests[ticket] and not activeCraftRequests[ticket] then
         break
       end
     end
@@ -807,6 +807,17 @@ local function updateStoredItem(craftRequest, itemName, deltaAmount)
   -- Mark dependent recipes as dirty (amount changed).
   for _, dependentIndex in ipairs(craftRequest.storedItems[itemName].dependents) do
     craftRequest.recipeStatus[dependentIndex].dirty = true
+  end
+end
+
+-- Send message over network to each address in the table (or broadcast if nil).
+local function sendToAddresses(addresses, message)
+  if addresses then
+    for address, _ in pairs(addresses) do
+      wnet.send(modem, address, COMMS_PORT, message)
+    end
+  else
+    wnet.send(modem, nil, COMMS_PORT, message)
   end
 end
 
@@ -1005,7 +1016,7 @@ packer.callbacks.craft_discover = handleCraftDiscover
 -- ticket for the operation if successful.
 local function handleCraftCheckRecipe(_, address, _, itemName, amount)
   interfaceServerAddresses[address] = true
-  checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, workers, address, itemName, amount)
+  checkRecipe(stations, recipes, storageServerAddress, storageItems, pendingCraftRequests, activeCraftRequests, workers, address, itemName, amount)
 end
 packer.callbacks.craft_check_recipe = handleCraftCheckRecipe
 
@@ -1065,8 +1076,11 @@ packer.callbacks.craft_recipe_start = handleCraftRecipeStart
 -- Cancel crafting operation. Forward request to storage and clear entry in
 -- pendingCraftRequests.
 local function handleCraftRecipeCancel(_, _, _, ticket)
-  wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_cancel(ticket))
-  pendingCraftRequests[ticket] = nil
+  if pendingCraftRequests[ticket] or activeCraftRequests[ticket] then
+    wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_cancel(ticket))
+    pendingCraftRequests[ticket] = nil
+    activeCraftRequests[ticket] = nil
+  end
 end
 packer.callbacks.craft_recipe_cancel = handleCraftRecipeCancel
 
@@ -1081,6 +1095,14 @@ packer.callbacks.drone_error = handleDroneError
 -- Robot has encountered a compile/runtime error.
 local function handleRobotError(_, _, _, errType, errMessage)
   dlog.out("robot", "Robot " .. errType .. " error: " .. string.format("%q", errMessage))
+  
+  -- Crafting operation ran into an error and needs to stop. Error gets reported to interface.
+  if errType == "crafting_failed" then
+    local ticket = string.match(errMessage, "[^;]*")
+    errMessage = string.sub(errMessage, #ticket + 2)
+    handleCraftRecipeCancel(_, _, _, ticket)
+    sendToAddresses(interfaceServerAddresses, packer.pack.craft_recipe_error(ticket, errMessage))
+  end
 end
 packer.callbacks.robot_error = handleRobotError
 
@@ -1412,7 +1434,7 @@ local function main()
       for address, _ in pairs(workers.pendingRobots) do
         wnet.send(modem, address, COMMS_PORT, packer.pack.robot_start_craft())
         
-        
+        -- note: we could send droneItems here, it's probably safe. might be better to just spend an extra tick to let robots scan inv themselves (inventory contents will go stale fast).
         
         
         -- FIXME yo can we like not do multiple tablkes for bot status? maybe just keep one with a string status idk #################################
@@ -1531,16 +1553,13 @@ local function main()
   
   -- 
   local craftingThread = thread.create(function()
-    local done = false
     while true do
-      if not done then
-        for ticket, craftRequest in pairs(activeCraftRequests) do
-          updateCraftRequest(ticket, craftRequest)
-          done = true
-          dlog.out("craftingThread", "craftRequest:", craftRequest)
-        end
+      for ticket, craftRequest in pairs(activeCraftRequests) do
+        updateCraftRequest(ticket, craftRequest)
+        dlog.out("craftingThread", "craftRequest:", craftRequest)
       end
-      os.sleep(0.05)
+      --os.sleep(0.05)
+      os.sleep(2)
     end
   end)
   

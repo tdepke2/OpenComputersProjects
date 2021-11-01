@@ -14,6 +14,10 @@ TODO
 * May be an improvement to have packer module not store a global table of callbacks, and instead allow callbacks to be passed into handlePacket().
     * This would allow callback tables for different network ports running on same server.
 * There is a way to have a device set its own Lua version with component.computer.setArchitecture(), might be a good idea (instead of adding compat with 5.2).
+* Should probably have wnet accept the address string "*" for broadcast, not a nil value.
+* May want to adjust checkRecipe() in crafting to send tickets with fake status ("missing" for missing materials).
+    * This allows user to queue up an item that can't currently be crafted in order to purge expired pending requests.
+* Need a testing system for robots (and drones later) for running commands like interactive lua interpreter. Maybe use existing firmware with remote-code-exe script.
 
 DONE
 * Using os.sleep() may be evil, same thing for event.pull() with filter.

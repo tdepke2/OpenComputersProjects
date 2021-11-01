@@ -259,7 +259,7 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   self.button.cancel.height = 1
   
   self.crafting = {}
-  self.crafting.pendingCraftRequest = {}
+  self.crafting.pendingCraftRequests = {}
   self.crafting.activeCraftRequests = {}
   
   self.storageItems = storageItems
@@ -437,7 +437,7 @@ function Gui:drawAreaCraftingItem(force)
   local itemIndex = 1 + self.craftingScrollBar.scroll
   local bgColor, fgColor
   
-  local _, craftProgress = next(self.crafting.pendingCraftRequest)
+  local _, craftProgress = next(self.crafting.pendingCraftRequests)
   if not craftProgress then
     craftProgress = {}
   end
@@ -857,7 +857,7 @@ end
 
 function Gui:updateCraftingScrollBar(direction)
   local numRows = 0
-  for _, _ in pairs(self.crafting.pendingCraftRequest) do
+  for _, _ in pairs(self.crafting.pendingCraftRequests) do
     numRows = numRows + 2
   end
   self.craftingScrollBar.maxScroll = math.max(math.floor(numRows - self.craftingScrollBar.height), 0)
@@ -898,26 +898,32 @@ function Gui:toggleButtonNextPage()
 end
 
 function Gui:toggleButtonStart()
-  local ticket = next(self.crafting.pendingCraftRequest)
+  local ticket = next(self.crafting.pendingCraftRequests)
   if ticket and string.find(ticket, "^id") then
     wnet.send(modem, self.craftingServerAddress, COMMS_PORT, packer.pack.craft_recipe_start(ticket))
-    self.crafting.pendingCraftRequest[ticket] = nil
+    self.crafting.pendingCraftRequests[ticket] = nil
     
     self:updateCraftingScrollBar(0)
     self:drawAreaCraftingItem()
   end
 end
 
+-- Remove a pending or active craft request, and forward request to crafting
+-- server if it's a real ticket (not "missing").
+function Gui:cancelCraftRequest(ticket)
+  if string.find(ticket, "^id") then
+    wnet.send(modem, self.craftingServerAddress, COMMS_PORT, packer.pack.craft_recipe_cancel(ticket))
+    self.crafting.activeCraftRequests[ticket] = nil
+  end
+  self.crafting.pendingCraftRequests[ticket] = nil
+  self:updateCraftingScrollBar(0)
+  self:drawAreaCraftingItem()
+end
+
 function Gui:toggleButtonCancel()
-  local ticket = next(self.crafting.pendingCraftRequest)
+  local ticket = next(self.crafting.pendingCraftRequests)
   if ticket then
-    if string.find(ticket, "^id") then
-      wnet.send(modem, self.craftingServerAddress, COMMS_PORT, packer.pack.craft_recipe_cancel(ticket))
-    end
-    self.crafting.pendingCraftRequest[ticket] = nil
-    
-    self:updateCraftingScrollBar(0)
-    self:drawAreaCraftingItem()
+    self:cancelCraftRequest(ticket)
   end
 end
 
@@ -1117,15 +1123,12 @@ end
 
 function Gui:addPendingCraftRequest(ticket, craftProgress)
   -- Remove any old pending request and cancel it if applicable.
-  local oldTicket = next(self.crafting.pendingCraftRequest)
+  local oldTicket = next(self.crafting.pendingCraftRequests)
   if oldTicket then
-    if string.find(oldTicket, "^id") then
-      wnet.send(modem, self.craftingServerAddress, COMMS_PORT, packer.pack.craft_recipe_cancel(oldTicket))
-    end
-    self.crafting.pendingCraftRequest[oldTicket] = nil
+    self:cancelCraftRequest(oldTicket)
   end
   
-  self.crafting.pendingCraftRequest[ticket] = craftProgress
+  self.crafting.pendingCraftRequests[ticket] = craftProgress
   self:updateCraftingScrollBar(0)
   self:drawAreaCraftingItem()
 end
@@ -1199,7 +1202,12 @@ packer.callbacks.craft_recipe_confirm = handleCraftRecipeConfirm
 
 -- Got error response from crafting request, or failure during crafting.
 local function handleCraftRecipeError(_, _, _, ticket, errMessage)
+  if gui.crafting.pendingCraftRequests[ticket] or gui.crafting.activeCraftRequests[ticket] then
+    gui:cancelCraftRequest(ticket)
+  end
+  
   io.write("Error in recipe: " .. ticket .. ", " .. errMessage .. "\n")    -- FIXME show error in gui ################################################################
+  -- two options here, either display in log at bottom or clear crafting status window and display there (but then we have to keep that status window open)
 end
 packer.callbacks.craft_recipe_error = handleCraftRecipeError
 
