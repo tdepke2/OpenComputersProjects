@@ -17,7 +17,6 @@ TODO
 * Should probably have wnet accept the address string "*" for broadcast, not a nil value.
 * May want to adjust checkRecipe() in crafting to send tickets with fake status ("missing" for missing materials).
     * This allows user to queue up an item that can't currently be crafted in order to purge expired pending requests.
-* Need a testing system for robots (and drones later) for running commands like interactive lua interpreter. Maybe use existing firmware with remote-code-exe script.
 
 DONE
 * Using os.sleep() may be evil, same thing for event.pull() with filter.
@@ -27,6 +26,7 @@ DONE
 * Something needs to be done about the network communication. Instead of the <intended recipient>:<packet type> structure, use <class>:<type>.
     * Might be good to create a new network module to keep track of all packet types. We would have a function for each packet that can be sent/received.
     * Modem thread should be adjusted to be more generic and not check the packet headers for each type.
+* Need a testing system for robots (and drones later) for running commands like interactive lua interpreter. Maybe use existing firmware with remote-code-exe script.
 
 --------------------------------------------------------------------------------
 Storage Tasks:

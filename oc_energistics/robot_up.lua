@@ -59,6 +59,30 @@ local function handleRobotUploadEeprom(_, _, _, srcCode)
 end
 packer.callbacks.robot_upload_eeprom = handleRobotUploadEeprom
 
+-- Run the given lua script and report the result.
+local function handleRobotUploadRlua(_, address, _, srcCode)
+  local fn, ret = load(srcCode)
+  if fn then
+    local ret = table.pack(pcall(fn))
+    if ret[1] then
+      local message = "Returned: "
+      for i = 2, ret.n do
+        message = message .. tostring(ret[i]) .. ", "
+      end
+      message = string.sub(message, 1, -3)
+      print(message)
+      wnet.send(modem, address, COMMS_PORT, packer.pack.robot_upload_rlua_result(message))
+    else
+      print("Error: " .. ret[2])
+      wnet.send(modem, address, COMMS_PORT, packer.pack.robot_upload_rlua_result("Error: " .. ret[2]))
+    end
+  else
+    print("Error: " .. ret)
+    wnet.send(modem, address, COMMS_PORT, packer.pack.robot_upload_rlua_result("Error: " .. ret))
+  end
+end
+packer.callbacks.robot_upload_rlua = handleRobotUploadRlua
+
 -- Scan inventories on all sides. Find one that has the requested item in the
 -- slot and report the side number back.
 local function handleRobotScanAdjacent(_, address, _, itemName, slotNum)

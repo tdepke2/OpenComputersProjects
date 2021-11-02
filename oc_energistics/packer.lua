@@ -360,6 +360,14 @@ function packer.unpack.robot_upload_eeprom(data)
   return data
 end
 
+-- Request robot to run a line of code (for debugging purposes).
+function packer.pack.robot_upload_rlua(srcCode)
+  return "robot_upload_rlua," .. srcCode
+end
+function packer.unpack.robot_upload_rlua(data)
+  return data
+end
+
 -- Request robot to scan adjacent inventories for target item.
 function packer.pack.robot_scan_adjacent(itemName, slotNum)
   return "robot_scan_adjacent," .. itemName .. "," .. slotNum
@@ -401,6 +409,14 @@ function packer.pack.robot_started()
 end
 function packer.unpack.robot_started(data)
   return nil
+end
+
+-- Robot is reporting result of rlua execution.
+function packer.pack.robot_upload_rlua_result(message)
+  return "robot_upload_rlua_result," .. message
+end
+function packer.unpack.robot_upload_rlua_result(data)
+  return data
 end
 
 -- Robot is reporting result of request to scan adjacent inventories.

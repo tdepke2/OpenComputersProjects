@@ -1092,6 +1092,13 @@ end
 packer.callbacks.drone_error = handleDroneError
 
 
+-- Robot has results from rlua command, print them to stdout.
+local function handleRobotUploadRluaResult(_, address, _, message)
+  io.write("[" .. string.sub(address, 1, 5) .. "] " .. string.format("%q", message) .. "\n")
+end
+packer.callbacks.robot_upload_rlua_result = handleRobotUploadRluaResult
+
+
 -- Robot has encountered a compile/runtime error.
 local function handleRobotError(_, _, _, errType, errMessage)
   dlog.out("robot", "Robot " .. errType .. " error: " .. string.format("%q", errMessage))
@@ -1605,6 +1612,27 @@ local function main()
         io.write("Update finished. Please start crafting server application again.\n")
         threadSuccess = true
         break
+      elseif input[1] == "rlua" then    -- Command rlua <device type>. Runs interactive remote-lua interpreter. Intended for devices that don't have a keyboard.
+        if input[2] == "robot" or input[2] == "drone" then
+          io.write("Enter a statement to run on active " .. input[2] .. "s.\n")
+          io.write("Add a return statement to get a value back.\n")
+          io.write("Press Ctrl+D to exit.\n")
+          while true do
+            io.write("rlua> ")
+            local inputCmd = io.read()
+            if type(inputCmd) ~= "string" then
+              io.write("\n")
+              break
+            end
+            if input[2] == "robot" then
+              wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload_rlua(inputCmd))
+            elseif input[2] == "drone" then
+              -- FIXME not yet implemented ###########################################################
+            end
+          end
+        else
+          io.write("Invalid device type. Accepted types are: robot, drone.\n")
+        end
       elseif input[1] == "dlog" then    -- Command dlog [<subsystem> <0, 1, or nil>]
         if input[2] then
           if input[3] == "0" then
@@ -1633,6 +1661,10 @@ local function main()
         io.write("    Reprograms EEPROMs on all active robots and drones (the devices must be\n")
         io.write("    powered on and have been discovered during initialization stage). This only\n")
         io.write("    works for devices with an existing programmed EEPROM.\n")
+        io.write("  rlua <device type>\n")
+        io.write("    Start remote-lua interpreter to run commands on active devices (for\n")
+        io.write("    debugging). This is similar to the OpenOS lua command, but for devices\n")
+        io.write("    without a full operating system. Current device types are: robot, drone.\n")
         io.write("  dlog [<subsystem> <0, 1, or nil>]\n")
         io.write("    Display diagnostics log info (when called with no arguments), or enable/\n")
         io.write("    disable logging for a subsystem. Use a \"*\" to refer to all subsystems,\n")
