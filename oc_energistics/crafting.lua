@@ -712,102 +712,6 @@ we iterate tables in reverse to find the sequence of steps to run in parallel.
 --]]
 
 
--- FIXME just move this into handleCraftCheckRecipe, don't know why it's here lol ######################################################
-
-function Crafting:checkRecipe(senderAddress, itemName, amount)
-  dlog.checkArgs(senderAddress, "string", itemName, "string", amount, "number")
-  local status, recipeIndices, recipeBatches, requiredItems = self:solveDependencyGraph(itemName, amount)
-  
-  dlog.out("checkRecipe", "status = " .. status)
-  if status == "ok" or status == "missing" then
-    dlog.out("checkRecipe", "recipeIndices/recipeBatches:")
-    for i = 1, #recipeIndices do
-      dlog.out("checkRecipe", recipeIndices[i] .. " (" .. next(self.recipes[recipeIndices[i]].out) .. ") = " .. recipeBatches[i])
-    end
-    dlog.out("checkRecipe", "requiredItems:", requiredItems)
-  end
-  
-  -- Check for expired tickets and remove them.
-  for ticket, request in pairs(self.pendingCraftRequests) do
-    if computer.uptime() > request.creationTime + 10 then
-      dlog.out("checkRecipe", "Ticket " .. ticket .. " has expired")
-      self.pendingCraftRequests[ticket] = nil
-    end
-  end
-  
-  -- Reserve a ticket for the crafting request if good to go.
-  local ticket = ""
-  if status == "ok" then
-    while true do
-      ticket = "id" .. math.floor(math.random(0, 999)) .. "," .. itemName .. "," .. amount
-      if not self.pendingCraftRequests[ticket] and not self.activeCraftRequests[ticket] then
-        break
-      end
-    end
-    dlog.out("checkRecipe", "Creating ticket " .. ticket)
-    self.pendingCraftRequests[ticket] = {}
-    self.pendingCraftRequests[ticket].creationTime = computer.uptime()
-    self.pendingCraftRequests[ticket].recipeIndices = recipeIndices
-    self.pendingCraftRequests[ticket].recipeBatches = recipeBatches
-    self.pendingCraftRequests[ticket].requiredItems = requiredItems
-  end
-  
-  -- Compute the craftProgress table if possible and send to interface/crafting servers. Otherwise we report the error.
-  if status == "ok" or status == "missing" then
-    local requiresRobots = false
-    local requiresDrones = false
-    local craftProgress = {}
-    setmetatable(craftProgress, {__index = function(t, k) rawset(t, k, {inp=0, out=0, hav=0}) return t[k] end})
-    for i = 1, #recipeIndices do
-      local recipeDetails = self.recipes[recipeIndices[i]]
-      if not recipeDetails.station then
-        requiresRobots = true
-      else
-        requiresDrones = true
-      end
-      for _, input in ipairs(recipeDetails.inp) do
-        local inputAmount = (recipeDetails.station and input[2] or #input - 1)
-        craftProgress[input[1]].inp = craftProgress[input[1]].inp + inputAmount * recipeBatches[i]
-      end
-      for outputName, outputAmount in pairs(recipeDetails.out) do
-        craftProgress[outputName].out = craftProgress[outputName].out + outputAmount * recipeBatches[i]
-      end
-    end
-    for k, v in pairs(craftProgress) do
-      v.hav = (self.storageItems[k] and self.storageItems[k].total or 0)
-    end
-    
-    dlog.out("checkRecipe", "craftProgress:", craftProgress)
-    
-    if status == "ok" then
-      -- Confirm we will not have problems with a crafting recipe that needs robots when we have none (same for drones).
-      if (not requiresRobots or self.workers.totalRobots > 0) and (not requiresDrones or self.workers.totalDrones > 0) then
-        wnet.send(modem, senderAddress, COMMS_PORT, packer.pack.craft_recipe_confirm(ticket, craftProgress))
-        wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_reserve(ticket, requiredItems))
-      else
-        local errorMessage = "Recipe requires "
-        if requiresRobots then
-          if requiresDrones then
-            errorMessage = errorMessage .. "robots and drones"
-          else
-            errorMessage = errorMessage .. "robots"
-          end
-        else
-          errorMessage = errorMessage .. "drones"
-        end
-        errorMessage = errorMessage .. ", but only " .. self.workers.totalRobots .. " robots and " .. self.workers.totalDrones .. " drones are active."
-        
-        wnet.send(modem, senderAddress, COMMS_PORT, packer.pack.craft_recipe_error("check", errorMessage))
-      end
-    else
-      wnet.send(modem, senderAddress, COMMS_PORT, packer.pack.craft_recipe_confirm("missing", craftProgress))
-    end
-  else
-    -- Error status was returned from solveDependencyGraph(), the second return value recipeIndices contains the error message.
-    wnet.send(modem, senderAddress, COMMS_PORT, packer.pack.craft_recipe_error("check", recipeIndices))
-  end
-end
-
 -- Update the amount of an item in storedItems. This happens when an item
 -- arrives in a drone inventory (finished crafting) or when item exported to
 -- drone inventory. The storedItems don't all reside in drone inventories
@@ -1028,7 +932,97 @@ packer.callbacks.craft_discover = Crafting.handleCraftDiscover
 -- ticket for the operation if successful.
 function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
   self.interfaceServerAddresses[address] = true
-  self:checkRecipe(address, itemName, amount)
+  local status, recipeIndices, recipeBatches, requiredItems = self:solveDependencyGraph(itemName, amount)
+  
+  dlog.out("craftCheckRecipe", "status = " .. status)
+  if status == "ok" or status == "missing" then
+    dlog.out("craftCheckRecipe", "recipeIndices/recipeBatches:")
+    for i = 1, #recipeIndices do
+      dlog.out("craftCheckRecipe", recipeIndices[i] .. " (" .. next(self.recipes[recipeIndices[i]].out) .. ") = " .. recipeBatches[i])
+    end
+    dlog.out("craftCheckRecipe", "requiredItems:", requiredItems)
+  end
+  
+  -- Check for expired tickets and remove them.
+  for ticket, request in pairs(self.pendingCraftRequests) do
+    if computer.uptime() > request.creationTime + 10 then
+      dlog.out("craftCheckRecipe", "Ticket " .. ticket .. " has expired")
+      self.pendingCraftRequests[ticket] = nil
+    end
+  end
+  
+  -- Reserve a ticket for the crafting request if good to go.
+  local ticket = ""
+  if status == "ok" then
+    while true do
+      ticket = "id" .. math.floor(math.random(0, 999)) .. "," .. itemName .. "," .. amount
+      if not self.pendingCraftRequests[ticket] and not self.activeCraftRequests[ticket] then
+        break
+      end
+    end
+    dlog.out("craftCheckRecipe", "Creating ticket " .. ticket)
+    self.pendingCraftRequests[ticket] = {}
+    self.pendingCraftRequests[ticket].creationTime = computer.uptime()
+    self.pendingCraftRequests[ticket].recipeIndices = recipeIndices
+    self.pendingCraftRequests[ticket].recipeBatches = recipeBatches
+    self.pendingCraftRequests[ticket].requiredItems = requiredItems
+  end
+  
+  -- Compute the craftProgress table if possible and send to interface/crafting servers. Otherwise we report the error.
+  if status == "ok" or status == "missing" then
+    local requiresRobots = false
+    local requiresDrones = false
+    local craftProgress = {}
+    -- Set metatable to default to zero for input/output/have if key doesn't exist.
+    setmetatable(craftProgress, {__index = function(t, k) rawset(t, k, {inp=0, out=0, hav=0}) return t[k] end})
+    for i = 1, #recipeIndices do
+      local recipeDetails = self.recipes[recipeIndices[i]]
+      if not recipeDetails.station then
+        requiresRobots = true
+      else
+        requiresDrones = true
+      end
+      for _, input in ipairs(recipeDetails.inp) do
+        local inputAmount = (recipeDetails.station and input[2] or #input - 1)
+        craftProgress[input[1]].inp = craftProgress[input[1]].inp + inputAmount * recipeBatches[i]
+      end
+      for outputName, outputAmount in pairs(recipeDetails.out) do
+        craftProgress[outputName].out = craftProgress[outputName].out + outputAmount * recipeBatches[i]
+      end
+    end
+    for k, v in pairs(craftProgress) do
+      v.hav = (self.storageItems[k] and self.storageItems[k].total or 0)
+    end
+    
+    dlog.out("craftCheckRecipe", "craftProgress:", craftProgress)
+    
+    if status == "ok" then
+      -- Confirm we will not have problems with a crafting recipe that needs robots when we have none (same for drones).
+      if (not requiresRobots or self.workers.totalRobots > 0) and (not requiresDrones or self.workers.totalDrones > 0) then
+        wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_confirm(ticket, craftProgress))
+        wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_reserve(ticket, requiredItems))
+      else
+        local errorMessage = "Recipe requires "
+        if requiresRobots then
+          if requiresDrones then
+            errorMessage = errorMessage .. "robots and drones"
+          else
+            errorMessage = errorMessage .. "robots"
+          end
+        else
+          errorMessage = errorMessage .. "drones"
+        end
+        errorMessage = errorMessage .. ", but only " .. self.workers.totalRobots .. " robots and " .. self.workers.totalDrones .. " drones are active."
+        
+        wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_error("check", errorMessage))
+      end
+    else
+      wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_confirm("missing", craftProgress))
+    end
+  else
+    -- Error status was returned from solveDependencyGraph(), the second return value recipeIndices contains the error message.
+    wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_error("check", recipeIndices))
+  end
 end
 packer.callbacks.craft_check_recipe = Crafting.handleCraftCheckRecipe
 
@@ -1673,12 +1667,15 @@ function Crafting:commandThreadFunc(mainContext)
 end
 
 
+-- Main program starts here. Runs a few threads to do setup work, listen for
+-- packets, manage crafting jobs, etc.
 local function main()
   local mainContext = {}
   mainContext.threadSuccess = false
+  mainContext.killProgram = false
   
   -- Captures the interrupt signal to stop program.
-  mainContext.interruptThread = thread.create(function()
+  local interruptThread = thread.create(function()
     event.pull("interrupted")
   end)
   
@@ -1686,7 +1683,7 @@ local function main()
   -- false and a thread exits, reports error and exits program.
   local function waitThreads(threads)
     thread.waitForAny(threads)
-    if mainContext.interruptThread:status() == "dead" then
+    if interruptThread:status() == "dead" or mainContext.killProgram then
       dlog.osBlockNewGlobals(false)
       os.exit(1)
     elseif not mainContext.threadSuccess then
@@ -1703,16 +1700,16 @@ local function main()
   
   local setupThread = thread.create(Crafting.setupThreadFunc, crafting, mainContext)
   
-  waitThreads({mainContext.interruptThread, setupThread})
+  waitThreads({interruptThread, setupThread})
   
   local modemThread = thread.create(Crafting.modemThreadFunc, crafting, mainContext)
   local craftingThread = thread.create(Crafting.craftingThreadFunc, crafting, mainContext)
   local commandThread = thread.create(Crafting.commandThreadFunc, crafting, mainContext)
   
-  waitThreads({mainContext.interruptThread, modemThread, craftingThread, commandThread})
+  waitThreads({interruptThread, modemThread, craftingThread, commandThread})
   
   dlog.out("main", "Killing threads and stopping program.")
-  mainContext.interruptThread:kill()
+  interruptThread:kill()
   modemThread:kill()
   craftingThread:kill()
   commandThread:kill()

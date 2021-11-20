@@ -1290,7 +1290,7 @@ function Storage:setupThreadFunc(mainContext)
   if not self.transposers then
     io.stderr:write("Routing config file \"" .. ROUTING_CONFIG_FILENAME .. "\" not found.\n")
     io.stderr:write("Please run the setup utility to create this file.\n")
-    mainContext.interruptThread:kill()
+    mainContext.killProgram = true
     os.exit()
   end
   
@@ -1308,7 +1308,7 @@ function Storage:setupThreadFunc(mainContext)
   if not flushSuccess then
     io.stderr:write("\nOutput inventory full while flushing residual items in system, please empty the\n")
     io.stderr:write("output and try again.\n")
-    mainContext.interruptThread:kill()
+    mainContext.killProgram = true
     os.exit()
   end
   
@@ -1453,9 +1453,10 @@ end
 local function main()
   local mainContext = {}
   mainContext.threadSuccess = false
+  mainContext.killProgram = false
   
   -- Captures the interrupt signal to stop program.
-  mainContext.interruptThread = thread.create(function()
+  local interruptThread = thread.create(function()
     event.pull("interrupted")
   end)
   
@@ -1463,7 +1464,7 @@ local function main()
   -- false and a thread exits, reports error and exits program.
   local function waitThreads(threads)
     thread.waitForAny(threads)
-    if mainContext.interruptThread:status() == "dead" then
+    if interruptThread:status() == "dead" or mainContext.killProgram then
       dlog.osBlockNewGlobals(false)
       os.exit(1)
     elseif not mainContext.threadSuccess then
@@ -1480,16 +1481,16 @@ local function main()
   
   local setupThread = thread.create(Storage.setupThreadFunc, storage, mainContext)
   
-  waitThreads({mainContext.interruptThread, setupThread})
+  waitThreads({interruptThread, setupThread})
   
   local modemThread = thread.create(Storage.modemThreadFunc, storage, mainContext)
   local inputSensorThread = thread.create(Storage.inputSensorThreadFunc, storage, mainContext)
   local commandThread = thread.create(Storage.commandThreadFunc, storage, mainContext)
   
-  waitThreads({mainContext.interruptThread, modemThread, inputSensorThread, commandThread})
+  waitThreads({interruptThread, modemThread, inputSensorThread, commandThread})
   
   dlog.out("main", "Killing threads and stopping program.")
-  mainContext.interruptThread:kill()
+  interruptThread:kill()
   modemThread:kill()
   inputSensorThread:kill()
   commandThread:kill()
