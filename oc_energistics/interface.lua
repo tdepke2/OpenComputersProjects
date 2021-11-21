@@ -1135,6 +1135,7 @@ end
 
 
 
+-- FIXME still need to refactor interface and clean these up. ######################################################
 local storageItems, storageServerAddress, recipeItems, craftingServerAddress, gui
 
 
