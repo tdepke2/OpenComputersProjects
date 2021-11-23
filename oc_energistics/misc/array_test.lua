@@ -1,8 +1,8 @@
-local common = require("common")
+local dstructs = require("dstructs")
 local computer = require("computer")
 
-local charArr = common.CharArray:new(nil, 33, 4)
---local charArr = common.CharArray:new(nil, 31, 4)
+local charArr = dstructs.CharArray:new(33, 4)
+--local charArr = dstructs.CharArray:new(31, 4)
 
 print("charArr.arr:")
 for i, str in ipairs(charArr.arr) do
@@ -55,7 +55,7 @@ print()
 
 
 
-local charArr2 = common.CharArray:new(nil, 16)
+local charArr2 = dstructs.CharArray:new(16)
 
 print("charArr2.arr:")
 for i, str in ipairs(charArr2.arr) do
@@ -84,7 +84,7 @@ print()
 
 
 --local m1 = computer.freeMemory()
-local byteArr = common.ByteArray:new(nil, 33)
+local byteArr = dstructs.ByteArray:new(33)
 --local m2 = computer.freeMemory()
 --print("mem", m1 - m2)
 

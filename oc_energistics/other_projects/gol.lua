@@ -10,7 +10,7 @@ local unicode = require("unicode")
 
 local dlog = require("dlog")
 dlog.osBlockNewGlobals(true)
-local common = require("common")
+local dstructs = require("dstructs")
 
 -- Wrapper for gpu.setBackground() that prevents the direct (slow) GPU call if
 -- background already set to the desired color.
@@ -164,7 +164,7 @@ function CellGrid:setCell(x, y, state)
 end
 
 function CellGrid:clear()
-  self.cells = common.ByteArray:new(nil, self.width * self.height)
+  self.cells = dstructs.ByteArray:new(self.width * self.height)
   
   -- Set edge flag in top and bottom row.
   for x = 1, self.width do

@@ -19,7 +19,7 @@ local thread = require("thread")
 local include = require("include")
 local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
-local common = include("common")
+local dstructs = include("dstructs")
 local packer = include("packer")
 local wnet = include("wnet")
 
@@ -339,15 +339,6 @@ function Storage:scanInventory(invType, invIndex)
 end
 
 
--- FIXME: Probably just want this as a generic "unpack2Vals" function in common #################################################
--- Parse connection and return the transposer index and side as numbers.
-local function unpackConnection(connection)
-  dlog.checkArgs(connection, "string")
-  local transIndex, side = string.match(connection, "(%d+):(%d+)")
-  return tonumber(transIndex), tonumber(side)
-end
-
-
 -- Transfers an item stack between any two locations in the storage network.
 -- Returns the amount that was transferred (and name/slot of last inventory item
 -- was in if not all of the items were sent). Amount can be nil (transfers whole
@@ -362,7 +353,7 @@ function Storage:routeItems(srcType, srcIndex, srcSlot, destType, destIndex, des
   local visitedTransfers = {}
   local transposerLinks = {}
   local endTransposerLink
-  local searchQueue = common.Deque:new()
+  local searchQueue = dstructs.Deque:new()
   
   if not amount then
     local transIndex, side = next(self.routing[srcType][srcIndex])
@@ -429,7 +420,7 @@ function Storage:routeItems(srcType, srcIndex, srcSlot, destType, destIndex, des
   assert(endTransposerLink, "Routing item from " .. srcInvName .. " to " .. destInvName .. " could not be determined, the routing table may be invalid.")
   
   -- Follow the links in transposerLinks to get back to the start, add these to a stack to reverse the ordering.
-  local connectionStack = common.Deque:new()
+  local connectionStack = dstructs.Deque:new()
   while endTransposerLink ~= "s" do
     connectionStack:push_front(endTransposerLink)
     endTransposerLink = transposerLinks[endTransposerLink]

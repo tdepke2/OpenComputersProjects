@@ -19,7 +19,7 @@ local thread = require("thread")
 local include = require("include")
 local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
-local common = include("common")
+local dstructs = include("dstructs")
 local packer = include("packer")
 local wnet = include("wnet")
 
@@ -337,7 +337,7 @@ function Crafting:solveDependencyGraph(itemName, amount)
   local numMissingItems = 0
   local bestMissingItems = math.huge
   
-  --local recipeStack = common.Deque:new()
+  --local recipeStack = dstructs.Deque:new()
   --while not recipeStack:empty() do
     
   --end

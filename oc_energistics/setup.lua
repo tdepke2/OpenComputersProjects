@@ -1,11 +1,12 @@
 
 -- TODO: Maybe integrate this into the client script and have it run if it doesn't find the config file??
 
-local common = require("common")
 local component = require("component")
 local event = require("event")
 local sides = require("sides")
 local text = require("text")
+
+local dstructs = require("dstructs")
 
 local setupConfig
 -- Comment out below for interactive setup.
@@ -85,7 +86,7 @@ local function buildRoutingTable(transposers, inventories)
   end
   
   -- Create a stack for depth-first traversal, this holds connections that need to be checked.
-  local searchStack = common.Deque:new()
+  local searchStack = dstructs.Deque:new()
   local startTransIdx, startSide = parseConnections(inventories.input[1])
   local inputItem = transposers[startTransIdx].getStackInSlot(startSide, 1)
   local inputItemName = inputItem.name .. "/" .. math.floor(inputItem.damage)
