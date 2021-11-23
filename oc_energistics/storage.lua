@@ -160,16 +160,23 @@ end
 -- Storage class definition.
 local Storage = {}
 
-function Storage:new(obj)
-  obj = obj or {}
-  setmetatable(obj, self)
+-- Hook up errors to throw on access to nil class members (usually a programming
+-- error or typo).
+setmetatable(Storage, {
+  __index = function(t, k)
+    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Storage class.")
+  end
+})
+
+function Storage:new()
   self.__index = self
+  setmetatable({}, self)
   
   -- FIXME not sure what to do with these, they probably should not be here. maybe group them into a few classes that handle them? ###########################################################
   --local self.transposers, self.routing, self.storageItems, self.reservedItems
   --local self.craftInterServerAddresses, self.pendingCraftRequests, self.activeCraftRequests, self.droneItems
   
-  return obj
+  return self
 end
 
 

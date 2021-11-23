@@ -60,23 +60,31 @@ local function gpuSetForeground(color, isPaletteIndex)
   end
 end
 
-local Gui = {}
-
-function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingServerAddress)
-  obj = obj or {}
-  setmetatable(obj, self)
-  self.__index = self
-  
-  self.ITEM_LABEL_WIDTH = 40 --45 FIXME #########################################################
-  self.LEFT_COLUMN_WIDTH = 8
-  self.RIGHT_COLUMN_WIDTH = 26
-  self.TOP_ROW_HEIGHT = 4
-  self.BOTTOM_ROW_HEIGHT = 3
+local Gui = {
+  ITEM_LABEL_WIDTH = 40, --45 FIXME #########################################################
+  LEFT_COLUMN_WIDTH = 8,
+  RIGHT_COLUMN_WIDTH = 26,
+  TOP_ROW_HEIGHT = 4,
+  BOTTOM_ROW_HEIGHT = 3,
   
   -- Lazy draw used to batch drawing tasks and limit draw rate for performance.
+  LAZY_DRAW_INTERVAL = 0.05
+}
+
+-- Hook up errors to throw on access to nil class members (usually a programming
+-- error or typo).
+setmetatable(Gui, {
+  __index = function(t, k)
+    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Gui class.")
+  end
+})
+
+function Gui:new(storageItems, storageServerAddress, recipeItems, craftingServerAddress)
+  self.__index = self
+  self = setmetatable({}, self)
+  
   -- The self.drawRequest table acts like a queue of draw calls (important to
   -- keep the draw calls in the order they arrive).
-  self.LAZY_DRAW_INTERVAL = 0.05
   self.drawRequest = {}
   
   -- Press alt key to show craftable items only (hide amounts).
@@ -271,7 +279,7 @@ function Gui:new(obj, storageItems, storageServerAddress, recipeItems, craftingS
   -- Flush draw queue so that things don't draw out-of-order in the first call to Gui:draw().
   self.drawRequest = {}
   
-  return obj
+  return self
 end
 
 -- Drawing text in columns with alternating background colors is taxing on the
@@ -1285,7 +1293,7 @@ local function main()
     
     dlog.out("setup", "storageItems:", storageItems)
     
-    gui = Gui:new(nil, storageItems, storageServerAddress, recipeItems, craftingServerAddress)
+    gui = Gui:new(storageItems, storageServerAddress, recipeItems, craftingServerAddress)
     gui:draw()
     
     threadSuccess = true

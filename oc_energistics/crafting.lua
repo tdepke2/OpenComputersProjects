@@ -289,15 +289,22 @@ end
 -- Crafting class definition.
 local Crafting = {}
 
-function Crafting:new(obj)
-  obj = obj or {}
-  setmetatable(obj, self)
+-- Hook up errors to throw on access to nil class members (usually a programming
+-- error or typo).
+setmetatable(Crafting, {
+  __index = function(t, k)
+    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Crafting class.")
+  end
+})
+
+function Crafting:new()
   self.__index = self
+  self = setmetatable({}, self)
   
   --local self.stations, self.recipes, self.storageServerAddress, self.storageItems, self.interfaceServerAddresses
   --local self.pendingCraftRequests, self.activeCraftRequests, self.droneItems, self.droneInventories, self.workers
   
-  return obj
+  return self
 end
 
 -- Searches for the sequence of recipes and their amounts needed to craft the
@@ -1147,6 +1154,7 @@ function Crafting:setupThreadFunc(mainContext)
   -- Contact the storage server.
   local attemptNumber = 1
   local lastAttemptTime = 0
+  self.storageServerAddress = false
   while not self.storageServerAddress do
     if computer.uptime() >= lastAttemptTime + 2 then
       lastAttemptTime = computer.uptime()

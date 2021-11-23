@@ -90,26 +90,33 @@ os.exit()
 -- This implementation of the game of life takes some inspiration from David
 -- Stafford's QLIFE for performance improvements.
 -- https://www.jagregory.com/abrash-black-book/#chapter-18-its-a-plain-wonderful-life
-local CellGrid = {}
+local CellGrid = {
+  -- Wrap edges of the grid back around (make the grid a toroid).
+  WRAP_EDGE = true
+  -- FIXME still need to implement this ###############################################################################################################################################
+}
 
-function CellGrid:new(obj, width, height)
-  obj = obj or {}
-  setmetatable(obj, self)
+-- Hook up errors to throw on access to nil class members (usually a programming
+-- error or typo).
+setmetatable(CellGrid, {
+  __index = function(t, k)
+    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in CellGrid class.")
+  end
+})
+
+function CellGrid:new(width, height)
   self.__index = self
+  self = setmetatable({}, self)
   
   assert(width <= 0xFFFFFFFF and height <= 0xFFFFFFFF, "Grid size must be within 32-bits.")
   assert(width % 2 == 0 and height % 4 == 0, "Grid width must be multiple of 2 and height must be multiple of 4.")
-  
-  -- Wrap edges of the grid back around (make the grid a toroid).
-  self.WRAP_EDGE = true
-  -- FIXME still need to implement this ###############################################################################################################################################
   
   self.width = width
   self.height = height
   
   self:clear()
   
-  return obj
+  return self
 end
 
 function CellGrid:getDrawBlock_(index)
@@ -371,13 +378,20 @@ end
 
 local Game = {}
 
-function Game:new(obj)
-  obj = obj or {}
-  setmetatable(obj, self)
+-- Hook up errors to throw on access to nil class members (usually a programming
+-- error or typo).
+setmetatable(Game, {
+  __index = function(t, k)
+    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Game class.")
+  end
+})
+
+function Game:new()
   self.__index = self
+  setmetatable({}, self)
   
   local width, height = term.getViewport()
-  self.cellGrid = CellGrid:new(nil, math.floor(width) * 2, math.floor(height) * 4)
+  self.cellGrid = CellGrid:new(math.floor(width) * 2, math.floor(height) * 4)
   self.cellGrid:setCell(5, 3, true)
   self.cellGrid:setCell(6, 4, true)
   self.cellGrid:setCell(4, 5, true)
@@ -394,7 +408,7 @@ function Game:new(obj)
   self.paused = true
   self.currentGeneration = 0
   
-  return obj
+  return self
 end
 
 function Game:loop()
@@ -526,7 +540,7 @@ local function main()
       print("ree")
     end
     
-    game = Game:new(nil)
+    game = Game:new()
     
     threadSuccess = true
   end)
