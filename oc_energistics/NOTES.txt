@@ -35,6 +35,9 @@ TODO
 * Might be good to allow setup script to "merge" a previous config.
     * This would allow user to add a few more inventories on network and then run setup for just the new ones.
 * Verify all transposers are correct in config when app starts. Make sure all ones listed are there and there are no extras in system.
+* Allow user to modify the contents of the storage inventories directly by re-scanning the contents periodically.
+    * This should scan one inventory at a time and wait a short delay to avoid starvation of other threads. Also should be possible to disable completely.
+    * Potential problem if a crafting operation is running while user pulls out items that are reserved, we would just cancel the crafting operation in error for this case.
 
 DONE
 * Storage auto imports with redstone comparator and redstone I/O.
@@ -68,6 +71,7 @@ TODO
 * Scroll bar should be clickable and same for search bar.
 * Log should display at bottom of GUI and report success/fail of item requests.
     * Maybe also display item insert events and crafting completion?
+* MRU sorting option? Would be handy for items that are requested frequently.
 
 DONE
 * Better item display interface with easy selection.

@@ -790,7 +790,7 @@ activeCraftRequests: {
       ...
     }
     recipeStartIndex: <index>    -- Index of first nonzero batchSize in recipeBatches.
-    recipeStatus: {    -- Correspond to the recipeIndices and recipeBatches.
+    recipeStatus: {    -- Corresponds to the recipeIndices and recipeBatches.
       1: {
         dirty: <boolean>    -- True if any of the recipe input amounts changed, false otherwise.
         available: <amount>    -- Number of batches we can craft with current storedItems.
@@ -821,24 +821,20 @@ droneInventories: {
 
 workers: {
   robotConnections: {
-    1: {
+    1: {    -- Index of drone inventory.
       <address>: <side>    -- The address of the robot that can access the inventory, and what side the robot sees the inventory.
       ...
     }
     ...
   }
   totalRobots: <amount>
-  availableRobots: {
-    <address>: true
-    ...
-  }
-  pendingRobots: {
-    <address>: true
+  robots: {
+    <address>: <status>    -- Either "free", "pending", or "busy".
     ...
   }
   totalDrones: <amount>
-  availableDrones: {
-    <address>: true
+  drones: {
+    <address>: <status>    -- Either "free" or "busy".
     ...
   }
 }
@@ -1206,13 +1202,12 @@ function Crafting:setupThreadFunc(mainContext)
   
   -- Wait for robots to receive the software update and keep track of their addresses.
   self.workers.totalRobots = 0
-  self.workers.availableRobots = {}
-  self.workers.pendingRobots = {}
+  self.workers.robots = {}
   while true do
     local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "robot_started,", 2)
     if address then
-      self.workers.totalRobots = self.workers.totalRobots + (self.workers.availableRobots[address] and 0 or 1)
-      self.workers.availableRobots[address] = true
+      self.workers.totalRobots = self.workers.totalRobots + (self.workers.robots[address] and 0 or 1)
+      self.workers.robots[address] = "free"
     else
       break
     end
@@ -1221,7 +1216,7 @@ function Crafting:setupThreadFunc(mainContext)
   io.write("Found " .. self.workers.totalRobots .. " active robots.\n")
   
   self.workers.totalDrones = 0
-  self.workers.availableDrones = {}
+  self.workers.drones = {}
   
   wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_get_drone_item_list())
   
@@ -1270,7 +1265,7 @@ function Crafting:findNextFreeDroneInvWithRobot(startIndex, allowInput)
   for i = startIndex, #self.droneInventories.inv do
     if self.droneInventories.inv[i].status == "free" or (allowInput and self.droneInventories.inv[i].status == "input") then
       for address, _ in pairs(self.workers.robotConnections[i]) do
-        if self.workers.availableRobots[address] then
+        if self.workers.robots[address] == "free" then
           return i
         end
       end
@@ -1284,6 +1279,7 @@ end
 -- the first "input" inventory is flushed to make space. Updates the status of
 -- the inventory and ticket, and returns the index of the inventory. If no
 -- space could be made, returns -1.
+-- FIXME if we ever need to use this outside of the crafting thread, this needs to be thread-safe. Use a spin lock to do this. #################################
 function Crafting:allocateDroneInventory(ticket, usage, needRobots)
   dlog.checkArgs(ticket, "string,nil", usage, "string", needRobots, "boolean,nil")
   assert(usage == "input" or usage == "output", "Provided usage is not valid.")
@@ -1299,7 +1295,7 @@ function Crafting:allocateDroneInventory(ticket, usage, needRobots)
       end
       -- If found an input inventory, flush it back to storage.
       if self.droneInventories.inv[self.droneInventories.firstFree].status == "input" then
-        assert(self:flushDroneInventory(self.droneInventories.firstFree), "Failed to flush drone inventory " .. self.droneInventories.firstFree .. " to storage.")
+        assert(self:flushDroneInventory(ticket, self.droneInventories.firstFree, true), "Failed to flush drone inventory " .. self.droneInventories.firstFree .. " to storage.")
       end
     end
     
@@ -1315,7 +1311,7 @@ function Crafting:allocateDroneInventory(ticket, usage, needRobots)
       end
       -- If found an input inventory, flush it back to storage.
       if self.droneInventories.inv[self.droneInventories.firstFreeWithRobot].status == "input" then
-        assert(self:flushDroneInventory(self.droneInventories.firstFreeWithRobot), "Failed to flush drone inventory " .. self.droneInventories.firstFreeWithRobot .. " to storage.")
+        assert(self:flushDroneInventory(ticket, self.droneInventories.firstFreeWithRobot, true), "Failed to flush drone inventory " .. self.droneInventories.firstFreeWithRobot .. " to storage.")
       end
     end
     
@@ -1422,19 +1418,12 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
     end
     
     dlog.out("d", "Extract request completed, go robots!")
-    for address, _ in pairs(self.workers.pendingRobots) do
-      wnet.send(modem, address, COMMS_PORT, packer.pack.robot_start_craft())
-      
-      -- note: we could send droneItems here, it's probably safe. might be better to just spend an extra tick to let robots scan inv themselves (inventory contents will go stale fast).
-      
-      
-      -- FIXME yo can we like not do multiple tablkes for bot status? maybe just keep one with a string status idk #################################
-      
-      
-      
-      
-      
-      self.workers.pendingRobots[address] = nil
+    for address, status in pairs(self.workers.robots) do
+      if status == "pending" then
+        self.workers.robots[address] = "busy"
+        -- Note that we could send droneItems to the robots here, it's probably safe. Probably still better to just spend an extra tick to let robots scan inv themselves (inventory contents will go stale fast).
+        wnet.send(modem, address, COMMS_PORT, packer.pack.robot_start_craft())
+      end
     end
     self.droneInventories.pendingExtract = nil
   end
@@ -1470,25 +1459,39 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
       
       -- Check if we can make some batches now, and that some robots/drones are available to work.
       if recipeStatus.available > 0 then
-        local freeIndex = self:allocateDroneInventory(ticket, "output", not recipe.station)
+        -- Verify criteria is met before attempting to allocate an inventory (for processing recipe, we must have some drones ready).
+        local nextReadyDrone
+        if recipe.station then
+          for address, status in pairs(self.workers.drones) do
+            if status == "free" then
+              nextReadyDrone = address
+              break
+            end
+          end
+        end
+        local freeIndex = -1
+        if not recipe.station or nextReadyDrone then
+          freeIndex = self:allocateDroneInventory(ticket, "output", not recipe.station)
+        end
         
         if not recipe.station and freeIndex > 0 then
-          local extractList = {}
-          for i, input in ipairs(recipe.inp) do
-            extractList[i] = {input[1], recipeStatus.available * (#input - 1)}
-          end
-          extractList.supplyIndices = craftRequest.supplyIndices
-          
           -- Collect robots ready for this task. Do this here so we can guarantee there hasn't been a context switch after the call to allocateDroneInventory() ends.
           -- Otherwise, some robots could finish their tasks and we could give work to the wrong bots.
           local readyWorkers = {}
           local numReadyWorkers = 0
           for address, side in pairs(self.workers.robotConnections[freeIndex]) do
-            if self.workers.availableRobots[address] then
+            if self.workers.robots[address] == "free" then
               readyWorkers[address] = side
               numReadyWorkers = numReadyWorkers + 1
             end
           end
+          
+          -- Determine the recipe input items we need to move into the allocated inventory (gets sent as request to storage later).
+          local extractList = {}
+          for i, input in ipairs(recipe.inp) do
+            extractList[i] = {input[1], recipeStatus.available * (#input - 1)}
+          end
+          extractList.supplyIndices = craftRequest.supplyIndices
           
           --[[
           craftingTask: {
@@ -1509,10 +1512,9 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
           for address, side in pairs(readyWorkers) do
             craftingTask.side = side
             craftingTask.numBatches = math.min(craftingTask.numBatches, recipeStatus.available)
-            wnet.send(modem, address, COMMS_PORT, packer.pack.robot_prepare_craft(craftingTask))
             
-            self.workers.pendingRobots[address] = true
-            self.workers.availableRobots[address] = nil
+            self.workers.robots[address] = "pending"
+            wnet.send(modem, address, COMMS_PORT, packer.pack.robot_prepare_craft(craftingTask))
             
             -- Reduce the total batches-to-craft from the craftRequest, and same for available amount. If no more batches left for next bots we break early.
             craftRequest.recipeBatches[i] = craftRequest.recipeBatches[i] - craftingTask.numBatches
@@ -1531,7 +1533,7 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
           end
           dlog.out("d", "craftRequest.storedItems is:", craftRequest.storedItems)
           
-        elseif recipe.station and freeIndex > 0 and next(self.workers.availableDrones) ~= nil then
+        elseif recipe.station and freeIndex > 0 then
           
         end
         

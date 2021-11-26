@@ -166,8 +166,8 @@ end
 -- identify the recipe for the user.
 local function getRecipeOutputStr(recipe)
   local str = ""
-  for outputName, _ in pairs(recipe.out) do
-    str = str .. outputName .. ", "
+  for outputName, amount in pairs(recipe.out) do
+    str = str .. amount .. " " outputName .. ", "
   end
   return string.sub(str, 1, -3)
 end
@@ -224,6 +224,7 @@ local function handleRobotStartCraft(_, _, _)
     -- we should try to push items in selected slot and continue.
   end
   
+  -- Continuously extract items into drone slots until we run out. Push completed items back into the drone inventory.
   while next(craftingState.extractRemaining) ~= nil do
     fillCraftingSlots(targetSide)
     
@@ -236,20 +237,32 @@ local function handleRobotStartCraft(_, _, _)
     
     -- FIXME need to break this up to run asynchronous with packet handler thread
     
+    -- FIXME below probably not gonna work for crafting operations that give more than one output. #####################################
+    
     
     local craftedItem = ic.getStackInInternalSlot(13)
     local craftedItemName = getItemFullName(craftedItem)
-    craftingState.insertRemaining[craftedItemName] = craftingState.insertRemaining[craftedItemName] - math.floor(craftedItem.size)
+    craftingState.insertRemaining[craftedItemName] = (craftingState.insertRemaining[craftedItemName] or 0) - math.floor(craftedItem.size)
     if craftingState.insertRemaining[craftedItemName] == 0 then
       craftingState.insertRemaining[craftedItemName] = nil
     elseif craftingState.insertRemaining[craftedItemName] < 0 then
-      print("error! we crafted some extra " .. craftedItemName)    -- FIXME need to throw error to crafting and cancel operation #########
+      cancelCraftingTask("Recipe for " .. getRecipeOutputStr(craftingTask2.recipe) .. " crafted extra " .. craftedItemName .. ". Please check recipe.")
+      return
     end
     
     if not robot.drop(targetSide) then
       -- FIXME need to report full and return
     end
   end
+  
+  if next(craftingState.insertRemaining) ~= nil then
+    cancelCraftingTask("Recipe for " .. getRecipeOutputStr(craftingTask2.recipe) .. " did not craft enough items. Please check recipe.")
+    return
+  end
+  
+  -- FIXME report done here? might need to double check this ##########################
+  print("done")
+  wnet.send(modem, craftingServerAddress, COMMS_PORT, packer.pack.robot_finished_craft())
   
   --print("ready to craft, extractRemaining=")
   --for k, _ in pairs(craftingState.extractRemaining) do
