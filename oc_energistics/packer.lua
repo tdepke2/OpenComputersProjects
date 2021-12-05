@@ -428,11 +428,13 @@ function packer.unpack.robot_scan_adjacent_result(data)
 end
 
 -- Robot is reporting result of crafting request.
-function packer.pack.robot_finished_craft()
-  return "robot_finished_craft,"
+function packer.pack.robot_finished_craft(ticket, taskID)
+  return "robot_finished_craft," .. ticket .. ";" .. tostring(taskID)
 end
 function packer.unpack.robot_finished_craft(data)
-  return nil
+  local ticket = string.match(data, "[^;]*")
+  local taskID = string.sub(data, #ticket + 2)
+  return ticket, tonumber(taskID)
 end
 
 -- Robot is reporting compile/runtime error.

@@ -923,19 +923,20 @@ end
 -- index as dirty if the item amount changed (so that a diff can be sent later
 -- to update servers that keep a copy of this table).
 local function setDroneItemsSlot(droneItems, i, slot, size, maxSize, fullName)
+  dlog.checkArgs(droneItems, "table", i, "number", slot, "number", size, "number", maxSize, "number,nil", fullName, "string,nil")
   if size == 0 then
     if droneItems[i][slot] then
       droneItems[i][slot] = nil
       droneItems[i].dirty = true
     end
-  elseif not droneItems[i][slot] then
-    droneItems[i][slot] = {}
+  else
+    if not droneItems[i][slot] then
+      droneItems[i][slot] = {}
+    end
     droneItems[i][slot].size = size
-    droneItems[i][slot].maxSize = maxSize
-    droneItems[i][slot].fullName = fullName
-    droneItems[i].dirty = true
-  elseif droneItems[i][slot].size ~= size then
-    droneItems[i][slot].size = size
+    droneItems[i][slot].maxSize = maxSize or droneItems[i][slot].maxSize
+    droneItems[i][slot].fullName = fullName or droneItems[i][slot].fullName
+    assert(droneItems[i][slot].maxSize and droneItems[i][slot].fullName, "Drone items data entry is incomplete.")
     droneItems[i].dirty = true
   end
 end
@@ -1125,7 +1126,8 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
   
   -- Check if we can pull directly from other drone inventories
   -- (supplyIndices) and transfer items to current one.
-  local function pullFromSupplyInventories(destSlot, amount)
+  local function pullFromSupplyInventories(destSlot, extractItemName, amount)
+    dlog.out("hDroneExtract", "Looking for supply items " .. extractItemName .. " with amount " .. amount)
     for supplyIndex, _ in pairs(extractList.supplyIndices) do
       for slot, itemDetails in pairs(self.droneItems[supplyIndex]) do
         if slot ~= "dirty" and itemDetails.fullName == extractItemName then
@@ -1141,12 +1143,14 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
         end
       end
     end
+    dlog.out("hDroneExtract", "None found.")
     return false
   end
   
   -- Re-scan inventories marked as dirty (crafting operation had changed or is adding items into inventory).
   for supplyIndex, dirty in pairs(extractList.supplyIndices) do
     if dirty then
+      dlog.out("hDroneExtract", "Rescanning supply inventory " .. supplyIndex)
       local transIndex, side = next(self.routing.drone[supplyIndex])
       local itemIter = self.transposers[transIndex].getAllStacks(side)
       local item = itemIter()
@@ -1183,7 +1187,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
       local supplyItemsFound = true
       while supplyItemsFound and slotAmountRemaining > 0 do
         local amountTransferred, maxSize
-        supplyItemsFound, amountTransferred, maxSize = pullFromSupplyInventories(slot, slotAmountRemaining)
+        supplyItemsFound, amountTransferred, maxSize = pullFromSupplyInventories(slot, extractItemName, slotAmountRemaining)
         if supplyItemsFound then
           slotAmountRemaining = math.min(slotAmountRemaining, maxSize) - amountTransferred
           extractItemAmount = extractItemAmount - amountTransferred
@@ -1475,7 +1479,7 @@ local function main()
   
   local storage = Storage:new()
   
-  --dlog.setFileOut("/tmp/messages", "w")
+  dlog.setFileOut("/tmp/messages", "w")
   
   local setupThread = thread.create(Storage.setupThreadFunc, storage, mainContext)
   

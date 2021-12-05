@@ -242,19 +242,19 @@ stations: {
 recipes: {
   1: {    -- Processing recipe.
     out: {
-      <item name>: amount
+      <item name>: <amount>
       ...
     }
     inp: {
-      1: {<item name>, amount}
-      2: {<item name>, amount}
+      1: {<item name>, <amount>}
+      2: {<item name>, <amount>}
       ...
     }
     station: <station name>
   }
   2: {    -- Crafting recipe.
     out: {
-      <item name>: amount
+      <item name>: <amount>
       ...
     }
     inp: {
@@ -724,6 +724,8 @@ we iterate tables in reverse to find the sequence of steps to run in parallel.
 -- drone inventory. The storedItems don't all reside in drone inventories
 -- though.
 local function updateStoredItem(craftRequest, itemName, deltaAmount)
+  dlog.checkArgs(craftRequest, "table", itemName, "string", deltaAmount, "number")
+  dlog.out("updateStoredItem", "Stored item " .. itemName .. " changed by amount " .. deltaAmount .. " (total now " .. craftRequest.storedItems[itemName].total + deltaAmount .. ").")
   if deltaAmount == 0 then
     return
   end
@@ -782,8 +784,8 @@ activeCraftRequests: {
         total: <total count>
         lastTime: <time>    -- Last time the item was crafted.
         dependents: {    -- All recipes in the request that require this item as an input.
-          1: <recipeIndex>
-          2: <recipeIndex>
+          1: <index of recipeIndices>
+          2: <index of recipeIndices>
           ...
         }
       }
@@ -798,11 +800,25 @@ activeCraftRequests: {
       }
       ...
     }
-    supplyIndices: {
+    supplyIndices: {    -- Keeps track of drone inventories that currently contain intermediate crafting materials.
       <droneInvIndex>: <boolean>    -- True if dirty (inventory scan needed), false otherwise.
       ...
     }
+    taskCounter: <number>    -- Counter for the running tasks (robots are crafting, drone is in transit, etc). Starts at 1 and is used as the task ID for a new task.
+    craftingTasks: {    -- Active crafting jobs that robots are running. This is used to determine item outputs we expect from the operation.
+      <task ID>: {
+        droneInvIndex: <number>
+        numBatches: <number>
+        recipe: <single recipe entry from recipes table>
+        robots: {
+          <address>: true
+          ...
+        }
+      }
+      ...
+    }
   }
+  ...
 }
 
 droneInventories: {
@@ -890,6 +906,7 @@ function Crafting:handleStorDroneItemList(_, _, droneItems)
   for i, inventoryDetails in ipairs(self.droneItems) do
     self.droneInventories.inv[i] = {}
     self.droneInventories.inv[i].status = "free"
+    self.droneInventories.inv[i].ticket = nil
   end
   self.droneInventories.firstFree = -1
   self.droneInventories.firstFreeWithRobot = -1
@@ -910,6 +927,16 @@ function Crafting:handleStorDroneItemDiff(_, _, operation, result, droneItemsDif
   
   for invIndex, diff in pairs(droneItemsDiff) do
     self.droneItems[invIndex] = diff
+    -- If inventory is now empty, remove it from supply lists (assuming it's not dirty).
+    if next(diff) == nil then
+      for _, craftRequest in pairs(self.activeCraftRequests) do
+        if craftRequest.supplyIndices[invIndex] == false then
+          self.droneInventories.inv[invIndex].status = "free"
+          self.droneInventories.inv[invIndex].ticket = nil
+          craftRequest.supplyIndices[invIndex] = nil
+        end
+      end
+    end
   end
 end
 packer.callbacks.stor_drone_item_diff = Crafting.handleStorDroneItemDiff
@@ -1041,8 +1068,9 @@ function Crafting:handleCraftRecipeStart(_, _, ticket)
   self.activeCraftRequests[ticket] = self.pendingCraftRequests[ticket]
   self.pendingCraftRequests[ticket] = nil
   
-  -- Add/update an item in the storedItems table. The dependentIndex
-  -- is the recipe index that includes this item as an input.
+  -- Add/update an item in the storedItems table. The dependentIndex is the
+  -- index in recipeIndices corresponding to the recipe that includes this item
+  -- as an input.
   local function initializeStoredItem(storedItems, itemName, dependentIndex)
     if not storedItems[itemName] then
       storedItems[itemName] = {}
@@ -1058,10 +1086,13 @@ function Crafting:handleCraftRecipeStart(_, _, ticket)
   self.activeCraftRequests[ticket].recipeStartIndex = 1
   self.activeCraftRequests[ticket].recipeStatus = {}
   self.activeCraftRequests[ticket].supplyIndices = {}
+  self.activeCraftRequests[ticket].taskCounter = 1
+  self.activeCraftRequests[ticket].craftingTasks = {}
+  
   -- Add each recipe used and inputs/outputs to storedItems.
   for i, recipeIndex in ipairs(self.activeCraftRequests[ticket].recipeIndices) do
     for _, input in ipairs(self.recipes[recipeIndex].inp) do
-      initializeStoredItem(self.activeCraftRequests[ticket].storedItems, input[1], recipeIndex)
+      initializeStoredItem(self.activeCraftRequests[ticket].storedItems, input[1], i)
     end
     for output, amount in pairs(self.recipes[recipeIndex].out) do
       initializeStoredItem(self.activeCraftRequests[ticket].storedItems, output, nil)
@@ -1106,6 +1137,35 @@ function Crafting:handleRobotUploadRluaResult(address, _, message)
   io.write("[" .. string.sub(address, 1, 5) .. "] " .. string.format("%q", message) .. "\n")
 end
 packer.callbacks.robot_upload_rlua_result = Crafting.handleRobotUploadRluaResult
+
+
+-- Robot has finished a crafting operation. Verify that all of the robots
+-- finished doing stuff before we continue.
+function Crafting:handleRobotFinishedCraft(address, _, ticket, taskID)
+  assert(self.workers.robots[address] == "busy", "Robot reported finished craft but was not marked busy.")
+  self.workers.robots[address] = "free"
+  
+  local cachedCraftingTask = self.activeCraftRequests[ticket].craftingTasks[taskID]
+  assert(cachedCraftingTask.robots[address], "Robot reported finished craft but was not marked for task.")
+  cachedCraftingTask.robots[address] = nil
+  
+  dlog.out("robot", "Robot finished crafting for ticket " .. ticket .. " and task " .. taskID)
+  if next(cachedCraftingTask.robots) ~= nil then
+    return
+  end
+  dlog.out("robot", "Task " .. taskID .. " is finished.")
+  
+  -- Add newly crafted items to storedItems.
+  for outputName, amount in pairs(cachedCraftingTask.recipe.out) do
+    updateStoredItem(self.activeCraftRequests[ticket], outputName, amount * cachedCraftingTask.numBatches)
+  end
+  
+  -- Mark the drone inventory with crafted items as an input, add it to supply, and remove the crafting task.
+  self.droneInventories.inv[cachedCraftingTask.droneInvIndex].status = "input"
+  self.activeCraftRequests[ticket].supplyIndices[cachedCraftingTask.droneInvIndex] = true
+  self.activeCraftRequests[ticket].craftingTasks[taskID] = nil
+end
+packer.callbacks.robot_finished_craft = Crafting.handleRobotFinishedCraft
 
 
 -- Robot has encountered a compile/runtime error.
@@ -1362,6 +1422,7 @@ function Crafting:flushDroneInventory(ticket, droneInvIndex, waitForCompletion)
     if result then
       -- Inventory goes back to free, and we need to check if the firstFree indices need to be moved back.
       self.droneInventories.inv[droneInvIndex].status = "free"
+      self.droneInventories.inv[droneInvIndex].ticket = nil
       
       if self.droneInventories.firstFree <= 0 or droneInvIndex < self.droneInventories.firstFree then
         self.droneInventories.firstFree = droneInvIndex
@@ -1428,10 +1489,9 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
     self.droneInventories.pendingExtract = nil
   end
   
-  -- FIXME don't loop through all of them, start at recipeStartIndex
-  
-  for i, recipeStatus in ipairs(craftRequest.recipeStatus) do
+  for i = craftRequest.recipeStartIndex, #craftRequest.recipeIndices do
     if craftRequest.recipeBatches[i] > 0 then
+      local recipeStatus = craftRequest.recipeStatus[i]
       local recipe = self.recipes[craftRequest.recipeIndices[i]]
       
       -- Re-calculate the max amount of batches we can craft and time of most recently crafted item if recipe inputs changed.
@@ -1500,18 +1560,32 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
             numBatches: <number>
             ticket: <ticket>
             recipe: <single recipe entry from recipes table>
+            taskID: <number>
           }
           --]]
           
-          -- Assign jobs to each of the robots (not all of the readyWorkers will be given a task though, depends on number of robots and number of batches).
+          -- Task sent to robots.
           local craftingTask = {}
           craftingTask.droneInvIndex = freeIndex
           craftingTask.numBatches = math.ceil(recipeStatus.available / numReadyWorkers)
           craftingTask.ticket = ticket
           craftingTask.recipe = recipe
+          craftingTask.taskID = craftRequest.taskCounter
+          
+          -- Task cached by crafting server so we can verify completion later.
+          local cachedCraftingTask = {}
+          cachedCraftingTask.droneInvIndex = freeIndex
+          cachedCraftingTask.numBatches = recipeStatus.available
+          cachedCraftingTask.recipe = recipe
+          cachedCraftingTask.robots = {}
+          craftRequest.craftingTasks[craftRequest.taskCounter] = cachedCraftingTask
+          craftRequest.taskCounter = craftRequest.taskCounter + 1
+          
+          -- Assign task to each of the robots (not all of the readyWorkers will be given a task though, depends on number of robots and number of batches).
           for address, side in pairs(readyWorkers) do
             craftingTask.side = side
             craftingTask.numBatches = math.min(craftingTask.numBatches, recipeStatus.available)
+            cachedCraftingTask.robots[address] = true
             
             self.workers.robots[address] = "pending"
             wnet.send(modem, address, COMMS_PORT, packer.pack.robot_prepare_craft(craftingTask))
@@ -1527,6 +1601,11 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
           self.droneInventories.pendingExtract = "pending"
           wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(freeIndex, ticket, extractList))
           
+          -- After extractList sent, unmark the supply indices as dirty because storage will rescan them.
+          for i, _ in pairs(craftRequest.supplyIndices) do
+            craftRequest.supplyIndices[i] = false
+          end
+          
           -- Remove the requested extract items from craftRequest.storedItems, then confirm later that the request succeeded.
           for i, extractItem in ipairs(extractList) do
             updateStoredItem(craftRequest, extractItem[1], -(extractItem[2]))
@@ -1540,6 +1619,34 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
         
         
       end
+    elseif craftRequest.recipeStartIndex == i then
+      -- The recipeStartIndex corresponds to a batch size of zero, shift it down one so we don't keep looping over the leading zero.
+      craftRequest.recipeStartIndex = i + 1
+    end
+  end
+  
+  -- If the recipeStartIndex passed the array length, no more crafting tasks remain, and supply inventories have all been flushed, the crafting request is complete.
+  if craftRequest.recipeStartIndex > #craftRequest.recipeIndices and next(craftRequest.craftingTasks) == nil then
+    dlog.out("updateCraftRequest", "Request " .. ticket .. " has finished, returning items to storage.")
+    if next(craftRequest.supplyIndices) ~= nil then
+      self:flushDroneInventory(ticket, (next(craftRequest.supplyIndices)), true)
+    else
+      dlog.out("d", "droneInventories is", self.droneInventories)
+      dlog.out("d", "workers is", self.workers)
+      
+      -- Sanity checks to confirm all stored items have an amount of zero and no more drone inventories are bound to this ticket.
+      for itemName, storedItem in pairs(craftRequest.storedItems) do
+        assert(storedItem.total == 0, "Ticket " .. ticket .. " has finished but storedItem for " .. itemName .. " has amount " .. storedItem.total)
+      end
+      for i, inv in pairs(self.droneInventories.inv) do
+        assert(inv.ticket ~= ticket, "Ticket " .. ticket .. " has finished but drone inventory " .. i .. " still bound to ticket.")
+      end
+      
+      -- FIXME signal that request completed and ticket can be removed. ######################################
+      
+      dlog.out("updateCraftRequest", "Removing completed request " .. ticket)
+      self.activeCraftRequests[ticket] = nil
+      
     end
   end
 end

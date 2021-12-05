@@ -167,7 +167,7 @@ end
 local function getRecipeOutputStr(recipe)
   local str = ""
   for outputName, amount in pairs(recipe.out) do
-    str = str .. amount .. " " outputName .. ", "
+    str = str .. amount .. " " .. outputName .. ", "
   end
   return string.sub(str, 1, -3)
 end
@@ -260,9 +260,8 @@ local function handleRobotStartCraft(_, _, _)
     return
   end
   
-  -- FIXME report done here? might need to double check this ##########################
-  print("done")
-  wnet.send(modem, craftingServerAddress, COMMS_PORT, packer.pack.robot_finished_craft())
+  print("finished task " .. craftingTask2.taskID .. " for " .. craftingTask2.ticket)
+  wnet.send(modem, craftingServerAddress, COMMS_PORT, packer.pack.robot_finished_craft(craftingTask2.ticket, craftingTask2.taskID))
   
   --print("ready to craft, extractRemaining=")
   --for k, _ in pairs(craftingState.extractRemaining) do

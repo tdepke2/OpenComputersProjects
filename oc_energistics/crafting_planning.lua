@@ -1,4 +1,69 @@
 
+gui appearance:
+
+-- pending craft
+<item name>
+- R <amount required>
+<item name>
+- R <amount required> M <amount missing (cannot start crafting)>
+<item name>
+- C <amount to craft>
+<item name>
+- R <amount required> C <amount to craft>
+
+-- active craft
+-- note, AE2 does a stored/crafting/scheduled kind of thing. The "scheduled" part is merged with "crafting" in this system.
+<item name>
+- S <amount stored>
+<item name>
+- C <amount to craft>
+<item name>
+- S <amount stored> C <amount to craft>
+
+
+crafting process:
+Interface
+  User selects item and amount and sends a "craft_check_recipe" packet to crafting.
+Crafting
+  Runs the dependency graph solver. Finds status (ok, missing, error, etc), recipeIndices, recipeBatches, and requiredItems (maps item name to net amount).
+  FIXME we really should be using something like netInputs and netOutputs instead of requiredItems. ########################
+  Remove dead tickets and create new ticket for this operation.
+  Compute the craftProgress (one-time table sent to interface as confirmation).
+  FIXME name craftProgress should change to craftRequirements, use craftProgress for persistent data saved in request that we send to interfaces on diff. ############################
+  If we good, send "craft_recipe_confirm" with ticket and craftProgress to interface, and send "stor_recipe_reserve" with ticket and requiredItems.
+  If we not good, send "craft_recipe_confirm" with "missing" ticket if missing items, or send "craft_recipe_error" with error message if failed.
+Storage
+  Does some fucking magic to reserve the items from requiredItems. This should probably be changed to only reserve the inputs.
+Interface
+  Display results of craftProgress to user. If submitted before request times out, send "craft_recipe_start" with ticket to crafting.
+Crafting
+  Forward the start request to storage with "stor_recipe_start".
+  Move ticket to active, and add some extra data to it (like storedItems).
+  Crafting thread goes brrr.
+Crafting Thread
+  Repeat following for each active request:
+    If waiting on storage extract request, then pause until it's done.
+    For each recipe in the crafting sequence:
+      Update recipeStatus if dependencies changed, and calc amount that can currently be crafted.
+      If that amount is nonzero, attempt to reserve a drone inventory for the task.
+      If reserved, create a taskID and craftingTask (which we send to robots in "robot_prepare_craft") and a cachedCraftingTask (which we store internally).
+      Also send "stor_drone_extract" with extractList to storage. This adds the items to the reserved inventory.
+Robot
+  Saves state of craftingTask and gets in position, waiting for confirmation to continue.
+Storage
+  Extracts items to target drone inventory, and verifies that the items were reserved.
+  Responds with a "stor_drone_item_diff" back to crafting that details the changed inventory contents.
+Crafting Thread
+  Once extract finished, verify that it succeeded and send "robot_start_craft" to robots.
+Robot
+  Sucks up items from drone inventory and crafts requested item. Outputs back to the same inventory.
+  Sends "robot_finished_craft" back to crafting when done.
+Crafting Thread
+  Once robot finished crafting, add results to storedItems and delete the task.
+  Return to processing of more active requests.
+
+
+
 algorithm pseudo code:
 --------------------------------------------------------------------------------
 -- what items are needed thus far, kept between branches.
