@@ -24,6 +24,7 @@ local packer = include("packer")
 local wnet = include("wnet")
 
 local COMMS_PORT = 0xE298
+local DLOG_FILE_OUT = "/tmp/messages"
 local ROBOTS_CONFIG_FILENAME = "robots.config"
 
 -- Verify string has item name format "<mod name>:<item name>/<damage>[n]".
@@ -1811,9 +1812,11 @@ local function main()
     mainContext.threadSuccess = false
   end
   
-  local crafting = Crafting:new()
+  if DLOG_FILE_OUT ~= "" then
+    dlog.setFileOut(DLOG_FILE_OUT, "w")
+  end
   
-  dlog.setFileOut("/tmp/messages", "w")
+  local crafting = Crafting:new()
   
   local setupThread = thread.create(Crafting.setupThreadFunc, crafting, mainContext)
   

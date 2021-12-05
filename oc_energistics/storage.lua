@@ -24,6 +24,7 @@ local packer = include("packer")
 local wnet = include("wnet")
 
 local COMMS_PORT = 0xE298
+local DLOG_FILE_OUT = "/tmp/messages"
 local ROUTING_CONFIG_FILENAME = "routing.config"
 local INPUT_DELAY_SECONDS = 2
 
@@ -1477,9 +1478,11 @@ local function main()
     mainContext.threadSuccess = false
   end
   
-  local storage = Storage:new()
+  if DLOG_FILE_OUT ~= "" then
+    dlog.setFileOut(DLOG_FILE_OUT, "w")
+  end
   
-  dlog.setFileOut("/tmp/messages", "w")
+  local storage = Storage:new()
   
   local setupThread = thread.create(Storage.setupThreadFunc, storage, mainContext)
   

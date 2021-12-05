@@ -25,6 +25,7 @@ local packer = include("packer")
 local wnet = include("wnet")
 
 local COMMS_PORT = 0xE298
+local DLOG_FILE_OUT = ""
 
 -- Checks if given point lies within the bounds (inclusive).
 local function isPointInRectangle(xPoint, yPoint, x, y, width, height)
@@ -1246,7 +1247,9 @@ local function main()
     threadSuccess = false
   end
   
-  --dlog.setFileOut("/tmp/messages", "w")
+  if DLOG_FILE_OUT ~= "" then
+    dlog.setFileOut(DLOG_FILE_OUT, "w")
+  end
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
