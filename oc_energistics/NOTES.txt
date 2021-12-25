@@ -57,6 +57,9 @@ TODO
 * Need scheduling algorithm for crafting steps to keep crafting jobs running in parallel.
 * If crafting operation fails for some reason, it should probably cancel (or just pause) the crafting instead of killing app.
     * Just gonna leave 'error("Craft failed")' calls in the code for now.
+* Is max-stack-size necessary in recipe definitions? Would be nice to leave this out for ease of use and clarity.
+* Good idea to have only first output in a recipe (for both crafting and processing) show up as craftable (AE2 does this in modern versions).
+    * The other outputs can still be crafted as intermediate steps in a recipe, just not requested directly by the user.
 
 DONE
 * Network module needs compressed version and testing with drones.

@@ -6,6 +6,39 @@ Data structures.
 
 local dstructs = {}
 
+-- dstructs.objectsEqual(obj1: any, obj2: any): boolean
+-- 
+-- Helper function to determine if two tables (or other data) are equivalent
+-- using a recursive comparison. Currently this does not compare metatables and
+-- assumes there are no cycles caused by tables referencing previous ones.
+-- Returns true if and only if all of the elements in obj1 match elements in
+-- obj2 and all elements in obj2 match elements in obj1.
+function dstructs.objectsEqual(obj1, obj2)
+  if obj1 == obj2 then
+    return true
+  elseif type(obj1) ~= type(obj2) or type(obj1) ~= "table" then
+    return false
+  end
+  
+  -- Confirm all items in obj1 are in obj2 (and they are equal).
+  local n1 = 0
+  for k1, v1 in pairs(obj1) do
+    local v2 = obj2[k1]
+    if v2 == nil or not dstructs.objectsEqual(v1, v2) then
+      return false
+    end
+    n1 = n1 + 1
+  end
+  
+  -- Count items in obj2, and confirm this matches the length of obj1.
+  local n2 = 0
+  for k2, _ in pairs(obj2) do
+    n2 = n2 + 1
+  end
+  
+  return n1 == n2
+end
+
 -- Array of characters with a fixed size. Similar to a string, but the
 -- individual characters can be modified (without much performance loss for
 -- large sizes). The chunkSize determines the length of the strings used

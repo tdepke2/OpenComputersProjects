@@ -1,0 +1,71 @@
+
+# 1 coal + 1 stick = 4 torch
+craft:
+4 minecraft:torch "Torch" 64
+with
+minecraft:coal 1
+minecraft:stick 4
+
+# 1 charcoal + 1 stick = 4 torch
+craft:
+4 minecraft:torch "Torch" 64
+with
+minecraft:coal/1 1
+minecraft:stick 4
+
+# 2 plank = 4 stick
+craft:
+4 minecraft:stick "Stick" 64
+with
+minecraft:planks 1 4
+
+# 1 log = 4 plank
+craft:
+4 minecraft:planks "Oak Wood Planks" 64
+with
+minecraft:log 1
+
+# 2 iron_alloy + 1 slag = 3 iron_alloy
+craft:
+3 stuff:iron_alloy "Iron Alloy" 64
+with
+stuff:iron_alloy 1 2
+stuff:slag 3
+
+# 3 copper + 1 silver + 1 bucket_redstone = 4 signalum + 1 bucket
+craft:
+4 stuff:signalum "Signalum" 64
+1 minecraft:bucket "Bucket" 1
+with
+stuff:copper 1 2 3
+stuff:silver 4
+stuff:bucket_redstone 5
+
+# 10 redstone + 1 bucket = 1 bucket_redstone
+craft:
+1 stuff:bucket_redstone "Destabilized Redstone Bucket" 1
+with
+minecraft:redstone 1 2 3 4 5 6 7 8 9 10
+minecraft:bucket 11
+
+# 1 carrot + 1 juicer = 1 carrot_juice + 1 juicer
+craft:
+1 hc:carrot_juice "Carrot Juice" 64
+1 hc:juicer "Juicer" 1
+with
+minecraft:carrot 1
+hc:juicer 4
+
+# 1 egg + 1 seeds = 1 chicken + 1 nest
+craft:
+1 stuff:chicken "Chicken" 64
+1 stuff:nest "Nest" 1
+with
+stuff:egg 1
+stuff:seeds 2
+
+# 1 nest = 1 egg
+craft:
+1 stuff:egg "Egg" 64
+with
+stuff:nest 1

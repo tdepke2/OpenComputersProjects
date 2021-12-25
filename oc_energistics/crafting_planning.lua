@@ -172,3 +172,150 @@ craftAmounts =  {        10}
   craftIndices =  {         a}
   craftAmounts =  {        10,         20}
 this most likely breaks if we try to craft more iron_alloy in another step (maybe that's ok tho)
+
+
+--------------------------------------------------------------------------------
+
+function solveDependencyGraph(itemName, amount)
+  itemInputs = {}
+  itemOutputs = {}
+  craftNames = {itemName}
+  craftIndices = {}
+  craftAmounts = {amount}
+  
+  function recursiveSolve(index)
+    for each recipeIndex in recipes[craftNames[index]] do
+      craftIndices[index] = recipeIndex
+      
+      if multiple recipes then
+        backup itemInputs, itemOutputs, craftNames, etc.
+      end
+      
+      mult = number of items we need to craft over the number of items we get from the recipe (rounded up)
+      
+      for each inputName in recipes[recipeIndex].inp do
+        addAmount = mult * inputAmount
+        availableAmount = max(storageItems[inputName].total - itemInputs[inputName], 0)
+        
+        if addAmount > availableAmount then
+          if recipe known for inputName then
+            add inputName to end of craftNames
+            add (addAmount - availableAmount) to end of craftAmounts
+          else
+            add to missing items
+          end
+        end
+        
+        itemInputs[inputName] += addAmount
+      end
+      
+      for each outputName in recipes[recipeIndex].out do
+        itemOutputs[outputName] += mult * outputAmount
+      end
+      
+      if craftNames[index + 1] is nil then
+        found a solution
+      else
+        recursiveSolve(index + 1)
+      end
+      
+      if multiple recipes then
+        restore state of itemInputs, itemOutputs, craftNames, etc.
+      end
+    end
+  end
+  
+  recursiveSolve(1)
+end
+
+recipes:
+a) 1 coal + 1 stick = 4 torch
+b) 1 charcoal + 1 stick = 4 torch
+c) 2 planks = 4 stick
+d) 1 log = 4 planks
+e) 2 iron_alloy + 1 slag = 3 iron_alloy
+f) 3 copper + 1 silver + 1 bucket_redstone = 4 signalum + 1 bucket
+g) 10 redstone + 1 bucket = 1 bucket_redstone
+h) 1 carrot + 1 juicer = 1 carrot_juice + 1 juicer
+i) 1 egg + 1 seeds = 1 chicken + 1 nest
+j) 1 nest = 1 egg
+
+example: craft 16 torch
+have: 1 log, 4 coal
+steps:
+1 log -> 4 planks
+2 planks -> 4 stick
+4 stick + 4 coal -> 16 torch
+solution: 1 log + 4 coal -> 2 planks + 16 torch
+itemInputs =    {}
+itemOutputs =   {}
+craftNames =    {torch}
+craftIndices =  {}
+craftAmounts =  {   16}
+  multiple recipes for torch, make a backup
+  mult = 4
+    coal: addAmount = 4, availableAmount = 4
+    stick: addAmount = 4, availableAmount = 0
+  itemInputs =    {coal=4, stick=4}
+  itemOutputs =   {torch=16}
+  craftNames =    {torch, stick}
+  craftIndices =  {    a}
+  craftAmounts =  {   16,     4}
+    single recipe for stick
+    mult = 1
+      planks: addAmount = 2, availableAmount = 0
+    itemInputs =    {coal=4, stick=4, planks=2}
+    itemOutputs =   {torch=16, stick=4}
+    craftNames =    {torch, stick, planks}
+    craftIndices =  {    a,     c}
+    craftAmounts =  {   16,     4,      2}
+      single recipe for planks
+      mult = 1
+        log: addAmount = 1, availableAmount = 1
+      itemInputs =    {coal=4, stick=4, planks=2, log=1}
+      itemOutputs =   {torch=16, stick=4, planks=4}
+      craftNames =    {torch, stick, planks}
+      craftIndices =  {    a,     c,      d}
+      craftAmounts =  {   16,     4,      2}
+
+
+example: craft 16 torch
+have: 1 log, 1 charcoal, 3 coal
+steps:
+1 log -> 4 planks
+2 planks -> 4 stick
+1 stick + 1 charcoal -> 4 torch
+3 stick + 3 coal -> 12 torch
+solution: 1 log + 1 charcoal + 3 coal -> 2 planks + 16 torch
+
+
+example: craft 1 iron_alloy
+have: 2 iron_alloy, 64 slag
+steps:
+2 iron_alloy + 1 slag -> 3 iron_alloy
+solution: 2 iron_alloy + 1 slag -> 3 iron_alloy
+
+
+example: craft 10 iron_alloy
+have: 2 iron_alloy, 64 slag
+steps:
+2 iron_alloy + 1 slag -> 3 iron_alloy
+2 iron_alloy + 1 slag -> 3 iron_alloy
+4 iron_alloy + 2 slag -> 6 iron_alloy
+6 iron_alloy + 3 slag -> 9 iron_alloy
+6 iron_alloy + 3 slag -> 9 iron_alloy
+solution: 2 iron_alloy + 10 slag -> 10 iron_alloy
+
+
+example: craft 10 iron_alloy
+have: 8 iron_alloy, 64 slag
+steps:
+8 iron_alloy + 4 slag -> 12 iron_alloy
+12 iron_alloy + 6 slag -> 18 iron_alloy
+solution: 8 iron_alloy + 10 slag -> 10 iron_alloy
+
+
+example: craft 1 chicken
+have: 1 seeds
+steps:
+solution: not possible
