@@ -330,6 +330,13 @@ end
 --   2) min batches is best.
 --   3) first found is chosen and recipes are ordered during init to define a priority. Maybe order recipe files to load in alphabetical?
 
+local CRAFT_SOLVER_MAX_RECURSION = 1000
+local CRAFT_SOLVER_PRIORITY = 0
+-- 0 = first found (recipes ordered by priority)
+-- 1 = min items
+-- 2 = min batches
+-- might want to try instead: https://unendli.ch/posts/2016-07-22-enumerations-in-lua.html
+
 function Crafting:solveDependencyGraph(itemName, amount)
   dlog.checkArgs(itemName, "string", amount, "number")
   if not self.recipes[itemName] then
@@ -361,174 +368,222 @@ function Crafting:solveDependencyGraph(itemName, amount)
   
   --local MIX = false
   
-  local function recursiveSolve(spacing, index)
+  -- Make a backup copy of itemInputs/itemOutputs, length of craftNames, and
+  -- numMissingItems to restore later.
+  local function cacheCraftState(spacing, craftState)
+    dlog.out("recipeSolver", spacing .. "Caching craft state...")
+    craftState.itemInputs = itemInputs
+    itemInputs = setmetatable({}, defaultZeroMeta)
+    for k, v in pairs(craftState.itemInputs) do
+      itemInputs[k] = v
+    end
+    
+    craftState.itemOutputs = itemOutputs
+    itemOutputs = setmetatable({}, defaultZeroMeta)
+    for k, v in pairs(craftState.itemOutputs) do
+      itemOutputs[k] = v
+    end
+    
+    craftState.craftNamesLength = #craftNames
+    craftState.numMissingItems = numMissingItems
+  end
+  
+  -- Restore state of itemInputs/itemOutputs, craftNames/craftAmounts, and
+  -- numMissingItems.
+  local function restoreCraftState(spacing, craftState)
+    dlog.out("recipeSolver", spacing .. "Restoring craft state...")
+    itemInputs = craftState.itemInputs
+    itemOutputs = craftState.itemOutputs
+    for i = craftState.craftNamesLength + 1, #craftNames do
+      craftNames[i] = nil
+      craftIndices[i] = nil
+      craftAmounts[i] = nil
+    end
+    numMissingItems = craftState.numMissingItems
+  end
+  
+  -- Forward declares for below functions (cyclic dependency).
+  local recursiveSolve, attemptRecipe
+  
+  recursiveSolve = function(spacing, index)
     assert(index < 50, "Recipe too complex or not possible.")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
     dlog.out("recipeSolver", spacing .. "recursiveSolve(" .. index .. ")")
-    for _, recipeIndex in ipairs(self.recipes[craftNames[index]]) do
-      dlog.out("recipeSolver", spacing .. "Trying recipe " .. recipeIndex .. " for " .. craftNames[index])
-      craftIndices[index] = recipeIndex
+    
+    -- In the case that there are multiple recipes that make the target item, use the following strategy to attempt some combinations of the recipes that are likely to succeed.
+    -- Otherwise, just try the single recipe we have (tail call optimization).
+    if #self.recipes[craftNames[index]] > 1 then
+      local craftState = {}
       
-      -- If there are multiple recipe options, make a backup copy of itemInputs/itemOutputs, length of craftNames, and numMissingItems to restore later.
-      local lastItemInputs, lastItemOutputs, lastCraftNamesLength, lastNumMissingItems
-      if #self.recipes[craftNames[index]] > 1 then
-        dlog.out("recipeSolver", spacing .. "Multiple recipes, making copy of table...")
-        
-        lastItemInputs = itemInputs
-        itemInputs = setmetatable({}, defaultZeroMeta)
-        for k, v in pairs(lastItemInputs) do
-          itemInputs[k] = v
+      -- Try each alternate recipe independently (no mixing different types).
+      for _, recipeIndex in ipairs(self.recipes[craftNames[index]]) do
+        cacheCraftState(spacing, craftState)
+        attemptRecipe(spacing, index, recipeIndex)
+        restoreCraftState(spacing, craftState)
+        if resultStatus and resultStatus ~= "missing" then
+          -- FIXME we don't want to return if CRAFT_SOLVER_PRIORITY is set to min items/batches! ###############################################################
+          return
         end
-        
-        lastItemOutputs = itemOutputs
-        itemOutputs = setmetatable({}, defaultZeroMeta)
-        for k, v in pairs(lastItemOutputs) do
-          itemOutputs[k] = v
-        end
-        
-        lastCraftNamesLength = #craftNames
-        lastNumMissingItems = numMissingItems
       end
       
-      -- Compute amount multiplier as the number of items we need to craft over the number of items we get from the recipe (rounded up).
-      local mult = math.ceil(craftAmounts[index] / self.recipes[recipeIndex].out[craftNames[index]])
-      
-      --[[
-      -- If mixing, scale the multiplier down to the limiting input in recipe first.
-      if MIX then
-        for _, input in ipairs(self.recipes[recipeIndex].inp) do
-          local inputName = input[1]
-          local recipeAmount = (self.recipes[recipeIndex].station and input[2] or #input - 1)
-          local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - requiredItems[inputName], 0)
+      --
+      -- local downscaledAmounts = {}
+      -- for i, recipeIndex in ipairs(self.recipes[craftNames[index]]) do
+        -- local currentRecipe = self.recipes[recipeIndex]
+        -- local mult = math.ceil(craftAmounts[index] / currentRecipe.out[craftNames[index]])
+        
+        -- for _, input in ipairs(currentRecipe.inp) do
+          -- local inputName = input[1]
+          -- local recipeAmount = (currentRecipe.station and input[2] or #input - 1)
+          -- local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - itemInputs[inputName], 0)
           
-          if mult * recipeAmount > availableAmount and self.recipes[inputName] then
-            mult = math.floor(availableAmount / recipeAmount)
-          end
-        end
-      end
-      --]]
-      
-      -- For each recipe input, add the items to itemInputs and to craftNames/craftAmounts as well if we need to craft more of them.
-      for _, input in ipairs(self.recipes[recipeIndex].inp) do
-        local inputName = input[1]
-        local addAmount = mult * (self.recipes[recipeIndex].station and input[2] or #input - 1)
-        local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - itemInputs[inputName], 0)
+          -- if mult * recipeAmount > availableAmount and self.recipes[inputName] then
+            -- mult = math.floor(availableAmount / recipeAmount)
+          -- end
+        -- end
         
-        -- Check if we need more than what's available.
-        if addAmount > availableAmount then
-          if self.recipes[inputName] then
-            -- Add the addAmount minus availableAmount to craftNames/craftAmounts if the recipe is known.
-            dlog.out("recipeSolver", spacing .. "Craft " .. addAmount - availableAmount .. " more of " .. inputName)
-            craftNames[#craftNames + 1] = inputName
-            craftAmounts[#craftAmounts + 1] = addAmount - availableAmount
-          else
-            -- Recipe not known so this item will prevent crafting, add to numMissingItems.
-            dlog.out("recipeSolver", spacing .. "Missing " .. addAmount - availableAmount .. " of " .. inputName)
-            numMissingItems = numMissingItems + addAmount - availableAmount
-          end
-        end
-        
-        dlog.out("recipeSolver", spacing .. "Require " .. addAmount .. " more of " .. inputName)
-        itemInputs[inputName] = itemInputs[inputName] + addAmount
-      end
-      
-      -- For each recipe output, add to itemOutputs.
-      for outputName, amount in pairs(self.recipes[recipeIndex].out) do
-        dlog.out("recipeSolver", spacing .. "Add " .. mult * amount .. " of output " .. outputName)
-        itemOutputs[outputName] = itemOutputs[outputName] + mult * amount
-        --if requiredItems[outputName] == 0 then    -- FIXME this might be a bug? do we allow zeros in requiredItems or no? seems useful to have. if not bug then need to update any modifications to requiredItems to check for zero! ##################################################
-          --requiredItems[outputName] = nil
-        --end
-      end
-      
-      -- If no more recipes remaining, solution found. Otherwise we do recursive call.
-      if not craftNames[index + 1] then
-        dlog.out("recipeSolver", spacing .. "Found solution, numMissingItems = " .. numMissingItems)
-        dlog.out("recipeSolver", "ItemInputs/itemOutputs and craftNames/craftIndices/craftAmounts:", itemInputs, itemOutputs)
-        for i = 1, #craftNames do
-          dlog.out("recipeSolver", craftNames[i] .. " index " .. craftIndices[i] .. " amount " .. craftAmounts[i])
-        end
-        
-        --[[
-        -- Determine the total number of items to craft and compare with the best found so far.
-        local craftingTotal = 0
-        for k, v in pairs(requiredItems) do
-          craftingTotal = craftingTotal + math.max(v - (self.storageItems[k] and self.storageItems[k].total or 0), 0)
-        end
-        dlog.out("recipeSolver", "craftingTotal = " .. craftingTotal)
-        --]]
-        
-        -- Check if the total number of missing items is a new low, and update the result if so.
-        if numMissingItems < bestNumMissingItems then
-          dlog.out("recipeSolver", "New best found!")
-          bestNumMissingItems = numMissingItems
-          if numMissingItems == 0 then
-            resultStatus = "ok"
-          else
-            resultStatus = "missing"
-          end
-          
-          -- Build the result of recipe indices and batch amounts from craftNames/craftIndices/craftAmounts.
-          -- We iterate the craft stuff in reverse and push to the result array, if another instance of the same recipe pops up then we combine it with the previous one.
-          resultIndices = {}
-          resultBatches = {}
-          local indicesMapping = {}
-          local j = 1
-          for i = #craftNames, 1, -1 do
-            local recipeIndex = craftIndices[i]
-            -- Compute the multiplier exactly as we did before.
-            local mult = math.ceil(craftAmounts[i] / self.recipes[recipeIndex].out[craftNames[i]])
-            
-            -- If this recipe index not discovered yet, add it to the end and update mapping. Otherwise we just add the mult to the existing entry.
-            if not indicesMapping[recipeIndex] then
-              resultIndices[j] = recipeIndex
-              resultBatches[j] = mult
-              indicesMapping[recipeIndex] = j
-            else
-              resultBatches[indicesMapping[recipeIndex]] = resultBatches[indicesMapping[recipeIndex]] + mult
-            end
-            j = j + 1
-          end
-          
-          -- Save the current itemInputs/itemOutputs corresponding to the result.
-          resultInputs = {}
-          for k, v in pairs(itemInputs) do
-            resultInputs[k] = v
-          end
-          resultOutputs = {}
-          for k, v in pairs(itemOutputs) do
-            resultOutputs[k] = v
-          end
-        end
-      else
-        recursiveSolve(spacing .. "  ", index + 1)
-      end
-      
-      -- Restore state of itemInputs/itemOutputs, craftNames/craftAmounts, and numMissingItems.
-      dlog.out("recipeSolver", spacing .. "End of recipe, restore state")
-      if lastItemInputs then
-        itemInputs = lastItemInputs
-        itemOutputs = lastItemOutputs
-        for i = lastCraftNamesLength + 1, #craftNames do
-          craftNames[i] = nil
-          craftIndices[i] = nil
-          craftAmounts[i] = nil
-        end
-        numMissingItems = lastNumMissingItems
-        
-        --[[
-        for i = #craftNames, lastCraftNamesLength + 1, -1 do
-          
-        end
-        --]]
-      end
+        -- downscaledAmounts[i] = 
+      -- end
+    else
+      return attemptRecipe(spacing, index, self.recipes[craftNames[index]][1])
     end
   end
+  
+  attemptRecipe = function(spacing, index, recipeIndex)
+    dlog.out("recipeSolver", spacing .. "Trying recipe " .. recipeIndex .. " for " .. craftNames[index])
+    local currentRecipe = self.recipes[recipeIndex]
+    craftIndices[index] = recipeIndex
+    
+    -- Compute amount multiplier as the number of items we need to craft over the number of items we get from the recipe (rounded up).
+    local mult = math.ceil(craftAmounts[index] / currentRecipe.out[craftNames[index]])
+    
+    --[[
+    -- If mixing, scale the multiplier down to the limiting input in recipe first.
+    if MIX then
+      for _, input in ipairs(currentRecipe.inp) do
+        local inputName = input[1]
+        local recipeAmount = (currentRecipe.station and input[2] or #input - 1)
+        local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - requiredItems[inputName], 0)
+        
+        if mult * recipeAmount > availableAmount and self.recipes[inputName] then
+          mult = math.floor(availableAmount / recipeAmount)
+        end
+      end
+    end
+    --]]
+    
+    -- For each recipe input, add the items to itemInputs and to craftNames/craftAmounts as well if we need to craft more of them.
+    for _, input in ipairs(currentRecipe.inp) do
+      local inputName = input[1]
+      local addAmount = mult * (currentRecipe.station and input[2] or #input - 1)
+      local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - itemInputs[inputName], 0)
+      
+      -- Check if we need more than what's available.
+      if addAmount > availableAmount then
+        if self.recipes[inputName] then
+          -- Add the addAmount minus availableAmount to craftNames/craftAmounts if the recipe is known.
+          dlog.out("recipeSolver", spacing .. "Craft " .. addAmount - availableAmount .. " of " .. inputName)
+          craftNames[#craftNames + 1] = inputName
+          craftAmounts[#craftAmounts + 1] = addAmount - availableAmount
+        else
+          -- Recipe not known so this item will prevent crafting, add to numMissingItems.
+          dlog.out("recipeSolver", spacing .. "Missing " .. addAmount - availableAmount .. " of " .. inputName)
+          numMissingItems = numMissingItems + addAmount - availableAmount
+        end
+      end
+      
+      dlog.out("recipeSolver", spacing .. "Require " .. addAmount .. " more of " .. inputName)
+      itemInputs[inputName] = itemInputs[inputName] + addAmount
+    end
+    
+    -- For each recipe output, add to itemOutputs.
+    for outputName, amount in pairs(currentRecipe.out) do
+      dlog.out("recipeSolver", spacing .. "Add " .. mult * amount .. " of output " .. outputName)
+      itemOutputs[outputName] = itemOutputs[outputName] + mult * amount
+      --if requiredItems[outputName] == 0 then    -- FIXME this might be a bug? do we allow zeros in requiredItems or no? seems useful to have. if not bug then need to update any modifications to requiredItems to check for zero! ##################################################
+        --requiredItems[outputName] = nil
+      --end
+    end
+    
+    -- If no more recipes remaining, solution found. Otherwise we do recursive call.
+    if not craftNames[index + 1] then
+      dlog.out("recipeSolver", spacing .. "Found solution, numMissingItems = " .. numMissingItems)
+      dlog.out("recipeSolver", spacing .. "ItemInputs/itemOutputs and craftNames/craftIndices/craftAmounts:", itemInputs, itemOutputs)
+      for i = 1, #craftNames do
+        dlog.out("recipeSolver", spacing .. craftNames[i] .. " index " .. craftIndices[i] .. " amount " .. craftAmounts[i])
+      end
+      
+      --[[
+      -- Determine the total number of items to craft and compare with the best found so far.
+      local craftingTotal = 0
+      for k, v in pairs(requiredItems) do
+        craftingTotal = craftingTotal + math.max(v - (self.storageItems[k] and self.storageItems[k].total or 0), 0)
+      end
+      dlog.out("recipeSolver", "craftingTotal = " .. craftingTotal)
+      --]]
+      
+      -- Check if the total number of missing items is a new low, and update the result if so.
+      if numMissingItems < bestNumMissingItems then
+        dlog.out("recipeSolver", spacing .. "New best found!")
+        bestNumMissingItems = numMissingItems
+        if numMissingItems == 0 then
+          resultStatus = "ok"
+        else
+          resultStatus = "missing"
+        end
+        
+        -- Build the result of recipe indices and batch amounts from craftNames/craftIndices/craftAmounts.
+        -- We iterate the craft stuff in reverse and push to the result array, if another instance of the same recipe pops up then we combine it with the previous one.
+        resultIndices = {}
+        resultBatches = {}
+        local indicesMapping = {}
+        local j = 1
+        for i = #craftNames, 1, -1 do
+          local recipeIndex2 = craftIndices[i]
+          -- Compute the multiplier exactly as we did before.
+          local mult = math.ceil(craftAmounts[i] / self.recipes[recipeIndex2].out[craftNames[i]])
+          
+          -- If this recipe index not discovered yet, add it to the end and update mapping. Otherwise we just add the mult to the existing entry.
+          if not indicesMapping[recipeIndex2] then
+            resultIndices[j] = recipeIndex2
+            resultBatches[j] = mult
+            indicesMapping[recipeIndex2] = j
+            j = j + 1
+          else
+            resultBatches[indicesMapping[recipeIndex2]] = resultBatches[indicesMapping[recipeIndex2]] + mult
+          end
+        end
+        
+        -- Save the current itemInputs/itemOutputs corresponding to the result. The duplicates are merged and eliminated to prevent intermediate steps from showing in the result.
+        resultInputs = {}
+        for k, v in pairs(itemInputs) do
+          local netInput = v - (itemOutputs[k] or 0)
+          if netInput > 0 then
+            resultInputs[k] = netInput
+          end
+        end
+        resultOutputs = {}
+        for k, v in pairs(itemOutputs) do
+          local netOutput = v - (itemInputs[k] or 0)
+          if netOutput > 0 then
+            resultOutputs[k] = netOutput
+          end
+        end
+        dlog.out("recipeSolver", spacing .. "resultInputs = ", resultInputs)
+        dlog.out("recipeSolver", spacing .. "resultOutputs = ", resultOutputs)
+      end
+    else
+      return recursiveSolve(spacing .. "  ", index + 1)
+    end
+  end
+  
   local status, err = pcall(recursiveSolve, "", 1)
   if not status then
+    dlog.out("recipeSolver", "Error: ", tostring(err))
     return "error", err
   end
   
   dlog.out("recipeSolver", "Done.")
+  dlog.out("recipeSolver", "resultStatus, resultIndices, resultBatches, resultInputs, resultOutputs:", resultStatus, resultIndices, resultBatches, resultInputs, resultOutputs)
   return resultStatus, resultIndices, resultBatches, resultInputs, resultOutputs
 end
 
@@ -556,9 +611,8 @@ function Crafting:testDependencySolver()
   assert(status == "missing")
   assert(dstructs.objectsEqual(recipeIndices, {4, 3, 1}))
   assert(dstructs.objectsEqual(recipeBatches, {1, 1, 4}))
-  -- FIXME these two not working yet
-  --assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
-  --assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
+  assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
   -- Craft 16 torches, have log and coal.
   self.storageItems = {}
@@ -568,11 +622,22 @@ function Crafting:testDependencySolver()
   assert(status == "ok")
   assert(dstructs.objectsEqual(recipeIndices, {4, 3, 1}))
   assert(dstructs.objectsEqual(recipeBatches, {1, 1, 4}))
-  -- FIXME these two not working yet
+  assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
+  assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  
+  -- Craft 16 torches, have log, charcoal, and coal.
+  self.storageItems = {}
+  addStorageItem("minecraft:log/0", "Oak Log", 1, 64)
+  addStorageItem("minecraft:coal/1", "Charcoal", 1, 64)
+  addStorageItem("minecraft:coal/0", "Coal", 3, 64)
+  status, recipeIndices, recipeBatches, itemInputs, itemOutputs = self:solveDependencyGraph("minecraft:torch/0", 16)
+  --assert(status == "ok")
+  --assert(dstructs.objectsEqual(recipeIndices, {4, 3, 2}))
+  --assert(dstructs.objectsEqual(recipeBatches, {1, 1, 4}))
   --assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
   --assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
-  dlog.out("test", "testDependencySolver() tests finished.")
+  dlog.out("test", "testDependencySolver() all tests passed.")
 end
 
 --[[

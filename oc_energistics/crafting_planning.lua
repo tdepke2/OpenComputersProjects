@@ -195,7 +195,7 @@ function solveDependencyGraph(itemName, amount)
       
       for each inputName in recipes[recipeIndex].inp do
         addAmount = mult * inputAmount
-        availableAmount = max(storageItems[inputName].total - itemInputs[inputName], 0)
+        availableAmount = math.max(storageItems[inputName].total - itemInputs[inputName], 0)
         
         if addAmount > availableAmount then
           if recipe known for inputName then
@@ -215,6 +215,28 @@ function solveDependencyGraph(itemName, amount)
       
       if craftNames[index + 1] is nil then
         found a solution
+        
+        -- Build the result of recipe indices and batch amounts from craftNames/craftIndices/craftAmounts.
+        -- We iterate the craft stuff in reverse and push to the result array, if another instance of the same recipe pops up then we combine it with the previous one.
+        resultIndices = {}
+        resultBatches = {}
+        ...
+        
+        -- Save the current itemInputs/itemOutputs corresponding to the result.
+        resultInputs = {}
+        for k, v in pairs(itemInputs) do
+          local netInput = v - (itemOutputs[k] or 0)
+          if netInput > 0 then
+            resultInputs[k] = netInput
+          end
+        end
+        resultOutputs = {}
+        for k, v in pairs(itemOutputs) do
+          local netOutput = v - (itemInputs[k] or 0)
+          if netOutput > 0 then
+            resultOutputs[k] = netOutput
+          end
+        end
       else
         recursiveSolve(index + 1)
       end
@@ -227,6 +249,25 @@ function solveDependencyGraph(itemName, amount)
   
   recursiveSolve(1)
 end
+
+-- downscaling (mixing) problem:
+-- when multiple recipes, try each independently first (no mix)
+-- next, scan through top-level of all the multiple recipes and downscale each amount to the limiting raw resource (non-craftable material)
+--   this step may not downscale anything if all recipes have craftable materials
+-- if all recipes downscaled and total less than amount needed, break early (cannot be crafted)
+-- if any were downscaled, then iterate only those and add them up until we reach total (or split even across the remainder). attempt to craft with this combination.
+-- if none downscaled, or last attempt failed, then split even (we need to step through downscaled first, and update the split as we go). attempt to craft with this combination.
+
+-- some tests for this:
+-- extra recipe for charcoal: 1 log = 1 charcoal
+-- craft 16 torches, have 4 log and 1 coal (we can make them)
+-- craft 16 torches, have 2 log and 3 coal (we can make them)
+-- craft 16 torches, have 5 log (we can make them)
+--   does the order the torch recipes are defined effect outcome? it shouldn't
+
+-- recursive recipes problem:
+-- idk I don't want to think about it. might be as simple as just adding outputs to the input?
+-- probably need to downscale too
 
 recipes:
 a) 1 coal + 1 stick = 4 torch
