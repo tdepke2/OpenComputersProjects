@@ -348,9 +348,11 @@ function Crafting:solveDependencyGraph(itemName, amount)
   local itemOutputs = setmetatable({}, defaultZeroMeta)
   
   -- Sequence of recipe name, index, and amount we need to craft to make the item.
+  -- The name and index are kept separate to distinguish between alternative recipes for an item, an index of -1 means we may have to try multiple recipes that make the item.
   -- Beginning of array is the requested item and end of array is the item at the bottom of the dependency chain.
+  -- These arrays function much like a stack, pushing requested items to the end. A few edge cases modify elements in the middle.
   local craftNames = {itemName}
-  local craftIndices = {}
+  local craftIndices = {-1}
   local craftAmounts = {amount}
   
   local resultStatus, resultIndices, resultBatches, resultInputs, resultOutputs
@@ -368,30 +370,38 @@ function Crafting:solveDependencyGraph(itemName, amount)
   
   --local MIX = false
   
-  -- Make a backup copy of itemInputs/itemOutputs, length of craftNames, and
-  -- numMissingItems to restore later.
-  local function cacheCraftState(spacing, craftState)
+  -- Make a backup copy of itemInputs/itemOutputs, craftNames/craftIndices/
+  -- craftAmounts, and numMissingItems to restore later. This assumes that
+  -- elements in the craft* arrays will not be modified, except for the current
+  -- index. Elements can still be appended to the end.
+  local function cacheCraftState(spacing, index, craftState)
     dlog.out("recipeSolver", spacing .. "Caching craft state...")
     craftState.itemInputs = itemInputs
     itemInputs = setmetatable({}, defaultZeroMeta)
     for k, v in pairs(craftState.itemInputs) do
       itemInputs[k] = v
     end
-    
     craftState.itemOutputs = itemOutputs
     itemOutputs = setmetatable({}, defaultZeroMeta)
     for k, v in pairs(craftState.itemOutputs) do
       itemOutputs[k] = v
     end
     
+    assert(index <= #craftNames, "Caching craft state attempted with index > #craftNames")
     craftState.craftNamesLength = #craftNames
+    craftState.craftNamesIndex = craftNames[index]
+    craftState.craftIndicesIndex = craftIndices[index]
+    craftState.craftAmountsIndex = craftAmounts[index]
+    craftState.currentIndex = index
     craftState.numMissingItems = numMissingItems
+    craftState.valid = true
   end
   
-  -- Restore state of itemInputs/itemOutputs, craftNames/craftAmounts, and
-  -- numMissingItems.
+  -- Restore state of itemInputs/itemOutputs, the craft* arrays, and
+  -- numMissingItems. See assumptions in cacheCraftState().
   local function restoreCraftState(spacing, craftState)
     dlog.out("recipeSolver", spacing .. "Restoring craft state...")
+    assert(craftState.valid, "Restore attempted before call to cacheCraftState()")
     itemInputs = craftState.itemInputs
     itemOutputs = craftState.itemOutputs
     for i = craftState.craftNamesLength + 1, #craftNames do
@@ -399,7 +409,11 @@ function Crafting:solveDependencyGraph(itemName, amount)
       craftIndices[i] = nil
       craftAmounts[i] = nil
     end
+    craftNames[craftState.currentIndex] = craftState.craftNamesIndex
+    craftIndices[craftState.currentIndex] = craftState.craftIndicesIndex
+    craftAmounts[craftState.currentIndex] = craftState.craftAmountsIndex
     numMissingItems = craftState.numMissingItems
+    craftState.valid = nil
   end
   
   -- Forward declares for below functions (cyclic dependency).
@@ -409,14 +423,19 @@ function Crafting:solveDependencyGraph(itemName, amount)
     assert(index < 50, "Recipe too complex or not possible.")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
     dlog.out("recipeSolver", spacing .. "recursiveSolve(" .. index .. ")")
     
-    -- In the case that there are multiple recipes that make the target item, use the following strategy to attempt some combinations of the recipes that are likely to succeed.
+    -- If recipe for the target item has been pre-selected, then use that one only.
+    -- Else, in the case that there are multiple recipes that make the item, use the following strategy to attempt some combinations of the recipes that are likely to succeed.
     -- Otherwise, just try the single recipe we have (tail call optimization).
-    if #self.recipes[craftNames[index]] > 1 then
+    if craftIndices[index] ~= -1 then
+      dlog.out("recipeSolver", spacing .. "Recipe " .. craftIndices[index] .. " was pre-selected")
+      return attemptRecipe(spacing, index, craftIndices[index])
+    elseif #self.recipes[craftNames[index]] > 1 then
       local craftState = {}
       
       -- Try each alternate recipe independently (no mixing different types).
+      dlog.out("recipeSolver", spacing .. "Mix method 1: try each recipe independently.")
       for _, recipeIndex in ipairs(self.recipes[craftNames[index]]) do
-        cacheCraftState(spacing, craftState)
+        cacheCraftState(spacing, index, craftState)
         attemptRecipe(spacing, index, recipeIndex)
         restoreCraftState(spacing, craftState)
         if resultStatus and resultStatus ~= "missing" then
@@ -425,31 +444,109 @@ function Crafting:solveDependencyGraph(itemName, amount)
         end
       end
       
-      --
-      -- local downscaledAmounts = {}
-      -- for i, recipeIndex in ipairs(self.recipes[craftNames[index]]) do
-        -- local currentRecipe = self.recipes[recipeIndex]
-        -- local mult = math.ceil(craftAmounts[index] / currentRecipe.out[craftNames[index]])
+      -- Prepare for mixing recipes together by downscaling each to the limiting raw resource as input to the recipe.
+      -- This only looks at the top-level recipe inputs instead of recursively checking children (for performance reasons).
+      -- We also take a sum (not considering the math.huge values) and count the positive/real values and the math.huge values respectively.
+      local downscaledAmounts = {}
+      local downscaledAmountsSum = 0
+      local downscaledNumPos = 0
+      local downscaledNumInf = 0
+      for i, recipeIndex in ipairs(self.recipes[craftNames[index]]) do
+        local currentRecipe = self.recipes[recipeIndex]
+        local mult = math.huge
         
-        -- for _, input in ipairs(currentRecipe.inp) do
-          -- local inputName = input[1]
-          -- local recipeAmount = (currentRecipe.station and input[2] or #input - 1)
-          -- local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - itemInputs[inputName], 0)
+        for _, input in ipairs(currentRecipe.inp) do
+          local inputName = input[1]
+          local inputAmount = (currentRecipe.station and input[2] or #input - 1)
+          local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - itemInputs[inputName], 0)
           
-          -- if mult * recipeAmount > availableAmount and self.recipes[inputName] then
-            -- mult = math.floor(availableAmount / recipeAmount)
-          -- end
-        -- end
+          -- Reduce mult if resource does not have a recipe (it's raw) and it's limiting the amount we can craft.
+          if not self.recipes[inputName] and mult * inputAmount > availableAmount then
+            mult = math.floor(availableAmount / inputAmount)
+          end
+        end
         
-        -- downscaledAmounts[i] = 
-      -- end
+        -- The downscaled amount for the recipe index is zero if there is none left of a raw input, a real number if a raw input is limiting, or math.huge (inf) if none of the inputs are raw.
+        downscaledAmounts[i] = mult * currentRecipe.out[craftNames[index]]
+        if downscaledAmounts[i] == math.huge then
+          downscaledNumInf = downscaledNumInf + 1
+        elseif downscaledAmounts[i] > 0 then
+          downscaledAmountsSum = downscaledAmountsSum + downscaledAmounts[i]
+          downscaledNumPos = downscaledNumPos + 1
+        end
+      end
+      dlog.out("recipeSolver", spacing .. "downscaledAmounts:", downscaledAmounts)
+      
+      -- If all recipes downscaled and total less than amount needed, break early (cannot be crafted).
+      if downscaledAmountsSum < craftAmounts[index] and downscaledNumInf == 0 then
+        dlog.out("recipeSolver", spacing .. "All downscaled to less than total required, crafting not possible.")
+        return -- FIXME instead we need to eval attemptRecipe() to get a missing items result (or do we? hmm) #################################################################################
+      end
+      
+      dlog.out("recipeSolver", spacing .. "Mix method 2: try downscaled recipes first, split even across the remainder.")
+      local newIndex = index
+      local remainingCraftAmount = craftAmounts[index]
+      cacheCraftState(spacing, index, craftState)
+      for i, downscaled in ipairs(downscaledAmounts) do
+        if downscaled > 0 and downscaled ~= math.huge then
+          local newAmount = math.min(downscaled, remainingCraftAmount)
+          remainingCraftAmount = remainingCraftAmount - newAmount
+          craftIndices[newIndex] = self.recipes[craftNames[index]][i]
+          craftAmounts[newIndex] = newAmount
+          dlog.out("recipeSolver", spacing .. "Added amount " .. craftAmounts[newIndex] .. " for recipe " .. craftIndices[newIndex] .. " (i = " .. i .. ")")
+          
+          if remainingCraftAmount == 0 then
+            break
+          end
+          
+          -- Add a new craft entry and copy the original item name. The index and amount will get updated in a later iteration.
+          newIndex = #craftNames + 1
+          craftNames[newIndex] = craftNames[index]
+          craftIndices[newIndex] = -1
+          craftAmounts[newIndex] = 0
+        end
+      end
+      if remainingCraftAmount > 0 then
+        local remainingNumInf = downscaledNumInf
+        for i, downscaled in ipairs(downscaledAmounts) do
+          if downscaled == math.huge then
+            local newAmount = math.ceil(remainingCraftAmount / remainingNumInf)
+            remainingCraftAmount = remainingCraftAmount - newAmount
+            remainingNumInf = remainingNumInf - 1
+            craftIndices[newIndex] = self.recipes[craftNames[index]][i]
+            craftAmounts[newIndex] = newAmount
+            dlog.out("recipeSolver", spacing .. "Added amount " .. craftAmounts[newIndex] .. " for recipe " .. craftIndices[newIndex] .. " (i = " .. i .. ")")
+            
+            if remainingCraftAmount == 0 then
+              break
+            end
+            
+            -- Add a new craft entry and copy the original item name. The index and amount will get updated in a later iteration.
+            newIndex = #craftNames + 1
+            craftNames[newIndex] = craftNames[index]
+            craftIndices[newIndex] = -1
+            craftAmounts[newIndex] = 0
+          end
+        end
+      end
+      assert(remainingCraftAmount == 0, "Mix method 2 failed: recipe distribution incorrect.")
+      attemptRecipe(spacing, index, craftIndices[index])
+      restoreCraftState(spacing, craftState)
+      if resultStatus and resultStatus ~= "missing" then
+        -- FIXME we don't want to return if CRAFT_SOLVER_PRIORITY is set to min items/batches! ###############################################################
+        return
+      end
+      
+      dlog.out("recipeSolver", spacing .. "Mix method 3: split even across all recipes.")
+      dlog.out("recipeSolver", spacing .. "oops, NYI")
+      
     else
       return attemptRecipe(spacing, index, self.recipes[craftNames[index]][1])
     end
   end
   
   attemptRecipe = function(spacing, index, recipeIndex)
-    dlog.out("recipeSolver", spacing .. "Trying recipe " .. recipeIndex .. " for " .. craftNames[index])
+    dlog.out("recipeSolver", spacing .. "Trying recipe " .. recipeIndex .. " for " .. craftNames[index] .. " with amount " .. craftAmounts[index])
     local currentRecipe = self.recipes[recipeIndex]
     craftIndices[index] = recipeIndex
     
@@ -471,7 +568,7 @@ function Crafting:solveDependencyGraph(itemName, amount)
     end
     --]]
     
-    -- For each recipe input, add the items to itemInputs and to craftNames/craftAmounts as well if we need to craft more of them.
+    -- For each recipe input, add the items to itemInputs and to craftNames/craftIndices/craftAmounts as well if we need to craft more of them.
     for _, input in ipairs(currentRecipe.inp) do
       local inputName = input[1]
       local addAmount = mult * (currentRecipe.station and input[2] or #input - 1)
@@ -480,10 +577,12 @@ function Crafting:solveDependencyGraph(itemName, amount)
       -- Check if we need more than what's available.
       if addAmount > availableAmount then
         if self.recipes[inputName] then
-          -- Add the addAmount minus availableAmount to craftNames/craftAmounts if the recipe is known.
+          -- Add the addAmount minus availableAmount to craftNames/craftIndices/craftAmounts if the recipe is known.
           dlog.out("recipeSolver", spacing .. "Craft " .. addAmount - availableAmount .. " of " .. inputName)
-          craftNames[#craftNames + 1] = inputName
-          craftAmounts[#craftAmounts + 1] = addAmount - availableAmount
+          local newIndex = #craftNames + 1
+          craftNames[newIndex] = inputName
+          craftIndices[newIndex] = -1
+          craftAmounts[newIndex] = addAmount - availableAmount
         else
           -- Recipe not known so this item will prevent crafting, add to numMissingItems.
           dlog.out("recipeSolver", spacing .. "Missing " .. addAmount - availableAmount .. " of " .. inputName)
@@ -553,7 +652,8 @@ function Crafting:solveDependencyGraph(itemName, amount)
           end
         end
         
-        -- Save the current itemInputs/itemOutputs corresponding to the result. The duplicates are merged and eliminated to prevent intermediate steps from showing in the result.
+        -- Save the current itemInputs/itemOutputs corresponding to the result.
+        -- The duplicates are merged and eliminated to prevent intermediate steps from showing in the result.
         resultInputs = {}
         for k, v in pairs(itemInputs) do
           local netInput = v - (itemOutputs[k] or 0)
@@ -614,7 +714,7 @@ function Crafting:testDependencySolver()
   assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
   assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
-  -- Craft 16 torches, have log and coal.
+  -- Craft 16 torches, have 1 log and 4 coal.
   self.storageItems = {}
   addStorageItem("minecraft:log/0", "Oak Log", 1, 64)
   addStorageItem("minecraft:coal/0", "Coal", 4, 64)
@@ -625,7 +725,7 @@ function Crafting:testDependencySolver()
   assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
   assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
-  -- Craft 16 torches, have log, charcoal, and coal.
+  -- Craft 16 torches, have 1 log, 1 charcoal, and 3 coal.
   self.storageItems = {}
   addStorageItem("minecraft:log/0", "Oak Log", 1, 64)
   addStorageItem("minecraft:coal/1", "Charcoal", 1, 64)

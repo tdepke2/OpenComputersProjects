@@ -69,3 +69,9 @@ craft:
 1 stuff:egg "Egg" 64
 with
 stuff:nest 1
+
+# 1 log = 1 charcoal
+#craft:
+#1 minecraft:coal/1 "Charcoal" 64
+#with
+#minecraft:log 1
