@@ -441,20 +441,6 @@ function Crafting:solveDependencyGraph(itemName, amount)
     return "error", "No recipe found for \"" .. itemName .. "\"."
   end
   
-  
-  
-  
-  --##########################################################
-  --we got a problem, the NA-outputs not populated correctly.
-  --option 1: move the depth data from output* to craft*, but how do we know how many values to pop off output* during update?
-  --option 2: change output* to store outputs preemptively (basically same as inputs now), amount needs to be set later when we know it?
-  --option cool: modify craft* to use similar format to output*, and mark completed outputs instead of deleting them. now we don't even care about the depth
-  
-  
-  
-  
-  
-  
   local solverState = SolverState:new()
   solverState:craftPush(itemName, -1, amount)
   
@@ -464,20 +450,11 @@ function Crafting:solveDependencyGraph(itemName, amount)
   local numMissingItems = 0
   local bestNumMissingItems = math.huge
   
-  --local recipeStack = dstructs.Deque:new()
-  --while not recipeStack:empty() do
-    
-  --end
-  
   dlog.out("recipeSolver", "Crafting " .. amount .. " of " .. itemName)
   
-  --local MIX = false
-  
-  -- Make a partial backup of solverState so we can evaluate the crafting
+  -- Make a deep copy of solverState so we can evaluate the crafting
   -- dependencies at a later time. This assumes that we will call
-  -- restoreCraftState() later on within the same recursion depth, and that the
-  -- output* stacks and craft* stacks will only be appended to (except the first
-  -- element in craft* stacks can be modified).
+  -- restoreCraftState() later on within the same recursion depth.
   local function cacheCraftState(recursionDepth, solverState, cache)
     local spacing = string.rep("  ", recursionDepth)
     dlog.out("recipeSolver", spacing .. "Caching craft state...")
@@ -556,7 +533,7 @@ function Crafting:solveDependencyGraph(itemName, amount)
   -- Forward declares for below functions (cyclic dependency).
   local recursiveSolve, attemptRecipe
   
-  recursiveSolve = function(recursionDepth)--spacing, index)
+  recursiveSolve = function(recursionDepth)
     assert(recursionDepth < 50, "Recipe too complex or not possible.")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
     local spacing = string.rep("  ", recursionDepth)
     local currentName, currentIndex, currentAmount = solverState:craftTop()
@@ -678,7 +655,7 @@ function Crafting:solveDependencyGraph(itemName, amount)
     end
   end
   
-  attemptRecipe = function(recursionDepth)--spacing, index, recipeIndex)
+  attemptRecipe = function(recursionDepth)
     local spacing = string.rep("  ", recursionDepth)
     local currentName, currentIndex, currentAmount = solverState:craftTop()
     dlog.out("recipeSolver", spacing .. "Trying recipe " .. currentIndex .. " for " .. currentName .. " with amount " .. currentAmount)
@@ -689,21 +666,6 @@ function Crafting:solveDependencyGraph(itemName, amount)
     
     -- Invalidate the top element in the craft* stacks since we will process it now.
     solverState.craftAmounts[solverState.craftStackSize] = -1
-    
-    --[[
-    -- If mixing, scale the multiplier down to the limiting input in recipe first.
-    if MIX then
-      for _, input in ipairs(currentRecipe.inp) do
-        local inputName = input[1]
-        local recipeAmount = (currentRecipe.station and input[2] or #input - 1)
-        local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - requiredItems[inputName], 0)
-        
-        if mult * recipeAmount > availableAmount and self.recipes[inputName] then
-          mult = math.floor(availableAmount / recipeAmount)
-        end
-      end
-    end
-    --]]
     
     -- For each recipe input, add the item inputs to solverState and to the craft* stacks as well if we need to craft more of them.
     for _, input in ipairs(currentRecipe.inp) do
@@ -732,9 +694,6 @@ function Crafting:solveDependencyGraph(itemName, amount)
     for outputName, amount in pairs(currentRecipe.out) do
       dlog.out("recipeSolver", spacing .. "Add " .. mult * amount .. " of output " .. outputName)
       solverState:addItemOutput(outputName, mult * amount)
-      --if requiredItems[outputName] == 0 then    -- FIXME this might be a bug? do we allow zeros in requiredItems or no? seems useful to have. if not bug then need to update any modifications to requiredItems to check for zero! ##################################################
-        --requiredItems[outputName] = nil
-      --end
     end
     
     -- Purge completed elements from the craft* stacks and swap outputs into the non-ancestors.
@@ -748,12 +707,6 @@ function Crafting:solveDependencyGraph(itemName, amount)
     if solverState:craftEmpty() then
       dlog.out("recipeSolver", spacing .. "Found solution, numMissingItems = " .. numMissingItems)
       assert(solverState.outputStackSize == 0, "Got solution, but solverState.outputStackSize not empty.")
-      -- Temporarily merge in ancestor item outputs left in the stack to get the full list of outputs.
-      -- We do not call solverState:updateOutputs() here because the operation would have no effect (at bottom of dependency "tree").
-      --for i = 1, solverState.outputStackSize do
-        --local itemName = solverState.outputNames[i]
-        --solverState.itemNAOutputs[itemName] = solverState.itemNAOutputs[itemName] + solverState.outputAmounts[i]
-      --end
       
       dlog.out("recipeSolver", spacing .. "itemInputs/itemOutputs and processedIndices/processedBatches:", solverState.itemInputs, solverState.itemNAOutputs)
       for i = 1, #solverState.processedIndices do
@@ -809,12 +762,6 @@ function Crafting:solveDependencyGraph(itemName, amount)
         dlog.out("recipeSolver", spacing .. "resultInputs = ", resultInputs)
         dlog.out("recipeSolver", spacing .. "resultOutputs = ", resultOutputs)
       end
-      
-      -- Undo the temporary merge of ancestor item outputs.
-      --for i = 1, solverState.outputStackSize do
-        --local itemName = solverState.outputNames[i]
-        --solverState.itemNAOutputs[itemName] = solverState.itemNAOutputs[itemName] - solverState.outputAmounts[i]
-      --end
     else
       return recursiveSolve(recursionDepth + 1)
     end
