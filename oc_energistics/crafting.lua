@@ -311,10 +311,10 @@ end
 -- Searches for the sequence of recipes and their amounts needed to craft the
 -- target item. This uses a recursive algorithm that walks the dependency graph
 -- and tries each applicable recipe for the currently needed item one at a time.
--- Returns a string status ("ok", "missing", "error"), two table arrays containing
--- the sequence of recipe indices and the amount of each recipe to craft, and
--- two more tables that match item inputs to their amounts and item outputs to
--- their amounts.
+-- Returns a string status ("ok", "missing", "error"), two table arrays
+-- containing the sequence of recipe indices and the amount of each recipe to
+-- craft, and two more tables that match item inputs to their amounts and item
+-- outputs to their amounts.
 -- Currently this algorithm is not perfect, auto-crafting has been proven to be
 -- NP-hard so there is no perfect solution that exists (see
 -- https://squiddev.github.io/ae-sat/). Recipes that are recursive (an item is
@@ -330,6 +330,27 @@ end
 --   2) min batches is best.
 --   3) first found is chosen and recipes are ordered during init to define a priority. Maybe order recipe files to load in alphabetical?
 
+--[[
+
+
+more research sources to look into:
+
+factorio solvers using simplex algo:
+http://kirkmcdonald.github.io/posts/calculation.html
+https://github.com/factoriolab/factorio-lab/wiki/Optimizing-the-Solution
+
+linear programming/simplex solver:
+https://en.wikipedia.org/wiki/Linear_programming
+https://en.wikipedia.org/wiki/Simplex_algorithm
+https://en.wikipedia.org/wiki/Revised_simplex_method
+
+other:
+https://wiki.factorio.com/
+
+
+--]]
+
+
 local CRAFT_SOLVER_MAX_RECURSION = 1000
 local CRAFT_SOLVER_PRIORITY = 0
 -- 0 = first found (recipes ordered by priority)
@@ -337,10 +358,14 @@ local CRAFT_SOLVER_PRIORITY = 0
 -- 2 = min batches
 -- might want to try instead: https://unendli.ch/posts/2016-07-22-enumerations-in-lua.html
 
+-- Class to wrap the state of the dependency solver into a single object. Helps
+-- reduce the amount of data needed in the local scope and abstracts some common
+-- operations.
 local SolverState = {
   defaultZeroMeta = {__index = function() return 0 end}
 }
 
+-- Creates a new SolverState instance.
 function SolverState:new()
   self.__index = self
   self = setmetatable({}, self)
@@ -358,7 +383,7 @@ function SolverState:new()
   
   -- Stack of recipe name, index, and amount that are scheduled to craft to make the item.
   -- The name and index are kept separate to distinguish between alternative recipes for an item, an index of -1 means we may have to try multiple recipes that make the item.
-  -- For the amount, a value of -1 means the corresponding entry has already been processed and is scheduled to be deleted.
+  -- For the amount, a negative value corresponds to a batch size (not really an amount) and has already been processed.
   self.craftNames = {}
   self.craftIndices = {}
   self.craftAmounts = {}
@@ -376,16 +401,21 @@ function SolverState:new()
   return self
 end
 
+-- Directly adds an input to itemInputs.
 function SolverState:addItemInput(itemName, amount)
   self.itemInputs[itemName] = self.itemInputs[itemName] + amount
 end
 
+-- Indirectly adds an output to itemNAOutputs. The item must be registered to
+-- this table at a later time with SolverState:buildNextNAOutput() once a branch
+-- is completed and trimmed.
 function SolverState:addItemOutput(itemName, amount)
   self.outputStackSize = self.outputStackSize + 1
   self.outputNames[self.outputStackSize] = itemName
   self.outputAmounts[self.outputStackSize] = amount
 end
 
+-- Register the last-added output to itemNAOutputs (FILO order).
 function SolverState:buildNextNAOutput()
   local itemName = self.outputNames[self.outputStackSize]
   self.itemNAOutputs[itemName] = self.itemNAOutputs[itemName] + self.outputAmounts[self.outputStackSize]
@@ -395,18 +425,22 @@ function SolverState:buildNextNAOutput()
   self.outputStackSize = self.outputStackSize - 1
 end
 
+-- Check if craft* stacks empty.
 function SolverState:craftEmpty()
   return self.craftStackSize == 0
 end
 
+-- Get size of craft* stacks.
 function SolverState:craftSize()
   return self.craftStackSize
 end
 
+-- Get top element in craft* stacks.
 function SolverState:craftTop()
   return self.craftNames[self.craftStackSize], self.craftIndices[self.craftStackSize], self.craftAmounts[self.craftStackSize]
 end
 
+-- Push new element to craft* stacks.
 function SolverState:craftPush(name, recipeIndex, amount)
   self.craftStackSize = self.craftStackSize + 1
   self.craftNames[self.craftStackSize] = name
@@ -414,18 +448,23 @@ function SolverState:craftPush(name, recipeIndex, amount)
   self.craftAmounts[self.craftStackSize] = amount
 end
 
-function SolverState:craftPop(batchSize)
-  -- For the top element in craft* stacks, add it to processed* arrays.
-  -- If the recipe index was previously found, then update the existing entry instead of adding a new one.
+-- Pop the top element from craft* stacks. As a consequence, this first adds the
+-- element to the processed* arrays, caching it as part of the solution in the
+-- crafting chain.
+function SolverState:craftPop()
   local craftIndicesTop = self.craftIndices[self.craftStackSize]
+  -- Get the multiplier that was set in attemptRecipe().
+  local mult = -self.craftAmounts[self.craftStackSize]
   local i = self.mapProcessedIndices[craftIndicesTop]
+  
+  -- If the recipe index was previously found, then update the existing entry instead of adding a new one.
   if not i then
     i = #self.processedIndices + 1
     self.mapProcessedIndices[craftIndicesTop] = i
     self.processedIndices[i] = craftIndicesTop
-    self.processedBatches[i] = batchSize
+    self.processedBatches[i] = mult
   else
-    self.processedBatches[i] = self.processedBatches[i] + batchSize
+    self.processedBatches[i] = self.processedBatches[i] + mult
   end
   
   self.craftNames[self.craftStackSize] = nil
@@ -533,6 +572,10 @@ function Crafting:solveDependencyGraph(itemName, amount)
   -- Forward declares for below functions (cyclic dependency).
   local recursiveSolve, attemptRecipe
   
+  -- Primary recursive step in the dependency solver, expects a target item in
+  -- solverState craft* stacks. The recursionDepth starts at zero, and
+  -- represents the number of items processed from the craft* stacks (not the
+  -- same as the dependency "tree" depth).
   recursiveSolve = function(recursionDepth)
     assert(recursionDepth < 50, "Recipe too complex or not possible.")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
     local spacing = string.rep("  ", recursionDepth)
@@ -655,6 +698,9 @@ function Crafting:solveDependencyGraph(itemName, amount)
     end
   end
   
+  -- Secondary recursive step in the dependency solver. Evaluates a single
+  -- recipe to determine inputs required (and schedule these where possible),
+  -- outputs generated, and whether we have found a solution.
   attemptRecipe = function(recursionDepth)
     local spacing = string.rep("  ", recursionDepth)
     local currentName, currentIndex, currentAmount = solverState:craftTop()
@@ -664,8 +710,9 @@ function Crafting:solveDependencyGraph(itemName, amount)
     -- Compute amount multiplier as the number of items we need to craft over the number of items we get from the recipe (rounded up).
     local mult = math.ceil(currentAmount / currentRecipe.out[currentName])
     
-    -- Invalidate the top element in the craft* stacks since we will process it now.
-    solverState.craftAmounts[solverState.craftStackSize] = -1
+    -- Mark the top element in the craft* stacks as processed since we do that now.
+    -- The value changes from the amount to the multiplier so we can add to processedBatches later.
+    solverState.craftAmounts[solverState.craftStackSize] = -mult
     
     -- For each recipe input, add the item inputs to solverState and to the craft* stacks as well if we need to craft more of them.
     for _, input in ipairs(currentRecipe.inp) do
@@ -697,8 +744,8 @@ function Crafting:solveDependencyGraph(itemName, amount)
     end
     
     -- Purge completed elements from the craft* stacks and swap outputs into the non-ancestors.
-    while solverState.craftAmounts[solverState.craftStackSize] == -1 do
-      solverState:craftPop(mult)
+    while (solverState.craftAmounts[solverState.craftStackSize] or 0) < 0 do
+      solverState:craftPop()
       solverState:buildNextNAOutput()
     end
     dlog.out("recipeSolver", spacing .. "Update NA outputs completed, solverState.outputStackSize = ", solverState.outputStackSize, ", solverState.itemNAOutputs = ", solverState.itemNAOutputs)
@@ -732,19 +779,14 @@ function Crafting:solveDependencyGraph(itemName, amount)
           resultStatus = "missing"
         end
         
-        -- Copy the result of recipe indices and batch amounts from processed* arrays.
-        -- We iterate in reverse and push to the result array, this puts the preliminary crafting steps at the beginning of the array.
-        resultIndices = {}
-        resultBatches = {}
-        local j = 1
-        for i = #solverState.processedIndices, 1, -1 do
-          resultIndices[j] = solverState.processedIndices[i]
-          resultBatches[j] = solverState.processedBatches[i]
-          j = j + 1
-        end
+        -- Move the recipe indices and batch amounts from processed* arrays into the result.
+        resultIndices = solverState.processedIndices
+        solverState.processedIndices = nil
+        resultBatches = solverState.processedBatches
+        solverState.processedBatches = nil
         
         -- Save the current itemInputs/itemOutputs corresponding to the result.
-        -- Items that appear in both are merged and eliminated to prevent intermediate steps from showing in the result.
+        -- Items that appear in both are merged and eliminated to prevent intermediate steps from showing up.
         resultInputs = {}
         for k, v in pairs(solverState.itemInputs) do
           local netInput = v - solverState.itemNAOutputs[k]
@@ -822,11 +864,11 @@ function Crafting:testDependencySolver()
   addStorageItem("minecraft:coal/1", "Charcoal", 1, 64)
   addStorageItem("minecraft:coal/0", "Coal", 3, 64)
   status, recipeIndices, recipeBatches, itemInputs, itemOutputs = self:solveDependencyGraph("minecraft:torch/0", 16)
-  --assert(status == "ok")
-  --assert(dstructs.objectsEqual(recipeIndices, {4, 3, 2}))
-  --assert(dstructs.objectsEqual(recipeBatches, {1, 1, 4}))
-  --assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
-  --assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  assert(status == "ok")
+  assert(dstructs.objectsEqual(recipeIndices, {4, 3, 2, 1}))
+  assert(dstructs.objectsEqual(recipeBatches, {1, 1, 1, 3}))
+  assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 3, ["minecraft:coal/1"] = 1}))
+  assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
 --[[
 
