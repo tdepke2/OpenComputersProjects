@@ -122,7 +122,10 @@ function dlog.setFileOut(filename, mode)
   if filename ~= "" then
     dlog.fileOutput = io.open(filename, mode)
   end
-  dlog.enableOutput = dlog.fileOutput or dlog.stdOutput
+  dlog.enableOutput = false
+  if dlog.fileOutput or dlog.stdOutput then
+    dlog.enableOutput = true
+  end
 end
 
 -- dlog.setStdOut(state: boolean)
@@ -131,7 +134,10 @@ end
 -- conjunction with file output.
 function dlog.setStdOut(state)
   dlog.stdOutput = state
-  dlog.enableOutput = dlog.fileOutput or dlog.stdOutput
+  dlog.enableOutput = false
+  if dlog.fileOutput or dlog.stdOutput then
+    dlog.enableOutput = true
+  end
 end
 
 -- dlog.setSubsystems(subsystems: table)
