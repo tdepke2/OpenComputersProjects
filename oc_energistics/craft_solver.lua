@@ -511,7 +511,7 @@ function Crafting:solveDependencyGraph(itemName, amount)
 end
 
 -- Runs some unit tests for the solveDependencyGraph() algorithm.
-function Crafting:testDependencySolver()
+local function testDependencySolver()
   io.write("Running solveDependencyGraph() tests...\n")
   self.stations = {}
   self.recipes = {}

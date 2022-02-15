@@ -1143,90 +1143,223 @@ function Gui:addPendingCraftRequest(ticket, craftProgress)
 end
 
 
+-- Interface class definition.
+local Interface = {}
 
--- FIXME still need to refactor interface and clean these up. ######################################################
-local storageItems, storageServerAddress, recipeItems, craftingServerAddress, gui
+-- Hook up errors to throw on access to nil class members (usually a programming
+-- error or typo).
+setmetatable(Interface, {
+  __index = function(t, k)
+    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Interface class.")
+  end
+})
 
+function Interface:new()
+  self.__index = self
+  setmetatable({}, self)
+  
+  --local self.storageItems, self.storageServerAddress, self.recipeItems, self.craftingServerAddress, self.gui
+  
+  return self
+end
 
 
 -- Apply the items diff to storageItems to keep the table synced up.
-local function handleStorItemDiff(_, _, _, itemsDiff)
+function Interface:handleStorItemDiff(_, _, itemsDiff)
   for itemName, diff in pairs(itemsDiff) do
     if diff.total == 0 then
-      gui:removedStorageItem(itemName)
-      storageItems[itemName] = nil
-    elseif storageItems[itemName] then
-      storageItems[itemName].total = diff.total
+      self.gui:removedStorageItem(itemName)
+      self.storageItems[itemName] = nil
+    elseif self.storageItems[itemName] then
+      self.storageItems[itemName].total = diff.total
     else
-      storageItems[itemName] = {}
-      storageItems[itemName].maxSize = diff.maxSize
-      storageItems[itemName].label = diff.label
-      storageItems[itemName].total = diff.total
-      gui:addedStorageItem(itemName)
+      self.storageItems[itemName] = {}
+      self.storageItems[itemName].maxSize = diff.maxSize
+      self.storageItems[itemName].label = diff.label
+      self.storageItems[itemName].total = diff.total
+      self.gui:addedStorageItem(itemName)
     end
   end
-  gui:updateSortingKeys()
+  self.gui:updateSortingKeys()
 end
-packer.callbacks.stor_item_diff = handleStorItemDiff
+packer.callbacks.stor_item_diff = Interface.handleStorItemDiff
 
 
 -- If we get a broadcast that storage started, it must have just rebooted and we
 -- need to discover new storageItems.
-local function handleStorStarted(_, address, _)
+function Interface:handleStorStarted(address, _)
   wnet.send(modem, address, COMMS_PORT, packer.pack.stor_discover())
 end
-packer.callbacks.stor_started = handleStorStarted
+packer.callbacks.stor_started = Interface.handleStorStarted
 
 
 -- New item list, update storageItems and GUI.
-local function handleStorItemList(_, address, _, items)
-  storageItems = items
-  storageServerAddress = address
-  gui:setStorageItems(storageItems)
-  gui.storageServerAddress = address
+function Interface:handleStorItemList(address, _, items)
+  self.storageItems = items
+  self.storageServerAddress = address
+  self.gui:setStorageItems(self.storageItems)
+  self.gui.storageServerAddress = address
 end
-packer.callbacks.stor_item_list = handleStorItemList
+packer.callbacks.stor_item_list = Interface.handleStorItemList
 
 
 -- 
-local function handleCraftStarted(_, _, _)
+function Interface:handleCraftStarted(_, _)
   -- TODO #######################################################################################################################################################################
 end
-packer.callbacks.craft_started = handleCraftStarted
+packer.callbacks.craft_started = Interface.handleCraftStarted
 
 
 -- 
-local function handleCraftRecipeList(_, _, _, recipeItems)
+function Interface:handleCraftRecipeList(_, _, recipeItems)
   
 end
-packer.callbacks.craft_recipe_list = handleCraftRecipeList
+packer.callbacks.craft_recipe_list = Interface.handleCraftRecipeList
 
 
 -- Got a response from crafting request, update in GUI to show required items
 -- for crafting operation.
-local function handleCraftRecipeConfirm(_, _, _, ticket, craftProgress)
-  gui:addPendingCraftRequest(ticket, craftProgress)
+function Interface:handleCraftRecipeConfirm(_, _, ticket, craftProgress)
+  self.gui:addPendingCraftRequest(ticket, craftProgress)
 end
-packer.callbacks.craft_recipe_confirm = handleCraftRecipeConfirm
+packer.callbacks.craft_recipe_confirm = Interface.handleCraftRecipeConfirm
 
 
 -- Got error response from crafting request, or failure during crafting.
-local function handleCraftRecipeError(_, _, _, ticket, errMessage)
-  if gui.crafting.pendingCraftRequests[ticket] or gui.crafting.activeCraftRequests[ticket] then
-    gui:cancelCraftRequest(ticket)
+function Interface:handleCraftRecipeError(_, _, ticket, errMessage)
+  if self.gui.crafting.pendingCraftRequests[ticket] or self.gui.crafting.activeCraftRequests[ticket] then
+    self.gui:cancelCraftRequest(ticket)
   end
   
   io.write("Error in recipe: " .. ticket .. ", " .. errMessage .. "\n")    -- FIXME show error in gui ################################################################
   -- two options here, either display in log at bottom or clear crafting status window and display there (but then we have to keep that status window open)
 end
-packer.callbacks.craft_recipe_error = handleCraftRecipeError
+packer.callbacks.craft_recipe_error = Interface.handleCraftRecipeError
 
 
 
+-- Performs setup and initialization tasks.
+function Interface:setupThreadFunc(mainContext)
+  dlog.out("main", "Setup thread starts.")
+  modem.open(COMMS_PORT)
+  screen.setPrecise(false)
+  
+  -- Contact the storage server.
+  local attemptNumber = 1
+  local lastAttemptTime = 0
+  self.storageServerAddress = false
+  while not self.storageServerAddress do
+    if computer.uptime() >= lastAttemptTime + 2 then
+      lastAttemptTime = computer.uptime()
+      term.clearLine()
+      io.write("Trying to contact storage server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
+      wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_discover())
+      attemptNumber = attemptNumber + 1
+    end
+    local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
+    if port == COMMS_PORT and header == "stor_item_list" then
+      self.storageItems = packer.unpack.stor_item_list(data)
+      self.storageServerAddress = address
+    end
+  end
+  io.write("\nSuccess.\n")
+  
+  -- Contact the crafting server.
+  attemptNumber = 1
+  lastAttemptTime = 0
+  self.craftingServerAddress = false
+  while not self.craftingServerAddress do
+    if computer.uptime() >= lastAttemptTime + 2 then
+      lastAttemptTime = computer.uptime()
+      term.clearLine()
+      io.write("Trying to contact crafting server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
+      wnet.send(modem, nil, COMMS_PORT, packer.pack.craft_discover())
+      attemptNumber = attemptNumber + 1
+    end
+    local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
+    if port == COMMS_PORT and header == "craft_recipe_list" then
+      self.recipeItems = packer.unpack.craft_recipe_list(data)
+      self.craftingServerAddress = address
+    end
+  end
+  io.write("\nSuccess.\n")
+  
+  dlog.out("setup", "storageItems:", self.storageItems)
+  
+  self.gui = Gui:new(self.storageItems, self.storageServerAddress, self.recipeItems, self.craftingServerAddress)
+  self.gui:draw()
+  
+  mainContext.threadSuccess = true
+  dlog.out("main", "Setup thread ends.")
+end
 
+-- Listens for incoming packets over the network and deals with them.
+function Interface:modemThreadFunc(mainContext)
+  dlog.out("main", "Modem thread starts.")
+  dlog.out("modem", "Listening on port " .. COMMS_PORT .. "...\n")
+  while true do
+    local address, port, message = wnet.receive()
+    if port == COMMS_PORT then
+      packer.handlePacket(self, address, port, message)
+    end
+  end
+  dlog.out("main", "Modem thread ends.")
+end
 
+-- Listens for keyboard and screen events and sends them to the GUI.
+function Interface:userInputThreadFunc(mainContext)
+  dlog.out("main", "User input thread starts.")
+  local function filterEvents(eventName, ...)
+    return eventName == "key_down" or eventName == "key_up" or eventName == "touch" or eventName == "scroll"
+  end
+  while true do
+    local ev = {event.pullFiltered(filterEvents)}
+    
+    if ev[1] == "key_down" then
+      self.gui:handleKeyDown(select(2, table.unpack(ev)))
+    elseif ev[1] == "key_up" then
+      self.gui:handleKeyUp(select(2, table.unpack(ev)))
+    elseif ev[1] == "touch" then
+      self.gui:handleTouch(select(2, table.unpack(ev)))
+    elseif ev[1] == "scroll" then
+      self.gui:handleScroll(select(2, table.unpack(ev)))
+    end
+  end
+  dlog.out("main", "User input thread ends.")
+end
+
+-- Redraws parts of the GUI as set from flags. This prevents some slow drawing
+-- tasks from lagging the UI. Used to use an event-based system but it seems a
+-- lot more performant when using os.sleep() loop.
+function Interface:guiLazyDrawThreadFunc(mainContext)
+  dlog.out("main", "GUI lazy draw thread starts.")
+  while true do
+    os.sleep(self.gui.LAZY_DRAW_INTERVAL)
+    for i, v in ipairs(self.gui.drawRequest) do
+      v(self.gui, true)
+      self.gui.drawRequest[i] = nil
+    end
+  end
+  dlog.out("main", "GUI lazy draw thread ends.")
+end
+
+-- Get command-line arguments.
+local args = {...}
+
+-- Main program starts here. Runs a few threads to do setup work, listen for
+-- packets, user input events, etc.
 local function main()
-  local threadSuccess = false
+  local mainContext = {}
+  mainContext.threadSuccess = false
+  mainContext.killProgram = false
+  
+  -- Wrapper for os.exit() that restores the blocking of globals. Threads
+  -- spawned from main() can just call os.exit() instead of this version.
+  local function exit(code)
+    dlog.osBlockNewGlobals(false)
+    os.exit(code)
+  end
+  
   -- Captures the interrupt signal to stop program.
   local interruptThread = thread.create(function()
     event.pull("interrupted")
@@ -1236,123 +1369,43 @@ local function main()
   -- false and a thread exits, reports error and exits program.
   local function waitThreads(threads)
     thread.waitForAny(threads)
-    if interruptThread:status() == "dead" then
-      dlog.osBlockNewGlobals(false)
-      os.exit(1)
-    elseif not threadSuccess then
+    if interruptThread:status() == "dead" or mainContext.killProgram then
+      exit()
+    elseif not mainContext.threadSuccess then
       io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-      dlog.osBlockNewGlobals(false)
-      os.exit(1)
+      exit()
     end
-    threadSuccess = false
+    mainContext.threadSuccess = false
   end
   
   if DLOG_FILE_OUT ~= "" then
     dlog.setFileOut(DLOG_FILE_OUT, "w")
   end
   
-  -- Performs setup and initialization tasks.
-  local setupThread = thread.create(function()
-    modem.open(COMMS_PORT)
-    screen.setPrecise(false)
-    
-    -- Contact the storage server.
-    local attemptNumber = 1
-    local lastAttemptTime = 0
-    while not storageServerAddress do
-      if computer.uptime() >= lastAttemptTime + 2 then
-        lastAttemptTime = computer.uptime()
-        term.clearLine()
-        io.write("Trying to contact storage server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
-        wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_discover())
-        attemptNumber = attemptNumber + 1
-      end
-      local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
-      if port == COMMS_PORT and header == "stor_item_list" then
-        storageItems = packer.unpack.stor_item_list(data)
-        storageServerAddress = address
-      end
+  -- Check for any command-line arguments passed to the program.
+  if next(args) ~= nil then
+    if args[1] == "test" then
+      io.write("Tests not yet implemented.\n")
+      exit()
+    else
+      io.stderr:write("Unknown argument \"" .. tostring(args[1]) .. "\".\n")
+      exit()
     end
-    io.write("\nSuccess.\n")
-    
-    -- Contact the crafting server.
-    attemptNumber = 1
-    lastAttemptTime = 0
-    while not craftingServerAddress do
-      if computer.uptime() >= lastAttemptTime + 2 then
-        lastAttemptTime = computer.uptime()
-        term.clearLine()
-        io.write("Trying to contact crafting server on port " .. COMMS_PORT .. " (attempt " .. attemptNumber .. ")...")
-        wnet.send(modem, nil, COMMS_PORT, packer.pack.craft_discover())
-        attemptNumber = attemptNumber + 1
-      end
-      local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
-      if port == COMMS_PORT and header == "craft_recipe_list" then
-        recipeItems = packer.unpack.craft_recipe_list(data)
-        craftingServerAddress = address
-      end
-    end
-    io.write("\nSuccess.\n")
-    
-    dlog.out("setup", "storageItems:", storageItems)
-    
-    gui = Gui:new(storageItems, storageServerAddress, recipeItems, craftingServerAddress)
-    gui:draw()
-    
-    threadSuccess = true
-  end)
+  end
   
+  local interface = Interface:new()
+  
+  local setupThread = thread.create(Interface.setupThreadFunc, interface, mainContext)
   
   waitThreads({interruptThread, setupThread})
   
-  
-  -- Listens for incoming packets over the network and deals with them.
-  local modemThread = thread.create(function()
-    while true do
-      local address, port, message = wnet.receive()
-      if port == COMMS_PORT then
-        packer.handlePacket(nil, address, port, message)
-      end
-    end
-  end)
-  
-  -- Listens for keyboard and screen events and sends them to the GUI.
-  local userInputThread = thread.create(function()
-    local function filterEvents(eventName, ...)
-      return eventName == "key_down" or eventName == "key_up" or eventName == "touch" or eventName == "scroll"
-    end
-    while true do
-      local ev = {event.pullFiltered(filterEvents)}
-      
-      if ev[1] == "key_down" then
-        gui:handleKeyDown(select(2, table.unpack(ev)))
-      elseif ev[1] == "key_up" then
-        gui:handleKeyUp(select(2, table.unpack(ev)))
-      elseif ev[1] == "touch" then
-        gui:handleTouch(select(2, table.unpack(ev)))
-      elseif ev[1] == "scroll" then
-        gui:handleScroll(select(2, table.unpack(ev)))
-      end
-    end
-  end)
-  
-  -- Redraws parts of the GUI as set from flags. This prevents some slow drawing
-  -- tasks from lagging the UI. Used to use an event-based system but it seems a
-  -- lot more performant when using os.sleep() loop.
-  local guiLazyDrawThread = thread.create(function()
-    while true do
-      os.sleep(gui.LAZY_DRAW_INTERVAL)
-      for i, v in ipairs(gui.drawRequest) do
-        v(gui, true)
-        gui.drawRequest[i] = nil
-      end
-    end
-  end)
-  
+  local modemThread = thread.create(Interface.modemThreadFunc, interface, mainContext)
+  local userInputThread = thread.create(Interface.userInputThreadFunc, interface, mainContext)
+  local guiLazyDrawThread = thread.create(Interface.guiLazyDrawThreadFunc, interface, mainContext)
   
   waitThreads({interruptThread, modemThread, userInputThread, guiLazyDrawThread})
   
-  
+  dlog.out("main", "Killing threads and stopping program.")
   interruptThread:kill()
   modemThread:kill()
   userInputThread:kill()

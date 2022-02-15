@@ -135,6 +135,49 @@ local function makeClassRigid(cls, obj)
 end
 
 
+-- Version 2 of the above. Saves the currently defined members in a table to fix the problem with nil assignment.
+local function makeClassRigid2(cls, obj)
+  local function invalidRead(t, k)
+    --print("__index() invoked")
+    --assert(t._makeClassRigid)
+    if not t._makeClassRigid[k] then
+      print("ERROR: Attempt access to non-existent key " .. tostring(k))
+      --print("table is", t)
+    end
+  end
+  
+  local function invalidWrite(t, k, v)
+    --print("__newindex() invoked")
+    --assert(getmetatable(t)._makeClassRigid)
+    if not getmetatable(t)._makeClassRigid[k] then
+      print("ERROR: Attempt write to non-existent key " .. tostring(k))
+      --print("table is", t)
+    else
+      rawset(t, k, v)
+    end
+  end
+  
+  if not cls._makeClassRigid then
+    cls._makeClassRigid = {}
+    for k, _ in pairs(cls) do
+      cls._makeClassRigid[k] = true
+    end
+    for k, _ in pairs(obj) do
+      cls._makeClassRigid[k] = true
+    end
+    local m1 = getmetatable(cls) or {}
+    m1.__index = invalidRead
+    setmetatable(cls, m1)
+  end
+  local m2 = getmetatable(obj) or {}
+  m2.__newindex = invalidWrite
+  setmetatable(obj, m2)
+  
+  --print("invalidRead is", invalidRead)
+  --print("invalidWrite is", invalidWrite)
+end
+
+
 
 local Account2 = {
   MAX_ACCOUNTS = 100,
@@ -148,7 +191,8 @@ function Account2:new(id)
   
   self.id = id
   
-  makeClassRigid(Account2, self)
+  --makeClassRigid(Account2, self)
+  makeClassRigid2(Account2, self)
   
   return self
 end

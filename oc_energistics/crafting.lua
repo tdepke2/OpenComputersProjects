@@ -1380,6 +1380,8 @@ function Crafting:commandThreadFunc(mainContext)
   dlog.out("main", "Command thread ends.")
 end
 
+-- Get command-line arguments.
+local args = {...}
 
 -- Main program starts here. Runs a few threads to do setup work, listen for
 -- packets, manage crafting jobs, etc.
@@ -1387,6 +1389,13 @@ local function main()
   local mainContext = {}
   mainContext.threadSuccess = false
   mainContext.killProgram = false
+  
+  -- Wrapper for os.exit() that restores the blocking of globals. Threads
+  -- spawned from main() can just call os.exit() instead of this version.
+  local function exit(code)
+    dlog.osBlockNewGlobals(false)
+    os.exit(code)
+  end
   
   -- Captures the interrupt signal to stop program.
   local interruptThread = thread.create(function()
@@ -1398,18 +1407,27 @@ local function main()
   local function waitThreads(threads)
     thread.waitForAny(threads)
     if interruptThread:status() == "dead" or mainContext.killProgram then
-      dlog.osBlockNewGlobals(false)
-      os.exit(1)
+      exit()
     elseif not mainContext.threadSuccess then
       io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-      dlog.osBlockNewGlobals(false)
-      os.exit(1)
+      exit()
     end
     mainContext.threadSuccess = false
   end
   
   if DLOG_FILE_OUT ~= "" then
     dlog.setFileOut(DLOG_FILE_OUT, "w")
+  end
+  
+  -- Check for any command-line arguments passed to the program.
+  if next(args) ~= nil then
+    if args[1] == "test" then
+      io.write("Tests not yet implemented.\n")
+      exit()
+    else
+      io.stderr:write("Unknown argument \"" .. tostring(args[1]) .. "\".\n")
+      exit()
+    end
   end
   
   local crafting = Crafting:new()
