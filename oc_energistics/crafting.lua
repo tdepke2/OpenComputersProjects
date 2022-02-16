@@ -19,6 +19,7 @@ local thread = require("thread")
 local include = require("include")
 local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
+local craft_solver = include("craft_solver")
 local dstructs = include("dstructs")
 local packer = include("packer")
 local wnet = include("wnet")
@@ -308,10 +309,6 @@ function Crafting:new()
   return self
 end
 
-function Crafting:solveDependencyGraph(itemName, amount)
-  
-end
-
 
 -- Update the amount of an item in storedItems. This happens when an item
 -- arrives in a drone inventory (finished crafting) or when item exported to
@@ -556,7 +553,7 @@ packer.callbacks.craft_discover = Crafting.handleCraftDiscover
 -- ticket for the operation if successful.
 function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
   self.interfaceServerAddresses[address] = true
-  local status, recipeIndices, recipeBatches, itemInputs, itemOutputs = self:solveDependencyGraph(itemName, amount)
+  local status, recipeIndices, recipeBatches, itemInputs, itemOutputs = craft_solver.solveDependencyGraph(self.recipes, self.storageItems, itemName, amount)
   
   dlog.out("craftCheckRecipe", "status = " .. status)
   if status == "ok" or status == "missing" then
@@ -647,7 +644,7 @@ function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
       wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_confirm("missing", craftProgress))
     end
   else
-    -- Error status was returned from solveDependencyGraph(), the second return value recipeIndices contains the error message.
+    -- Error status was returned from craft_solver.solveDependencyGraph(), the second return value recipeIndices contains the error message.
     wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_error("check", recipeIndices))
   end
 end
@@ -824,13 +821,13 @@ function Crafting:setupThreadFunc(mainContext)
   end
   io.write("\nSuccess.\n")
   
-  --local status, recipeIndices, recipeBatches, requiredItems = self:solveDependencyGraph("minecraft:torch/0", 16)
+  --local status, recipeIndices, recipeBatches, requiredItems = craft_solver.solveDependencyGraph(self.recipes, self.storageItems, "minecraft:torch/0", 16)
   
   --self.storageItems["stuff:impossible/0"] = {}
   --self.storageItems["stuff:impossible/0"].maxSize = 64
   --self.storageItems["stuff:impossible/0"].label = "impossible"
   --self.storageItems["stuff:impossible/0"].total = 1
-  --local status, recipeIndices, recipeBatches, requiredItems = self:solveDependencyGraph("stuff:nou/0", 100)
+  --local status, recipeIndices, recipeBatches, requiredItems = craft_solver.solveDependencyGraph(self.recipes, self.storageItems, "stuff:nou/0", 100)
   
   --dlog.out("info", "status = " .. status)
   --if status == "ok" or status == "missing" then
@@ -1422,7 +1419,7 @@ local function main()
   -- Check for any command-line arguments passed to the program.
   if next(args) ~= nil then
     if args[1] == "test" then
-      io.write("Tests not yet implemented.\n")
+      craft_solver.testDependencySolver(loadRecipes, verifyRecipes)
       exit()
     else
       io.stderr:write("Unknown argument \"" .. tostring(args[1]) .. "\".\n")

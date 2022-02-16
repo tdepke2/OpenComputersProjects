@@ -1,25 +1,3 @@
--- Searches for the sequence of recipes and their amounts needed to craft the
--- target item. This uses a recursive algorithm that walks the dependency graph
--- and tries each applicable recipe for the currently needed item one at a time.
--- Returns a string status ("ok", "missing", "error"), two table arrays
--- containing the sequence of recipe indices and the amount of each recipe to
--- craft, and two more tables that match item inputs to their amounts and item
--- outputs to their amounts.
--- Currently this algorithm is not perfect, auto-crafting has been proven to be
--- NP-hard so there is no perfect solution that exists (see
--- https://squiddev.github.io/ae-sat/). Recipes that are recursive (an item is
--- crafted with itself, or a chain like A->B, B->C, C->A) and recipes that
--- should be split to make the item (need 8 torches but only have 1 coal and 1
--- charcoal) can not be solved properly right now.
--- 
--- FIXME if have time, improve this to handle the above drawbacks. ##############################################################################
-
-
--- FIXME need to plan for better priority when finding best recipe sequence, a few thoughts:
---   1) minimum number of items tells us the best sequence.
---   2) min batches is best.
---   3) first found is chosen and recipes are ordered during init to define a priority. Maybe order recipe files to load in alphabetical?
-
 --[[
 
 
@@ -40,6 +18,11 @@ https://wiki.factorio.com/
 
 --]]
 
+local include = require("include")
+local dlog = include("dlog")
+local dstructs = include("dstructs")
+
+local solver = {}
 
 local CRAFT_SOLVER_MAX_RECURSION = 1000
 local CRAFT_SOLVER_PRIORITY = 0
@@ -164,9 +147,32 @@ function SolverState:craftPop()
 end
 
 
-function Crafting:solveDependencyGraph(itemName, amount)
+
+-- Searches for the sequence of recipes and their amounts needed to craft the
+-- target item. This uses a recursive algorithm that walks the dependency graph
+-- and tries each applicable recipe for the currently needed item one at a time.
+-- Returns a string status ("ok", "missing", "error"), two table arrays
+-- containing the sequence of recipe indices and the amount of each recipe to
+-- craft, and two more tables that match item inputs to their amounts and item
+-- outputs to their amounts.
+-- Currently this algorithm is not perfect, auto-crafting has been proven to be
+-- NP-hard so there is no perfect solution that exists (see
+-- https://squiddev.github.io/ae-sat/). Recipes that are recursive (an item is
+-- crafted with itself, or a chain like A->B, B->C, C->A) and recipes that
+-- should be split to make the item (need 8 torches but only have 1 coal and 1
+-- charcoal) can not be solved properly right now.
+-- 
+-- FIXME if have time, improve this to handle the above drawbacks. ##############################################################################
+
+
+-- FIXME need to plan for better priority when finding best recipe sequence, a few thoughts:
+--   1) minimum number of items tells us the best sequence.
+--   2) min batches is best.
+--   3) first found is chosen and recipes are ordered during init to define a priority. Maybe order recipe files to load in alphabetical?
+
+function solver.solveDependencyGraph(recipes, storageItems, itemName, amount)
   dlog.checkArgs(itemName, "string", amount, "number")
-  if not self.recipes[itemName] then
+  if not recipes[itemName] then
     return "error", "No recipe found for \"" .. itemName .. "\"."
   end
   
@@ -277,15 +283,15 @@ function Crafting:solveDependencyGraph(itemName, amount)
     if currentIndex ~= -1 then
       dlog.out("recipeSolver", spacing .. "Recipe " .. currentIndex .. " was pre-selected")
       return attemptRecipe(recursionDepth)
-    elseif #self.recipes[currentName] == 1 then
-      solverState.craftIndices[solverState.craftStackSize] = self.recipes[currentName][1]
+    elseif #recipes[currentName] == 1 then
+      solverState.craftIndices[solverState.craftStackSize] = recipes[currentName][1]
       return attemptRecipe(recursionDepth)
     else
       local solverStateCache = {}
       
       -- Try each alternate recipe independently (no mixing different types).
       dlog.out("recipeSolver", spacing .. "Mix method 1: try each recipe independently.")
-      for _, recipeIndex in ipairs(self.recipes[currentName]) do
+      for _, recipeIndex in ipairs(recipes[currentName]) do
         cacheCraftState(recursionDepth, solverState, solverStateCache)
         solverState.craftIndices[solverState.craftStackSize] = recipeIndex
         attemptRecipe(recursionDepth)
@@ -303,17 +309,17 @@ function Crafting:solveDependencyGraph(itemName, amount)
       local downscaledAmountsSum = 0
       local downscaledNumPos = 0
       local downscaledNumInf = 0
-      for i, recipeIndex in ipairs(self.recipes[currentName]) do
-        local currentRecipe = self.recipes[recipeIndex]
+      for i, recipeIndex in ipairs(recipes[currentName]) do
+        local currentRecipe = recipes[recipeIndex]
         local mult = math.huge
         
         for _, input in ipairs(currentRecipe.inp) do
           local inputName = input[1]
           local inputAmount = (currentRecipe.station and input[2] or #input - 1)
-          local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - solverState.itemInputs[inputName] + solverState.itemNAOutputs[inputName], 0)
+          local availableAmount = math.max((storageItems[inputName] and storageItems[inputName].total or 0) - solverState.itemInputs[inputName] + solverState.itemNAOutputs[inputName], 0)
           
           -- Reduce mult if resource does not have a recipe (it's raw) and it's limiting the amount we can craft.
-          if not self.recipes[inputName] and mult * inputAmount > availableAmount then
+          if not recipes[inputName] and mult * inputAmount > availableAmount then
             mult = math.floor(availableAmount / inputAmount)
           end
         end
@@ -342,9 +348,9 @@ function Crafting:solveDependencyGraph(itemName, amount)
         if downscaled > 0 and downscaled ~= math.huge then
           local newAmount = math.min(downscaled, remainingCraftAmount)
           remainingCraftAmount = remainingCraftAmount - newAmount
-          solverState.craftIndices[solverState.craftStackSize] = self.recipes[currentName][i]
+          solverState.craftIndices[solverState.craftStackSize] = recipes[currentName][i]
           solverState.craftAmounts[solverState.craftStackSize] = newAmount
-          dlog.out("recipeSolver", spacing .. "Added amount " .. newAmount .. " for recipe " .. self.recipes[currentName][i] .. " (i = " .. i .. ")")
+          dlog.out("recipeSolver", spacing .. "Added amount " .. newAmount .. " for recipe " .. recipes[currentName][i] .. " (i = " .. i .. ")")
           
           if remainingCraftAmount == 0 then
             break
@@ -361,9 +367,9 @@ function Crafting:solveDependencyGraph(itemName, amount)
             local newAmount = math.ceil(remainingCraftAmount / remainingNumInf)
             remainingCraftAmount = remainingCraftAmount - newAmount
             remainingNumInf = remainingNumInf - 1
-            solverState.craftIndices[solverState.craftStackSize] = self.recipes[currentName][i]
+            solverState.craftIndices[solverState.craftStackSize] = recipes[currentName][i]
             solverState.craftAmounts[solverState.craftStackSize] = newAmount
-            dlog.out("recipeSolver", spacing .. "Added amount " .. newAmount .. " for recipe " .. self.recipes[currentName][i] .. " (i = " .. i .. ")")
+            dlog.out("recipeSolver", spacing .. "Added amount " .. newAmount .. " for recipe " .. recipes[currentName][i] .. " (i = " .. i .. ")")
             
             if remainingCraftAmount == 0 then
               break
@@ -395,7 +401,7 @@ function Crafting:solveDependencyGraph(itemName, amount)
     local spacing = string.rep("  ", recursionDepth)
     local currentName, currentIndex, currentAmount = solverState:craftTop()
     dlog.out("recipeSolver", spacing .. "Trying recipe " .. currentIndex .. " for " .. currentName .. " with amount " .. currentAmount)
-    local currentRecipe = self.recipes[currentIndex]
+    local currentRecipe = recipes[currentIndex]
     
     -- Compute amount multiplier as the number of items we need to craft over the number of items we get from the recipe (rounded up).
     local mult = math.ceil(currentAmount / currentRecipe.out[currentName])
@@ -408,11 +414,11 @@ function Crafting:solveDependencyGraph(itemName, amount)
     for _, input in ipairs(currentRecipe.inp) do
       local inputName = input[1]
       local addAmount = mult * (currentRecipe.station and input[2] or #input - 1)
-      local availableAmount = math.max((self.storageItems[inputName] and self.storageItems[inputName].total or 0) - solverState.itemInputs[inputName] + solverState.itemNAOutputs[inputName], 0)
+      local availableAmount = math.max((storageItems[inputName] and storageItems[inputName].total or 0) - solverState.itemInputs[inputName] + solverState.itemNAOutputs[inputName], 0)
       
       -- Check if we need more than what's available.
       if addAmount > availableAmount then
-        if self.recipes[inputName] then
+        if recipes[inputName] then
           -- Add the addAmount minus availableAmount to craft* stacks if the recipe is known.
           dlog.out("recipeSolver", spacing .. "Craft " .. addAmount - availableAmount .. " of " .. inputName)
           solverState:craftPush(inputName, -1, addAmount - availableAmount)
@@ -454,7 +460,7 @@ function Crafting:solveDependencyGraph(itemName, amount)
       -- Determine the total number of items to craft and compare with the best found so far.
       local craftingTotal = 0
       for k, v in pairs(requiredItems) do
-        craftingTotal = craftingTotal + math.max(v - (self.storageItems[k] and self.storageItems[k].total or 0), 0)
+        craftingTotal = craftingTotal + math.max(v - (storageItems[k] and storageItems[k].total or 0), 0)
       end
       dlog.out("recipeSolver", "craftingTotal = " .. craftingTotal)
       --]]
@@ -510,27 +516,29 @@ function Crafting:solveDependencyGraph(itemName, amount)
   return resultStatus, resultIndices, resultBatches, resultInputs, resultOutputs
 end
 
+
 -- Runs some unit tests for the solveDependencyGraph() algorithm.
-local function testDependencySolver()
+function solver.testDependencySolver(loadRecipesFunc, verifyRecipesFunc)
   io.write("Running solveDependencyGraph() tests...\n")
-  self.stations = {}
-  self.recipes = {}
-  loadRecipes(self.stations, self.recipes, "misc/test_recipes.txt")
-  verifyRecipes(self.stations, self.recipes)
+  local stations = {}
+  local recipes = {}
+  local storageItems
+  loadRecipesFunc(stations, recipes, "misc/test_recipes.txt")
+  verifyRecipesFunc(stations, recipes)
   
   local function addStorageItem(itemName, label, total, maxSize)
-    self.storageItems[itemName] = {}
-    self.storageItems[itemName].maxSize = maxSize
-    self.storageItems[itemName].label = label
-    self.storageItems[itemName].total = total
+    storageItems[itemName] = {}
+    storageItems[itemName].maxSize = maxSize
+    storageItems[itemName].label = label
+    storageItems[itemName].total = total
   end
   
   local status, recipeIndices, recipeBatches, itemInputs, itemOutputs
-  --dlog.out("test", "recipes:", self.recipes)
+  --dlog.out("test", "recipes:", recipes)
   
   -- Craft 16 torches, have nothing.
-  self.storageItems = {}
-  status, recipeIndices, recipeBatches, itemInputs, itemOutputs = self:solveDependencyGraph("minecraft:torch/0", 16)
+  storageItems = {}
+  status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
   assert(status == "missing")
   assert(dstructs.objectsEqual(recipeIndices, {4, 3, 1}))
   assert(dstructs.objectsEqual(recipeBatches, {1, 1, 4}))
@@ -538,10 +546,10 @@ local function testDependencySolver()
   assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
   -- Craft 16 torches, have 1 log and 4 coal.
-  self.storageItems = {}
+  storageItems = {}
   addStorageItem("minecraft:log/0", "Oak Log", 1, 64)
   addStorageItem("minecraft:coal/0", "Coal", 4, 64)
-  status, recipeIndices, recipeBatches, itemInputs, itemOutputs = self:solveDependencyGraph("minecraft:torch/0", 16)
+  status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
   assert(status == "ok")
   assert(dstructs.objectsEqual(recipeIndices, {4, 3, 1}))
   assert(dstructs.objectsEqual(recipeBatches, {1, 1, 4}))
@@ -549,11 +557,11 @@ local function testDependencySolver()
   assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
   -- Craft 16 torches, have 1 log, 1 charcoal, and 3 coal.
-  self.storageItems = {}
+  storageItems = {}
   addStorageItem("minecraft:log/0", "Oak Log", 1, 64)
   addStorageItem("minecraft:coal/1", "Charcoal", 1, 64)
   addStorageItem("minecraft:coal/0", "Coal", 3, 64)
-  status, recipeIndices, recipeBatches, itemInputs, itemOutputs = self:solveDependencyGraph("minecraft:torch/0", 16)
+  status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
   assert(status == "ok")
   assert(dstructs.objectsEqual(recipeIndices, {4, 3, 2, 1}))
   assert(dstructs.objectsEqual(recipeBatches, {1, 1, 1, 3}))
@@ -609,6 +617,8 @@ attemptRecipe()
   
   dlog.out("test", "testDependencySolver() all tests passed.")
 end
+
+return solver
 
 --[[
 
