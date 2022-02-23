@@ -6,6 +6,7 @@ move() and turn() functions with local coordinates tracking.
 --]]
 
 local component = require("component")
+local crobot = component.robot
 local sides = require("sides")
 
 local robnav = {}
@@ -49,7 +50,7 @@ end
 -- coords of the robot. The direction can be either front, back, top, or bottom.
 -- Returns true on success, or false and an error message on failure.
 function robnav.move(direction)
-  local result, err = component.robot.move(direction)
+  local result, err = crobot.move(direction)
   if result then
     if direction < 2 then
       robnav.y = robnav.y + direction * 2 - 1
@@ -71,7 +72,7 @@ end
 -- observed from the top of the robot. Returns true on success, or false and an
 -- error message on failure.
 function robnav.turn(clockwise)
-  local result, err = component.robot.turn(clockwise)
+  local result, err = crobot.turn(clockwise)
   if result then
     robnav.r = clockwise and turnCW[robnav.r] or turnCCW[robnav.r]
     return true
@@ -89,7 +90,7 @@ function robnav.moveN(direction, count)
   if direction < 2 then
     local dy = direction * 2 - 1
     while count > 0 do
-      if component.robot.move(direction) then
+      if crobot.move(direction) then
         robnav.y = robnav.y + dy
         count = count - 1
       else
@@ -99,7 +100,7 @@ function robnav.moveN(direction, count)
   elseif robnav.r < 4 then
     local dz = (direction * 2 - 5) * (robnav.r * 2 - 5)
     while count > 0 do
-      if component.robot.move(direction) then
+      if crobot.move(direction) then
         robnav.z = robnav.z + dz
         count = count - 1
       else
@@ -109,7 +110,7 @@ function robnav.moveN(direction, count)
   else
     local dx = (direction * 2 - 5) * (robnav.r * 2 - 9)
     while count > 0 do
-      if component.robot.move(direction) then
+      if crobot.move(direction) then
         robnav.x = robnav.x + dx
         count = count - 1
       else
@@ -173,12 +174,12 @@ function robnav.turnTo(side)
   end
   
   if side == turnCW[robnav.r] then
-    robnav.r = component.robot.turn(true) and turnCW[robnav.r] or robnav.r
+    robnav.r = crobot.turn(true) and turnCW[robnav.r] or robnav.r
   elseif side == turnCCW[robnav.r] then
-    robnav.r = component.robot.turn(false) and turnCCW[robnav.r] or robnav.r
+    robnav.r = crobot.turn(false) and turnCCW[robnav.r] or robnav.r
   else
-    robnav.r = component.robot.turn(true) and turnCW[robnav.r] or robnav.r
-    robnav.r = component.robot.turn(true) and turnCW[robnav.r] or robnav.r
+    robnav.r = crobot.turn(true) and turnCW[robnav.r] or robnav.r
+    robnav.r = crobot.turn(true) and turnCW[robnav.r] or robnav.r
   end
   return robnav.r == side
 end
