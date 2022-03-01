@@ -1156,7 +1156,7 @@ setmetatable(Interface, {
 
 function Interface:new()
   self.__index = self
-  setmetatable({}, self)
+  self = setmetatable({}, self)
   
   --local self.storageItems, self.storageServerAddress, self.recipeItems, self.craftingServerAddress, self.gui
   

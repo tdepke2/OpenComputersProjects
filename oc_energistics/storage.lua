@@ -171,7 +171,7 @@ setmetatable(Storage, {
 
 function Storage:new()
   self.__index = self
-  setmetatable({}, self)
+  self = setmetatable({}, self)
   
   --local self.transposers, self.routing, self.storageItems, self.reservedItems
   --local self.craftInterServerAddresses, self.pendingCraftRequests, self.activeCraftRequests, self.droneItems

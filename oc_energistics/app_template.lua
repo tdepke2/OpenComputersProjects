@@ -52,7 +52,7 @@ setmetatable(MyApp, {
 
 function MyApp:new(vals)
   self.__index = self
-  setmetatable({}, self)
+  self = setmetatable({}, self)
   
   self.dat = vals
   

@@ -31,6 +31,14 @@ local turnCCW = {
   [sides.left] = sides.back
 }
 
+-- robnav.getCoords(): number, number, number, number
+-- 
+-- Gets the current coordinates of the robot. This is just for convenience,
+-- directly accessing the robnav.x, robnav.y, etc. values is fine too.
+function robnav.getCoords()
+  return robnav.x, robnav.y, robnav.z, robnav.r
+end
+
 -- robnav.setCoords(x: number, y: number, z: number, side: number)
 -- 
 -- Sets the current coordinates of the robot, effectively changing the

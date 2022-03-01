@@ -388,7 +388,7 @@ setmetatable(Game, {
 
 function Game:new()
   self.__index = self
-  setmetatable({}, self)
+  self = setmetatable({}, self)
   
   local width, height = term.getViewport()
   self.cellGrid = CellGrid:new(math.floor(width) * 2, math.floor(height) * 4)
