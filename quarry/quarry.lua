@@ -43,7 +43,7 @@ function Quarry:new(length, width, height)
   self.zDir = 1
   
   self.xMax = length - 1
-  self.yMin = -height + 1
+  self.yMin = -height
   self.zMax = width - 1
   
   return self
@@ -149,43 +149,58 @@ function Quarry:layerDown()
   assert(false, "Quarry:layerDown() not implemented.")
 end
 
-function Quarry:tick()
-  self:layerMine()
+function Quarry:quarryStart()
   
-  if (robnav.z == self.zMax and self.zDir == 1) or (robnav.z == 0 and self.zDir == -1) then
-    if (robnav.x == self.xMax and self.xDir == 1) or (robnav.x == 0 and self.xDir == -1) then
-      if robnav.y <= self.yMin then
-        assert(false, "we done!")
+end
+
+function Quarry:quarryMain()
+  while true do
+    self:layerMine()
+    if (robnav.z == self.zMax and self.zDir == 1) or (robnav.z == 0 and self.zDir == -1) then
+      if (robnav.x == self.xMax and self.xDir == 1) or (robnav.x == 0 and self.xDir == -1) then
+        if robnav.y == self.yMin then
+          return
+        end
+        self:layerDown()
+        self.xDir = -self.xDir
+      else
+        local turnDir = self.zDir * self.xDir < 0
+        self:layerTurn(turnDir)
       end
-      self:layerDown()
-      self.xDir = -self.xDir
+      self.zDir = -self.zDir
     else
-      local turnDir = self.zDir * self.xDir < 0
-      self:layerTurn(turnDir)
+      self:forceMove(sides.front)
     end
-    self.zDir = -self.zDir
-  else
-    self:forceMove(sides.front)
+    --self.xLayer, self.yLayer, self.zLayer = robnav.getCoords()
   end
+end
+
+function Quarry:quarryEnd()
   
-  
-  --self.xLayer, self.yLayer, self.zLayer = robnav.getCoords()
 end
 
 -- Basic quarry mines out the rectangular area and nothing more.
 local BasicQuarry = Quarry:new()
 function BasicQuarry:layerMine()
-  self:forceMine(sides.bottom)
+  if (robnav.z ~= self.zMax or self.zDir ~= 1) and (robnav.z ~= 0 or self.zDir ~= -1) then
+    self:forceMine(sides.front)
+  end
 end
 function BasicQuarry:layerTurn(turnDir)
   robnav.turn(turnDir)
+  self:forceMine(sides.front)
   self:forceMove(sides.front)
   robnav.turn(turnDir)
 end
 function BasicQuarry:layerDown()
+  self:forceMine(sides.bottom)
   self:forceMove(sides.bottom)
   robnav.turn(true)
   robnav.turn(true)
+end
+function BasicQuarry:quarryStart()
+  self:forceMine(sides.bottom)
+  self:forceMove(sides.bottom)
 end
 
 -- Fast quarry mines three layers at a time, may not clear all liquids.
@@ -211,6 +226,47 @@ function FastQuarry:layerDown()
   self:forceMove(sides.bottom)
   robnav.turn(true)
   robnav.turn(true)
+end
+function FastQuarry:quarryStart()
+  self:forceMine(sides.bottom)
+  self:forceMove(sides.bottom)
+  if robnav.y <= self.yMin + 1 then
+    FastQuarry.layerMine = BasicQuarry.layerMine
+    FastQuarry.layerTurn = BasicQuarry.layerTurn
+    FastQuarry.layerDown = BasicQuarry.layerDown
+    FastQuarry.quarryMain = Quarry.quarryMain
+  else
+    self:forceMine(sides.bottom)
+    self:forceMove(sides.bottom)
+  end
+end
+function FastQuarry:quarryMain()
+  local useBasicQuarryMain = false
+  while true do
+    self:layerMine()
+    if (robnav.z == self.zMax and self.zDir == 1) or (robnav.z == 0 and self.zDir == -1) then
+      if (robnav.x == self.xMax and self.xDir == 1) or (robnav.x == 0 and self.xDir == -1) then
+        if robnav.y == self.yMin + (useBasicQuarryMain and 0 or 1) then
+          return
+        elseif not useBasicQuarryMain and robnav.y <= self.yMin + 3 then
+          FastQuarry.layerMine = BasicQuarry.layerMine
+          FastQuarry.layerTurn = BasicQuarry.layerTurn
+          FastQuarry.layerDown = BasicQuarry.layerDown
+          self:forceMove(sides.bottom)
+          useBasicQuarryMain = true
+        end
+        self:layerDown()
+        self.xDir = -self.xDir
+      else
+        local turnDir = self.zDir * self.xDir < 0
+        self:layerTurn(turnDir)
+      end
+      self.zDir = -self.zDir
+    else
+      self:forceMove(sides.front)
+    end
+    --self.xLayer, self.yLayer, self.zLayer = robnav.getCoords()
+  end
 end
 
 -- Fill floor quarry ensures a solid floor below each working layer, needed for
@@ -244,10 +300,12 @@ local args = {...}
 
 local function main()
   io.write("Starting quarry!\n")
-  local quarry = FastQuarry:new(4, 5, 3)
-  while true do
-    quarry:tick()
-  end
+  --local quarry = FastQuarry:new(4, 5, 3)
+  local quarry = FastQuarry:new(2, 3, 6)
+  
+  quarry:quarryStart()
+  quarry:quarryMain()
+  quarry:quarryEnd()
 end
 
 main()
