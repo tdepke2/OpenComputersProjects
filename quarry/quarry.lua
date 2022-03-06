@@ -1,4 +1,5 @@
 local component = require("component")
+local computer = require("computer")
 local crobot = component.robot
 local icontroller = component.inventory_controller
 local sides = require("sides")
@@ -11,6 +12,21 @@ local robnav = require("robnav")
 -- continue to whittle down the equipped tool's health while whacking a mob with
 -- a massive health pool.
 local MAX_FORCE_OP_ATTEMPTS = 50
+
+
+local ReturnReasons = {
+  energyLow = 1,
+  toolLow = 2,
+  inventoryFull = 3,
+  quarryDone = 4
+}
+
+-- Get the unique identifier of an item (internal name and metadata). This is
+-- used for table indexing of items and such. Note that items with different NBT
+-- can still resolve to the same identifier.
+local function getItemFullName(item)
+  return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
+end
 
 
 -- Quarry class definition.
@@ -35,10 +51,29 @@ function Quarry:new(length, width, height)
   
   self.toolDurabilityReturn = 0.5
   self.toolDurabilityMin = 0.3
+  self.energyLevelMin = 100
+  self.emptySlotsMin = 1
   
-  self.xLast = 0
-  self.yLast = 0
-  self.zLast = 0
+  self.withinMainCoroutine = false
+  self.selectedSlotType = 0
+  self.inventoryInputs = {
+    {sides.right, sides.back}
+  }
+  self.inventoryOutputs = {
+    {sides.right},
+    {sides.right},
+    {sides.right}
+  }
+  self.buildBlocks = {
+    "minecraft:stone/0",
+    "minecraft:cobblestone/0"
+  }
+  self.buildBlocksStockLevel = 2
+  self.stairBlocks = {
+    "minecraft:stone_stairs/0"
+  }
+  self.stairBlocksStockLevel = 1
+  
   self.xDir = 1
   self.zDir = 1
   
@@ -50,22 +85,29 @@ function Quarry:new(length, width, height)
 end
 
 function Quarry:selectBuildBlock()
-  return false
+  self.selectedSlotType = 1
+  return false, "Ran out of building blocks"
 end
 
 function Quarry:selectStairBlock()
-  return false
+  self.selectedSlotType = 2
+  return false, "Ran out of stair blocks"
 end
 
 -- Wrapper for robnav.move(), throws an exception on failure. Tries to clear
 -- obstacles in the way (entities or blocks) until the movement succeeds or a
 -- limit is reached.
 function Quarry:forceMove(direction)
+  if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+    coroutine.yield(ReturnReasons.energyLow)
+  end
   local result, err = robnav.move(direction)
   if not result then
     for i = 1, MAX_FORCE_OP_ATTEMPTS do
       if err == "entity" or err == "solid" or err == "replaceable" or err == "passable" then
         self:forceSwing(direction)
+      elseif self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+        coroutine.yield(ReturnReasons.energyLow)
       end
       result, err = robnav.move(direction)
       if result then
@@ -82,6 +124,15 @@ function Quarry:forceMove(direction)
   end
 end
 
+-- Wrapper for robnav.turn(), throws an exception on failure.
+function Quarry:forceTurn(clockwise)
+  if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+    coroutine.yield(ReturnReasons.energyLow)
+  end
+  local result, err = robnav.turn(clockwise)
+  assert(result, "Attempt to turn failed with \"" .. tostring(err) .. "\".")
+end
+
 -- Wrapper for crobot.swing(), throws an exception on failure. Protects the held
 -- tool by swapping it out with currently selected inventory item if the
 -- durability is too low. Returns boolean result and string message.
@@ -95,6 +146,15 @@ function Quarry:forceSwing(direction, side, sneaky)
     result, msg = crobot.swing(direction, side, sneaky)
   end
   assert(result or (msg ~= "block" and msg ~= "replaceable" and msg ~= "passable"), "Attempt to swing tool failed, unable to break block.")
+  if self.withinMainCoroutine then
+    if computer.energy() <= self.energyLevelMin then
+      coroutine.yield(ReturnReasons.energyLow)
+    elseif (crobot.durability() or 1.0) <= self.toolDurabilityReturn then
+      coroutine.yield(ReturnReasons.toolLow)
+    elseif (self.emptySlotsMin > 0 and crobot.count(crobot.inventorySize() - self.emptySlotsMin + 1) > 0) or crobot.space(crobot.inventorySize() - self.emptySlotsMin) == 0 then
+      coroutine.yield(ReturnReasons.inventoryFull)
+    end
+  end
   return result, msg
 end
 
@@ -120,6 +180,9 @@ end
 -- obstacles in the way (entities or blocks) until the placement succeeds or a
 -- limit is reached.
 function Quarry:forcePlace(direction, side, sneaky)
+  if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+    coroutine.yield(ReturnReasons.energyLow)
+  end
   local result, err = crobot.place(direction, side, sneaky)
   if not result then
     for i = 1, MAX_FORCE_OP_ATTEMPTS do
@@ -127,6 +190,8 @@ function Quarry:forcePlace(direction, side, sneaky)
         self:forceSwing(direction)
         -- Sleep in case there is an entity in the way and we need to wait for iframes to deplete.
         os.sleep(0.5)
+      elseif self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+        coroutine.yield(ReturnReasons.energyLow)
       end
       result, err = crobot.place(direction, side, sneaky)
       if result then
@@ -171,12 +236,87 @@ function Quarry:quarryMain()
     else
       self:forceMove(sides.front)
     end
-    --self.xLayer, self.yLayer, self.zLayer = robnav.getCoords()
   end
 end
 
 function Quarry:quarryEnd()
   
+end
+
+function Quarry:run()
+  local co = coroutine.create(function()
+    self:quarryStart()
+    self:quarryMain()
+    self:quarryEnd()
+    return ReturnReasons.quarryDone
+  end)
+  
+  while true do
+    self.withinMainCoroutine = true
+    local status, ret = coroutine.resume(co)
+    self.withinMainCoroutine = false
+    assert(status, ret)
+    
+    -- Return to home position.
+    local xLast, yLast, zLast, rLast = robnav.getCoords()
+    local selectedSlotType = self.selectedSlotType
+    if robnav.y < 0 then
+      self:forceMove(sides.top)
+    end
+    if robnav.y < 0 then
+      self:forceMove(sides.top)
+    end
+    robnav.turnTo(sides.back)
+    while robnav.z > 0 do
+      self:forceMove(sides.front)
+    end
+    robnav.turnTo(sides.right)
+    while robnav.x > 0 do
+      self:forceMove(sides.front)
+    end
+    while robnav.y < 0 do
+      self:forceMove(sides.top)
+    end
+    
+    assert(false, print("ret = " , ReturnReasons.quarryDone))
+    
+    
+    
+    -- Move build/stair blocks to first slots in robot. Mark slots as blacklisted.
+    -- Push remaining slots to output.
+    -- Push tool to output if too low.
+    -- Grab more build/stair blocks as needed (from input).
+    -- Grab new tool if needed.
+    -- Sit at 0,0,0 to recharge.
+    
+    
+    
+    -- Go back to working area.
+    if selectedSlotType == 1  then
+      assert(self:selectBuildBlock())
+    elseif selectedSlotType == 2  then
+      assert(self:selectStairBlock())
+    end
+    while robnav.y > yLast + 2 do
+      self:forceMove(sides.bottom)
+    end
+    robnav.turnTo(sides.left)
+    while robnav.x < xLast do
+      self:forceMove(sides.front)
+    end
+    robnav.turnTo(sides.front)
+    while robnav.z < zLast do
+      self:forceMove(sides.front)
+    end
+    if robnav.y > yLast then
+      self:forceMove(sides.bottom)
+    end
+    if robnav.y > yLast then
+      self:forceMove(sides.bottom)
+    end
+    robnav.turnTo(rLast)
+    assert(robnav.x == xLast and robnav.y == yLast and robnav.z == zLast and robnav.r == rLast)
+  end
 end
 
 -- Basic quarry mines out the rectangular area and nothing more.
@@ -187,16 +327,16 @@ function BasicQuarry:layerMine()
   end
 end
 function BasicQuarry:layerTurn(turnDir)
-  robnav.turn(turnDir)
+  self:forceTurn(turnDir)
   self:forceMine(sides.front)
   self:forceMove(sides.front)
-  robnav.turn(turnDir)
+  self:forceTurn(turnDir)
 end
 function BasicQuarry:layerDown()
   self:forceMine(sides.bottom)
   self:forceMove(sides.bottom)
-  robnav.turn(true)
-  robnav.turn(true)
+  self:forceTurn(true)
+  self:forceTurn(true)
 end
 function BasicQuarry:quarryStart()
   self:forceMine(sides.bottom)
@@ -213,10 +353,10 @@ function FastQuarry:layerMine()
   self:forceMine(sides.bottom)
 end
 function FastQuarry:layerTurn(turnDir)
-  robnav.turn(turnDir)
+  self:forceTurn(turnDir)
   self:forceMine(sides.front)
   self:forceMove(sides.front)
-  robnav.turn(turnDir)
+  self:forceTurn(turnDir)
 end
 function FastQuarry:layerDown()
   self:forceMove(sides.bottom)
@@ -224,8 +364,8 @@ function FastQuarry:layerDown()
   self:forceMove(sides.bottom)
   self:forceMine(sides.bottom)
   self:forceMove(sides.bottom)
-  robnav.turn(true)
-  robnav.turn(true)
+  self:forceTurn(true)
+  self:forceTurn(true)
 end
 function FastQuarry:quarryStart()
   self:forceMine(sides.bottom)
@@ -300,12 +440,10 @@ local args = {...}
 
 local function main()
   io.write("Starting quarry!\n")
-  --local quarry = FastQuarry:new(4, 5, 3)
-  local quarry = FastQuarry:new(2, 3, 6)
+  local quarry = BasicQuarry:new(3, 2, 3)
+  --local quarry = FastQuarry:new(3, 2, 3)
   
-  quarry:quarryStart()
-  quarry:quarryMain()
-  quarry:quarryEnd()
+  quarry:run()
 end
 
 main()
