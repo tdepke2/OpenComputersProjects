@@ -60,6 +60,9 @@ TODO
 * Is max-stack-size necessary in recipe definitions? Would be nice to leave this out for ease of use and clarity.
 * Good idea to have only first output in a recipe (for both crafting and processing) show up as craftable (AE2 does this in modern versions).
     * The other outputs can still be crafted as intermediate steps in a recipe, just not requested directly by the user.
+* We can use a navigation upgrade with waypoints to do inventory level detection!
+    * The waypoints need comparators pointing into them, and we may want a dedicated robot(s) to do a periodic scan.
+    * Should be an optional feature to improve performance, and not require full coverage.
 
 DONE
 * Network module needs compressed version and testing with drones.

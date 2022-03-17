@@ -28,6 +28,60 @@ local function getItemFullName(item)
   return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
 end
 
+-- FIXME these are the real iterators that should be used in storage.lua and related! still need to check if skipping empty is valid in the use cases there, and also the item/slot are swapped around. ####################################################################################################
+
+-- Iterator wrapper for the itemIter returned from icontroller.getAllStacks().
+-- Returns the current slot number and item with each call, skipping over empty
+-- slots.
+local function invIterator(itemIter)
+  local function iter(itemIter, slot)
+    slot = slot + 1
+    local item = itemIter()
+    while item do
+      if next(item) ~= nil then
+        return slot, item
+      end
+      slot = slot + 1
+      item = itemIter()
+    end
+  end
+  
+  return iter, itemIter, 0
+end
+
+-- Iterator wrapper similar to invIterator(), but does not skip empty slots.
+-- Returns the current slot number and item with each call.
+local function invIteratorNoSkip(itemIter)
+  local function iter(itemIter, slot)
+    slot = slot + 1
+    local item = itemIter()
+    if item then
+      return slot, item
+    end
+  end
+  
+  return iter, itemIter, 0
+end
+
+-- Iterator for scanning a device's internal inventory. For efficiency reasons,
+-- the inventory size is passed in as this function blocks for a tick
+-- (getStackInInternalSlot() is blocking too). Returns the current slot and item
+-- with each call, skipping over empty slots.
+local function internalInvIterator(invSize)
+  local function iter(invSize, slot)
+    local item
+    while slot < invSize do
+      slot = slot + 1
+      item = icontroller.getStackInInternalSlot(slot)
+      if item then
+        return slot, item
+      end
+    end
+  end
+  
+  return iter, invSize, 0
+end
+
 
 -- Quarry class definition.
 local Quarry = {}
@@ -56,14 +110,8 @@ function Quarry:new(length, width, height)
   
   self.withinMainCoroutine = false
   self.selectedSlotType = 0
-  self.inventoryInputs = {
-    {sides.right, sides.back}
-  }
-  self.inventoryOutputs = {
-    {sides.right},
-    {sides.right},
-    {sides.right}
-  }
+  self.inventoryInput = sides.back
+  self.inventoryOutput = sides.right
   self.buildBlocks = {
     "minecraft:stone/0",
     "minecraft:cobblestone/0"
@@ -73,6 +121,9 @@ function Quarry:new(length, width, height)
     "minecraft:stone_stairs/0"
   }
   self.stairBlocksStockLevel = 1
+  self.miningItems = {
+    ".*pickaxe.*"
+  }
   
   self.xDir = 1
   self.zDir = 1
@@ -246,8 +297,8 @@ end
 function Quarry:run()
   local co = coroutine.create(function()
     self:quarryStart()
-    self:quarryMain()
-    self:quarryEnd()
+    --self:quarryMain()
+    --self:quarryEnd()
     return ReturnReasons.quarryDone
   end)
   
@@ -278,18 +329,88 @@ function Quarry:run()
       self:forceMove(sides.top)
     end
     
-    assert(false, print("ret = " , ReturnReasons.quarryDone))
+    --assert(false, print("ret = " , ReturnReasons.quarryDone))
     
+    -- Transfer the target item stack to the first available slots in the range
+    -- and add to stockedItems.
+    local function addItemStock(stockedItems, firstSlot, lastSlot, itemName, srcSlot)
+      print("addItemStock", itemName, srcSlot)
+      while firstSlot <= lastSlot do
+        if not stockedItems[firstSlot] or (crobot.space(firstSlot) > 0 and stockedItems[firstSlot] == itemName) then
+          print("move item from", srcSlot, "to", firstSlot)
+          crobot.select(srcSlot)
+          crobot.transferTo(firstSlot)
+          stockedItems[firstSlot] = itemName
+          if firstSlot == srcSlot or not crobot.compareTo(firstSlot) then
+            return
+          end
+        end
+        firstSlot = firstSlot + 1
+      end
+    end
     
+    local stockedItems = {}
+    local internalInventorySize = crobot.inventorySize()
     
-    -- Move build/stair blocks to first slots in robot. Mark slots as blacklisted.
+    -- Restock build/stair blocks by moving items to first slots in robot. Mark slots as blacklisted so we don't dump the items to output containers later.
+    for slot, item in internalInvIterator(internalInventorySize) do
+      local itemName = getItemFullName(item)
+      local stockIndex = 0
+      
+      if self.buildBlocksStockLevel > 0 then
+        for _, buildBlock in pairs(self.buildBlocks) do
+          if string.match(itemName, buildBlock) then
+            addItemStock(stockedItems, stockIndex + 1, stockIndex + self.buildBlocksStockLevel, itemName, slot)
+            itemName = ""
+            break
+          end
+        end
+        stockIndex = stockIndex + self.buildBlocksStockLevel
+      end
+      
+      if self.stairBlocksStockLevel > 0 then
+        for _, stairBlock in pairs(self.stairBlocks) do
+          if string.match(itemName, stairBlock) then
+            addItemStock(stockedItems, stockIndex + 1, stockIndex + self.stairBlocksStockLevel, itemName, slot)
+            itemName = ""
+            break
+          end
+        end
+        stockIndex = stockIndex + self.stairBlocksStockLevel
+      end
+    end
+    
     -- Push remaining slots to output.
+    robnav.turnTo(self.inventoryOutput)
+    local outputSide = self.inventoryOutput < 2 and self.inventoryOutput or sides.front
+    for slot = 1, internalInventorySize do
+      if not stockedItems[slot] and crobot.count(slot) > 0 then
+        print("drop item in slot", slot)
+        crobot.select(slot)
+        while not crobot.drop(outputSide) and crobot.count() > 0 do
+          os.sleep(1.0)
+          print("sleep...")
+        end
+      end
+    end
+    
     -- Push tool to output if too low.
+    crobot.select(internalInventorySize)
+    icontroller.equip()
+    
     -- Grab more build/stair blocks as needed (from input).
+    
+    
     -- Grab new tool if needed.
+    
+    --if tool can be damaged:
+    --durability = (maxDamage - damage) / maxDamage
+    
     -- Sit at 0,0,0 to recharge.
     
-    
+    robnav.turnTo(sides.front)
+    crobot.select(1)
+    assert(false, "made it to end")
     
     -- Go back to working area.
     if selectedSlotType == 1  then
