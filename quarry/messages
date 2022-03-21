@@ -1,0 +1,161 @@
+03/01/70 07:58:15 dlog:addItemStock galacticraftplanets:volcanic_pickaxe/0 1
+03/01/70 07:58:15 dlog:addItemStock move item from 1 to 7
+03/01/70 07:58:30 dlog:addItemStock minecraft:cobblestone/0 2
+03/01/70 07:58:30 dlog:addItemStock move item from 2 to 1
+03/01/70 07:58:44 dlog:addItemStock minecraft:cobblestone/0 3
+03/01/70 07:58:44 dlog:addItemStock move item from 3 to 2
+03/01/70 07:58:58 dlog:addItemStock minecraft:stone_stairs/0 4
+03/01/70 07:58:58 dlog:addItemStock move item from 4 to 4
+03/01/70 07:59:09 dlog:addItemStock minecraft:red_sandstone_stairs/0 5
+03/01/70 07:59:13 dlog:addItemStock move item from 5 to 5
+03/01/70 07:59:24 dlog:addItemStock minecraft:spruce_stairs/0 6
+03/01/70 07:59:24 dlog:addItemStock move item from 6 to 6
+03/01/70 07:59:34 dlog:addItemStock galacticraftplanets:volcanic_pickaxe/0 7
+03/01/70 07:59:34 dlog:addItemStock item already added to stock
+03/01/70 07:59:38 dlog:addItemStock minecraft:stone/2 8
+03/01/70 07:59:38 dlog:addItemStock move item from 8 to 3
+03/01/70 07:59:52 dlog:addItemStock minecraft:stone/2 9
+03/01/70 07:59:52 dlog:addItemStock move item from 9 to 3
+03/01/70 08:00:10 dlog:pushRemaining drop item in slot 8
+03/01/70 08:00:50 dlog:pushRemaining drop item in slot 10
+03/01/70 08:01:44 dlog:restock inputItems before:
+table: 000000003C9088C0 {
+  minecraft:diamond_pickaxe/557: {
+    7: 1
+  }
+  minecraft:gunpowder/0: {
+    4: 20
+  }
+  minecraft:wooden_pickaxe/1: {
+    8: 1
+  }
+  chisel:stonebrick2/9: {
+    1: 64
+    16: 64
+    11: 64
+    12: 64
+    13: 64
+    6: 64
+  }
+  opencomputers:upgrade/16: {
+    3: 1
+  }
+  minecraft:planks/0: {
+    20: 64
+  }
+  minecraft:stone_slab/0: {
+    5: 3
+  }
+  minecraft:torch/0: {
+    17: 2
+  }
+  minecraft:cobblestone/0: {
+    14: 4
+    9: 64
+    2: 64
+    10: 64
+  }
+  opencomputers:upgrade/18n: {
+    21: 1
+  }
+  minecraft:spawn_egg/0n: {
+    15: 1
+  }
+  minecraft:wooden_pickaxe/59: {
+    23: 1
+  }
+  enderio:item_dark_steel_pickaxe/1n: {
+    24: 1
+  }
+}
+03/01/70 08:02:27 dlog:restock checking slot 1 with stock levels:
+table: 000000003C95A2C0 {
+  1: 3
+  2: .*stone/.*
+}
+03/01/70 08:02:31 dlog:restock checking slot 2 with stock levels:
+table: 000000003C95A2C0 {
+  1: 3
+  2: .*stone/.*
+}
+03/01/70 08:02:34 dlog:restock checking slot 3 with stock levels:
+table: 000000003C95A2C0 {
+  1: 3
+  2: .*stone/.*
+}
+03/01/70 08:02:38 dlog:restock checking slot 4 with stock levels:
+table: 000000003C95BBC0 {
+  1: 3
+  2: .*stairs/.*
+}
+03/01/70 08:02:42 dlog:restock checking slot 5 with stock levels:
+table: 000000003C95BBC0 {
+  1: 3
+  2: .*stairs/.*
+}
+03/01/70 08:02:49 dlog:restock checking slot 6 with stock levels:
+table: 000000003C95BBC0 {
+  1: 3
+  2: .*stairs/.*
+}
+03/01/70 08:02:56 dlog:restock checking slot 7 with stock levels:
+table: 000000003C95B440 {
+  1: 2
+  2: .*pickaxe.*
+}
+03/01/70 08:03:00 dlog:restock checking slot 8 with stock levels:
+table: 000000003C95B440 {
+  1: 2
+  2: .*pickaxe.*
+}
+03/01/70 08:03:03 dlog:restock inputItemSlots:
+table: 000000003C960970 {
+  7: 1
+}
+03/01/70 08:03:18 dlog:restock inputItems before:
+table: 000000003C9088C0 {
+  minecraft:gunpowder/0: {
+    4: 20
+  }
+  minecraft:wooden_pickaxe/1: {
+    8: 1
+  }
+  chisel:stonebrick2/9: {
+    1: 64
+    16: 64
+    11: 64
+    12: 64
+    13: 64
+    6: 64
+  }
+  opencomputers:upgrade/16: {
+    3: 1
+  }
+  minecraft:planks/0: {
+    20: 64
+  }
+  minecraft:stone_slab/0: {
+    5: 3
+  }
+  minecraft:torch/0: {
+    17: 2
+  }
+  minecraft:cobblestone/0: {
+    14: 4
+    9: 64
+    2: 64
+    10: 64
+  }
+  opencomputers:upgrade/18n: {
+    21: 1
+  }
+  minecraft:spawn_egg/0n: {
+    15: 1
+  }
+  minecraft:wooden_pickaxe/59: {
+    23: 1
+  }
+  enderio:item_dark_steel_pickaxe/1n: {
+    24: 1
+  }
+}
