@@ -338,7 +338,7 @@ function Quarry:run()
     --assert(false, print("ret = " , ReturnReasons.quarryDone))
     
     -- FIXME we probably need to do this part better, it's inefficient and has some problems.
-    ----[[
+    --[[
     
     
     -- Transfer the target item stack to the first available slots in the range
@@ -364,7 +364,7 @@ function Quarry:run()
     end
     
     local stockedItems = {}
-    local internalInventorySize = crobot.inventorySize()
+    
     
     -- Restock build/stair blocks by moving items to first slots in robot. Mark slots as blacklisted so we don't dump the items to output containers later.
     for slot, item in internalInvIterator(internalInventorySize) do
@@ -389,6 +389,69 @@ function Quarry:run()
     
     --]]
     
+    local internalInvItems = {}
+    local internalInventorySize = crobot.inventorySize()
+    
+    for slot, item in internalInvIterator(internalInventorySize) do
+      local itemName = getItemFullName(item)
+      local stockIndex = -1
+      --local stockSlotOffset = 0
+      for i, stockEntry in ipairs(self.stockLevels) do
+        if stockEntry[1] > 0 then
+          for j = 2, #stockEntry do
+            if string.match(itemName, stockEntry[j]) then
+              stockIndex = i
+              break
+            end
+          end
+          if stockIndex > 0 then
+            break
+          end
+          --stockSlotOffset = stockSlotOffset + stockEntry[1]
+        end
+      end
+      
+      internalInvItems[slot] = {
+        itemName = itemName,
+        size = math.floor(item.size),
+        maxSize = math.floor(item.maxSize),
+        stockIndex = stockIndex,
+        --stockSlotOffset = stockSlotOffset
+      }
+    end
+    
+    dlog.out("rearrange", "internalInvItems:", internalInvItems)
+    
+    --[[
+    local stockedItems = {}
+    for i = 1, internalInventorySize do
+      --if internalInvItems[i] then
+      
+      local minEntry = internalInvItems[i]
+      local minIndex = i
+      for j = i + 1, internalInventorySize do
+        if internalInvItems[j] and internalInvItems[j].stockLevelIndex < minEntry.stockLevelIndex
+      end
+      
+      --end
+    end
+    --]]
+    
+    local slot = 1
+    for stockIndex, stockEntry in ipairs(self.stockLevels) do
+      for i = 1, stockEntry[1] do
+        
+        for j = slot, internalInventorySize do
+          if internalInvItems[j] and internalInvItems[j].stockIndex == stockIndex and 
+        end
+        
+        slot = slot + 1
+      end
+    end
+    
+    robnav.turnTo(sides.front)
+    crobot.select(1)
+    assert(false, "bye")
     
     
     -- Push remaining slots to output.

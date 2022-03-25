@@ -16,6 +16,9 @@ restart of the program that is being tested.
 
 local dlog = {}
 
+-- Configuration options.
+dlog.logErrorsToOutput = true
+
 -- Private data members, no touchy.
 dlog.fileOutput = nil
 dlog.stdOutput = true
@@ -35,7 +38,11 @@ dlog.env2 = nil
 -- 
 -- Throws the error message, and includes a stack trace in the output.
 function dlog.errorWithTraceback(message)
-  error(string.gsub(debug.traceback(message), "\t", "  "))
+  local traceMsg = string.gsub(debug.traceback(message), "\t", "  ")
+  if dlog.logErrorsToOutput then
+    dlog.out("error", traceMsg)
+  end
+  error(traceMsg)
 end
 
 -- FIXME this should be used everywhere and same for the block globals stuff #############################################################################################################
