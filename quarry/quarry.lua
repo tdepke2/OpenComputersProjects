@@ -300,6 +300,18 @@ function Quarry:quarryEnd()
   
 end
 
+function Quarry:itemRearrange()
+  
+end
+
+function Quarry:itemDeposit()
+  
+end
+
+function Quarry:itemRestock()
+  
+end
+
 function Quarry:run()
   local co = coroutine.create(function()
     self:quarryStart()
@@ -337,65 +349,12 @@ function Quarry:run()
     
     --assert(false, print("ret = " , ReturnReasons.quarryDone))
     
-    -- FIXME we probably need to do this part better, it's inefficient and has some problems.
-    --[[
-    
-    
-    -- Transfer the target item stack to the first available slots in the range
-    -- and add to stockedItems.
-    local function addItemStock(stockedItems, firstSlot, lastSlot, itemName, srcSlot)
-      dlog.out("addItemStock", itemName, srcSlot)
-      if stockedItems[srcSlot] == itemName then
-        dlog.out("addItemStock", "item already added to stock")
-        return
-      end
-      while firstSlot <= lastSlot do
-        if not stockedItems[firstSlot] or (crobot.space(firstSlot) > 0 and stockedItems[firstSlot] == itemName) then
-          dlog.out("addItemStock", "move item from " .. srcSlot .. " to " .. firstSlot)
-          crobot.select(srcSlot)
-          crobot.transferTo(firstSlot)
-          stockedItems[firstSlot] = itemName
-          if firstSlot == srcSlot or not crobot.compareTo(firstSlot) then
-            return
-          end
-        end
-        firstSlot = firstSlot + 1
-      end
-    end
-    
-    local stockedItems = {}
-    
-    
-    -- Restock build/stair blocks by moving items to first slots in robot. Mark slots as blacklisted so we don't dump the items to output containers later.
-    for slot, item in internalInvIterator(internalInventorySize) do
-      local itemName = getItemFullName(item)
-      local slotOffset = 0
-      for _, stockEntry in ipairs(self.stockLevels) do
-        if stockEntry[1] > 0 then
-          for i = 2, #stockEntry do
-            if string.match(itemName, stockEntry[i]) then
-              addItemStock(stockedItems, slotOffset + 1, slotOffset + stockEntry[1], itemName, slot)
-              itemName = ""
-              break
-            end
-          end
-          if itemName == "" then
-            break
-          end
-          slotOffset = slotOffset + stockEntry[1]
-        end
-      end
-    end
-    
-    --]]
-    
     local internalInvItems = {}
     local internalInventorySize = crobot.inventorySize()
     
     for slot, item in internalInvIterator(internalInventorySize) do
       local itemName = getItemFullName(item)
       local stockIndex = -1
-      --local stockSlotOffset = 0
       for i, stockEntry in ipairs(self.stockLevels) do
         if stockEntry[1] > 0 then
           for j = 2, #stockEntry do
@@ -407,47 +366,57 @@ function Quarry:run()
           if stockIndex > 0 then
             break
           end
-          --stockSlotOffset = stockSlotOffset + stockEntry[1]
         end
       end
       
       internalInvItems[slot] = {
         itemName = itemName,
-        size = math.floor(item.size),
-        maxSize = math.floor(item.maxSize),
-        stockIndex = stockIndex,
-        --stockSlotOffset = stockSlotOffset
+        stockIndex = stockIndex
       }
     end
     
     dlog.out("rearrange", "internalInvItems:", internalInvItems)
     
-    --[[
+    -- Restock build/stair blocks by moving items to first slots in robot. Mark slots as blacklisted so we don't dump the items to output containers later.
     local stockedItems = {}
-    for i = 1, internalInventorySize do
-      --if internalInvItems[i] then
-      
-      local minEntry = internalInvItems[i]
-      local minIndex = i
-      for j = i + 1, internalInventorySize do
-        if internalInvItems[j] and internalInvItems[j].stockLevelIndex < minEntry.stockLevelIndex
-      end
-      
-      --end
-    end
-    --]]
-    
     local slot = 1
     for stockIndex, stockEntry in ipairs(self.stockLevels) do
       for i = 1, stockEntry[1] do
-        
-        for j = slot, internalInventorySize do
-          if internalInvItems[j] and internalInvItems[j].stockIndex == stockIndex and 
+        local lastItemName
+        if internalInvItems[slot] and internalInvItems[slot].stockIndex == stockIndex then
+          lastItemName = internalInvItems[slot].itemName
+          stockedItems[slot] = lastItemName
         end
-        
+        while true do
+          -- Find the first item in internal inventory that should be transferred into the current slot.
+          local foundSlot
+          for j = 1, internalInventorySize do
+            if internalInvItems[j] and internalInvItems[j].stockIndex == stockIndex and not stockedItems[j] and (lastItemName == nil or internalInvItems[j].itemName == lastItemName) then
+              foundSlot = j
+              break
+            end
+          end
+          -- If the item could not be found or there is not enough space, we're done.
+          if not foundSlot or (lastItemName and crobot.space(slot) == 0) then
+            break
+          end
+          
+          -- Transfer the item stack, and update internalInvItems.
+          lastItemName = internalInvItems[foundSlot].itemName
+          stockedItems[slot] = lastItemName
+          crobot.select(foundSlot)
+          assert(crobot.transferTo(slot))
+          internalInvItems[slot], internalInvItems[foundSlot] = internalInvItems[foundSlot], internalInvItems[slot]
+          if crobot.count(foundSlot) == 0 then
+            internalInvItems[foundSlot] = nil
+          end
+        end
         slot = slot + 1
       end
     end
+    
+    dlog.out("rearrange", "internalInvItems:", internalInvItems)
+    dlog.out("rearrange", "stockedItems:", stockedItems)
     
     robnav.turnTo(sides.front)
     crobot.select(1)
