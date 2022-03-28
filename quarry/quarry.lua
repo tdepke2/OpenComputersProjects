@@ -17,12 +17,24 @@ local DLOG_FILE_OUT = "/home/messages"
 -- a massive health pool.
 local MAX_FORCE_OP_ATTEMPTS = 50
 
+-- Creates a new enumeration from a given table (matches keys to values and vice
+-- versa). The given table is intended to use numeric keys and string values,
+-- but doesn't have to be a sequence.
+-- Based on: https://unendli.ch/posts/2016-07-22-enumerations-in-lua.html
+local function enum(t)
+  local result = {}
+  for i, v in pairs(t) do
+    result[i] = v
+    result[v] = i
+  end
+  return result
+end
 
-local ReturnReasons = {
-  energyLow = 1,
-  toolLow = 2,
-  inventoryFull = 3,
-  quarryDone = 4
+local ReturnReasons = enum {
+  "energyLow",
+  "toolLow",
+  "inventoryFull",
+  "quarryDone"
 }
 
 -- Get the unique identifier of an item (internal name and metadata). This is
@@ -111,7 +123,7 @@ function Quarry:new(length, width, height)
   
   self.toolDurabilityReturn = 0.5
   self.toolDurabilityMin = 0.3
-  self.energyLevelMin = 100
+  self.energyLevelMin = 1000
   self.emptySlotsMin = 1
   
   self.withinMainCoroutine = false
@@ -300,33 +312,264 @@ function Quarry:quarryEnd()
   
 end
 
+-- Sorts the items in the robot inventory to match the format defined in
+-- self.stockLevels as close as possible. This behaves roughly like a
+-- stable-sort (based on selection sort to minimize swap operations). Returns a
+-- table of stockedItems that tracks items in slots defined by the stock levels
+-- (so they don't get dumped into storage in the following operations).
 function Quarry:itemRearrange()
+  local internalInventorySize = crobot.inventorySize()
+  local internalInvItems = {}
   
+  -- First pass scans internal inventory and categorizes each item by stock type.
+  for slot, item in internalInvIterator(internalInventorySize) do
+    local itemName = getItemFullName(item)
+    local stockIndex = -1
+    for i, stockEntry in ipairs(self.stockLevels) do
+      if stockEntry[1] > 0 then
+        for j = 2, #stockEntry do
+          if string.match(itemName, stockEntry[j]) then
+            stockIndex = i
+            break
+          end
+        end
+        if stockIndex > 0 then
+          break
+        end
+      end
+    end
+    internalInvItems[slot] = {
+      itemName = itemName,
+      stockIndex = stockIndex
+    }
+  end
+  
+  dlog.out("itemRearrange", "internalInvItems:", internalInvItems)
+  
+  -- Second pass iterates only the slots used for stocking items and does the sorting.
+  local stockedItems = {}
+  local slot = 1
+  for stockIndex, stockEntry in ipairs(self.stockLevels) do
+    for i = 1, stockEntry[1] do
+      local lastItemName
+      if internalInvItems[slot] and internalInvItems[slot].stockIndex == stockIndex then
+        lastItemName = internalInvItems[slot].itemName
+        stockedItems[slot] = lastItemName
+      end
+      while true do
+        -- Find the first item in internal inventory that should be transferred into the current slot.
+        local foundSlot
+        for j = 1, internalInventorySize do
+          if internalInvItems[j] and internalInvItems[j].stockIndex == stockIndex and not stockedItems[j] and (lastItemName == nil or internalInvItems[j].itemName == lastItemName) then
+            foundSlot = j
+            break
+          end
+        end
+        -- If the item could not be found or there is not enough space, we're done.
+        if not foundSlot or (lastItemName and crobot.space(slot) == 0) then
+          break
+        end
+        
+        -- Transfer the item stack, and update internalInvItems.
+        lastItemName = internalInvItems[foundSlot].itemName
+        stockedItems[slot] = lastItemName
+        crobot.select(foundSlot)
+        assert(crobot.transferTo(slot))
+        internalInvItems[slot], internalInvItems[foundSlot] = internalInvItems[foundSlot], internalInvItems[slot]
+        if crobot.count(foundSlot) == 0 then
+          internalInvItems[foundSlot] = nil
+        end
+      end
+      slot = slot + 1
+    end
+  end
+  
+  dlog.out("itemRearrange", "internalInvItems:", internalInvItems)
+  dlog.out("itemRearrange", "stockedItems:", stockedItems)
+  
+  return stockedItems
 end
 
-function Quarry:itemDeposit()
+-- Dumps each item in robot inventory to the specified side. The currently
+-- equipped item is dumped too if durability is low.
+function Quarry:itemDeposit(stockedItems, outputSide)
+  local internalInventorySize = crobot.inventorySize()
+  robnav.turnTo(outputSide)
+  outputSide = outputSide < 2 and outputSide or sides.front
   
+  -- Push remaining slots to output.
+  for slot = 1, internalInventorySize do
+    if not stockedItems[slot] and crobot.count(slot) > 0 then
+      dlog.out("itemDeposit", "drop item in slot", slot)
+      crobot.select(slot)
+      crobot.drop(outputSide)
+      while crobot.count() > 0 do
+        os.sleep(2.0)
+        dlog.out("itemDeposit", "sleep...")
+        crobot.drop(outputSide)
+      end
+    end
+  end
+  
+  -- Push tool to output if too low.
+  crobot.select(internalInventorySize)
+  icontroller.equip()
+  local toolItem = icontroller.getStackInInternalSlot()
+  if toolItem and toolItem.maxDamage > 0 then
+    local durability = (toolItem.maxDamage - toolItem.damage) / toolItem.maxDamage
+    if durability <= self.toolDurabilityReturn then
+      crobot.drop(outputSide)
+      while crobot.count() > 0 do
+        os.sleep(2.0)
+        dlog.out("itemDeposit", "sleep...")
+        crobot.drop(outputSide)
+      end
+    end
+  end
+  icontroller.equip()
 end
 
-function Quarry:itemRestock()
+-- Retrieve items from the specified side and fill slots that match the format
+-- defined in self.stockLevels. If there is no equipped item then a new one is
+-- picked up that meets the minimum durability requirement.
+function Quarry:itemRestock(inputSide)
+  local internalInventorySize = crobot.inventorySize()
+  robnav.turnTo(inputSide)
+  inputSide = inputSide < 2 and inputSide or sides.front
   
+  -- Grab more stock items as needed (from input).
+  local inputItems = {}
+  for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
+    local itemName = getItemFullName(item)
+    local inputItemSlots = inputItems[itemName]
+    if not inputItemSlots then
+      inputItems[itemName] = {[slot] = math.floor(item.size)}
+    else
+      inputItemSlots[slot] = math.floor(item.size)
+    end
+  end
+  
+  dlog.out("itemRestock", "inputItems before:", inputItems)
+  
+  for slot = 1, internalInventorySize do
+    -- Determine the entry in self.stockLevels that corresponds to the current slot.
+    local slotStockEntry
+    local slotOffset = 0
+    for _, stockEntry in ipairs(self.stockLevels) do
+      slotOffset = slotOffset + stockEntry[1]
+      if slotOffset >= slot then
+        slotStockEntry = stockEntry
+        break
+      end
+    end
+    if not slotStockEntry then
+      break
+    end
+    
+    dlog.out("itemRestock", "checking slot " .. slot .. " with stock levels:", slotStockEntry)
+    
+    if crobot.space(slot) > 0 then
+      -- Find the slots for the type of item we need to extract from the inventory. Use the same item in the current slot, or the first one that matches one of the options in slotStockEntry.
+      local currentItemName
+      local inputItemSlots
+      if crobot.count(slot) > 0 then
+        currentItemName = getItemFullName(icontroller.getStackInInternalSlot(slot))
+        inputItemSlots = inputItems[currentItemName]
+      else
+        for itemName, itemSlots in pairs(inputItems) do
+          for i = 2, #slotStockEntry do
+            if string.match(itemName, slotStockEntry[i]) then
+              currentItemName = itemName
+              inputItemSlots = itemSlots
+              break
+            end
+          end
+          if inputItemSlots then
+            break
+          end
+        end
+      end
+      
+      -- Continuously suck items from first available slot until full or none left.
+      if inputItemSlots then
+        dlog.out("itemRestock", "inputItemSlots:", inputItemSlots)
+        crobot.select(slot)
+        while crobot.space(slot) > 0 do
+          local externSlot = next(inputItemSlots)
+          local numTransferred = icontroller.suckFromSlot(inputSide, externSlot, crobot.space(slot))
+          assert(numTransferred)
+          inputItemSlots[externSlot] = inputItemSlots[externSlot] - numTransferred
+          if inputItemSlots[externSlot] <= 0 then
+            inputItemSlots[externSlot] = nil
+            if next(inputItemSlots) == nil then
+              inputItems[currentItemName] = nil
+              break
+            end
+          end
+        end
+      end
+    end
+  end
+  dlog.out("itemRestock", "inputItems before:", inputItems)
+  
+  -- Grab new tool if needed.
+  crobot.select(internalInventorySize)
+  icontroller.equip()
+  local toolItem = icontroller.getStackInInternalSlot()
+  if not toolItem then
+    local bestToolSlot = -1
+    local bestToolDurability = -1
+    while true do
+      for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
+        local itemName = getItemFullName(item)
+        local durability
+        for _, itemPattern in pairs(self.miningItems) do
+          if string.match(itemName, itemPattern) then
+            durability = item.maxDamage > 0 and ((item.maxDamage - item.damage) / item.maxDamage) or 1.0
+            break
+          end
+        end
+        if durability and durability > self.toolDurabilityReturn and durability > bestToolDurability then
+          bestToolSlot = slot
+          bestToolDurability = durability
+        end
+      end
+      if bestToolSlot ~= -1 then
+        break
+      end
+      os.sleep(2.0)
+      dlog.out("itemRestock", "waiting for mining tool...")
+    end
+    
+    assert(icontroller.suckFromSlot(inputSide, bestToolSlot))
+  end
+  icontroller.equip()
 end
 
 function Quarry:run()
   local co = coroutine.create(function()
     self:quarryStart()
-    --self:quarryMain()
-    --self:quarryEnd()
+    self:quarryMain()
+    self:quarryEnd()
     return ReturnReasons.quarryDone
   end)
+  
+  -- Restock items in inventory.
+  local stockedItems = self:itemRearrange()
+  self:itemDeposit(stockedItems, self.inventoryOutput)
+  self:itemRestock(self.inventoryInput)
+  crobot.select(1)
+  robnav.turnTo(sides.front)
   
   while true do
     self.withinMainCoroutine = true
     local status, ret = coroutine.resume(co)
     self.withinMainCoroutine = false
     assert(status, ret)
+    dlog.out("run", "return reason =", ReturnReasons[ret])
     
     -- Return to home position.
+    dlog.out("run", "moving to home position.")
     local xLast, yLast, zLast, rLast = robnav.getCoords()
     local selectedSlotType = self.selectedSlotType
     if robnav.y < 0 then
@@ -347,190 +590,29 @@ function Quarry:run()
       self:forceMove(sides.top)
     end
     
-    --assert(false, print("ret = " , ReturnReasons.quarryDone))
-    
-    local internalInvItems = {}
-    local internalInventorySize = crobot.inventorySize()
-    
-    for slot, item in internalInvIterator(internalInventorySize) do
-      local itemName = getItemFullName(item)
-      local stockIndex = -1
-      for i, stockEntry in ipairs(self.stockLevels) do
-        if stockEntry[1] > 0 then
-          for j = 2, #stockEntry do
-            if string.match(itemName, stockEntry[j]) then
-              stockIndex = i
-              break
-            end
-          end
-          if stockIndex > 0 then
-            break
-          end
-        end
-      end
-      
-      internalInvItems[slot] = {
-        itemName = itemName,
-        stockIndex = stockIndex
-      }
+    if ret == ReturnReasons.quarryDone then
+      self:itemDeposit({}, self.inventoryOutput)
+      crobot.select(1)
+      robnav.turnTo(sides.front)
+      io.write("Quarry finished!\n")
+      return
     end
     
-    dlog.out("rearrange", "internalInvItems:", internalInvItems)
-    
-    -- Restock build/stair blocks by moving items to first slots in robot. Mark slots as blacklisted so we don't dump the items to output containers later.
-    local stockedItems = {}
-    local slot = 1
-    for stockIndex, stockEntry in ipairs(self.stockLevels) do
-      for i = 1, stockEntry[1] do
-        local lastItemName
-        if internalInvItems[slot] and internalInvItems[slot].stockIndex == stockIndex then
-          lastItemName = internalInvItems[slot].itemName
-          stockedItems[slot] = lastItemName
-        end
-        while true do
-          -- Find the first item in internal inventory that should be transferred into the current slot.
-          local foundSlot
-          for j = 1, internalInventorySize do
-            if internalInvItems[j] and internalInvItems[j].stockIndex == stockIndex and not stockedItems[j] and (lastItemName == nil or internalInvItems[j].itemName == lastItemName) then
-              foundSlot = j
-              break
-            end
-          end
-          -- If the item could not be found or there is not enough space, we're done.
-          if not foundSlot or (lastItemName and crobot.space(slot) == 0) then
-            break
-          end
-          
-          -- Transfer the item stack, and update internalInvItems.
-          lastItemName = internalInvItems[foundSlot].itemName
-          stockedItems[slot] = lastItemName
-          crobot.select(foundSlot)
-          assert(crobot.transferTo(slot))
-          internalInvItems[slot], internalInvItems[foundSlot] = internalInvItems[foundSlot], internalInvItems[slot]
-          if crobot.count(foundSlot) == 0 then
-            internalInvItems[foundSlot] = nil
-          end
-        end
-        slot = slot + 1
-      end
-    end
-    
-    dlog.out("rearrange", "internalInvItems:", internalInvItems)
-    dlog.out("rearrange", "stockedItems:", stockedItems)
-    
-    robnav.turnTo(sides.front)
+    -- Restock items in inventory.
+    local stockedItems = self:itemRearrange()
+    self:itemDeposit(stockedItems, self.inventoryOutput)
+    self:itemRestock(self.inventoryInput)
     crobot.select(1)
-    assert(false, "bye")
-    
-    
-    -- Push remaining slots to output.
-    robnav.turnTo(self.inventoryOutput)
-    local outputSide = self.inventoryOutput < 2 and self.inventoryOutput or sides.front
-    for slot = 1, internalInventorySize do
-      if not stockedItems[slot] and crobot.count(slot) > 0 then
-        dlog.out("pushRemaining", "drop item in slot", slot)
-        crobot.select(slot)
-        while not crobot.drop(outputSide) and crobot.count() > 0 do
-          os.sleep(1.0)
-          dlog.out("pushRemaining", "sleep...")
-        end
-      end
-    end
-    
-    -- Push tool to output if too low.
-    crobot.select(internalInventorySize)
-    icontroller.equip()
-    icontroller.equip()
-    
-    
-    
-    -- Grab more build/stair blocks as needed (from input).
-    robnav.turnTo(self.inventoryInput)
-    local inputSide = self.inventoryInput < 2 and self.inventoryInput or sides.front
-    local inputItems = {}
-    for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
-      local itemName = getItemFullName(item)
-      local inputItemSlots = inputItems[itemName]
-      if not inputItemSlots then
-        inputItems[itemName] = {[slot] = math.floor(item.size)}
-      else
-        inputItemSlots[slot] = math.floor(item.size)
-      end
-    end
-    dlog.out("restock", "inputItems before:", inputItems)
-    for slot = 1, internalInventorySize do
-      -- Determine the entry in self.stockLevels that corresponds to the current slot.
-      local slotStockEntry
-      local slotOffset = 0
-      for _, stockEntry in ipairs(self.stockLevels) do
-        slotOffset = slotOffset + stockEntry[1]
-        if slotOffset >= slot then
-          slotStockEntry = stockEntry
-          break
-        end
-      end
-      if not slotStockEntry then
-        break
-      end
-      
-      dlog.out("restock", "checking slot " .. slot .. " with stock levels:", slotStockEntry)
-      
-      if crobot.space(slot) > 0 then
-        -- Find the slots for the type of item we need to extract from the inventory. Use the same item in the current slot, or the first one that matches one of the options in slotStockEntry.
-        local currentItemName
-        local inputItemSlots
-        if crobot.count(slot) > 0 then
-          currentItemName = getItemFullName(icontroller.getStackInInternalSlot(slot))
-          inputItemSlots = inputItems[currentItemName]
-        else
-          for itemName, itemSlots in pairs(inputItems) do
-            for i = 2, #slotStockEntry do
-              if string.match(itemName, slotStockEntry[i]) then
-                currentItemName = itemName
-                inputItemSlots = itemSlots
-                break
-              end
-            end
-            if inputItemSlots then
-              break
-            end
-          end
-        end
-        
-        -- Continuously suck items from first available slot until full or none left.
-        if inputItemSlots then
-          dlog.out("restock", "inputItemSlots:", inputItemSlots)
-          crobot.select(slot)
-          while crobot.space(slot) > 0 do
-            local externSlot = next(inputItemSlots)
-            local numTransferred = icontroller.suckFromSlot(inputSide, externSlot, crobot.space(slot))
-            assert(numTransferred)
-            inputItemSlots[externSlot] = inputItemSlots[externSlot] - numTransferred
-            if inputItemSlots[externSlot] <= 0 then
-              inputItemSlots[externSlot] = nil
-              if next(inputItemSlots) == nil then
-                inputItems[currentItemName] = nil
-                break
-              end
-            end
-          end
-        end
-      end
-    end
-    dlog.out("restock", "inputItems before:", inputItems)
-    
-    -- Grab new tool if needed.
-    
-    --if tool can be damaged:
-    --durability = (maxDamage - damage) / maxDamage
-    
-    -- Sit at 0,0,0 to recharge.
-    
     robnav.turnTo(sides.front)
-    crobot.select(1)
-    assert(false, "made it to end")
+    
+    -- Wait until fully recharged.
+    while computer.maxEnergy() - computer.energy() > 50 do
+      os.sleep(2.0)
+      dlog.out("run", "waiting for energy...")
+    end
     
     -- Go back to working area.
+    dlog.out("run", "moving back to working position.")
     if selectedSlotType == 1  then
       assert(self:selectBuildBlock())
     elseif selectedSlotType == 2  then
@@ -682,7 +764,8 @@ local function main()
     dlog.setFileOut(DLOG_FILE_OUT, "w")
   end
   io.write("Starting quarry!\n")
-  local quarry = BasicQuarry:new(3, 2, 3)
+  --local quarry = BasicQuarry:new(6, 6, 8)
+  local quarry = BasicQuarry:new(2, 2, 3)
   --local quarry = FastQuarry:new(3, 2, 3)
   
   quarry:run()
