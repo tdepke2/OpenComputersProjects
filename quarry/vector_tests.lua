@@ -1,5 +1,7 @@
 local include = require("include")
-local vector = include("mat")
+local dlog = include("dlog")
+dlog.osBlockNewGlobals(true)
+local vector = include("vector")
 
 -- Test construction, access/assignment of values.
 local function test1()
@@ -291,4 +293,6 @@ local function main()
   test5()
   print("all tests passing!")
 end
-main()
+local status, ret = pcall(main)
+dlog.osBlockNewGlobals(false)
+assert(status, ret)
