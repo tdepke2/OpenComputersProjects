@@ -55,9 +55,9 @@ end
 -- Example: dlog.checkArgs(my_first_arg, "number", my_second_arg, "table,nil")
 function dlog.checkArgs(...)
   local arg = table.pack(...)
-  for i = 1, arg.n do
-    if i % 2 == 0 and not string.find(arg[i], type(arg[i - 1]), 1, true) then
-      dlog.errorWithTraceback("bad argument at index#" .. i .. " to checkArgs (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")")
+  for i = 2, arg.n, 2 do
+    if not string.find(arg[i], type(arg[i - 1]), 1, true) then
+      dlog.errorWithTraceback("bad argument at index #" .. i - 1 .. " (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")")
     end
   end
 end
