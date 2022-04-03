@@ -2,10 +2,10 @@
 Diagnostic logger and debugging utilities.
 
 Allows writing logging data to standard output and/or a file for debugging code.
-Log messages include a subsystem name and a list of space-separated values
-(preferably including some extra text to identify the values). Outputs to a file
-also prefix the message with a timestamp, much like how syslog output appears on
-unix systems.
+Log messages include a subsystem name and any number of values (preferably
+including some extra text to identify the values). Outputs to a file also prefix
+the message with a timestamp, much like how syslog output appears on unix
+systems.
 
 Subsystem names can be any strings like "storage", "command:info",
 "main():debug", etc. Note that logging output is only shown for enabled
@@ -34,31 +34,63 @@ dlog.subsystems = {
 } -- FIXME just setting some defaults for when I reboot servers, should change this table back to empty later on. #################################################################
 dlog.env2 = nil
 
--- dlog.errorWithTraceback(message: string)
+-- xassert(v: boolean, ...): ...
 -- 
--- Throws the error message, and includes a stack trace in the output.
-function dlog.errorWithTraceback(message)
-  local traceMsg = string.gsub(debug.traceback(message), "\t", "  ")
+-- Extended assert, a global replacement for the standard assert() function.
+-- This improves performance by delaying the concatenation of strings to form
+-- the message until the message is actually needed, and also appends a stack
+-- trace. The arguments after v are optional and can be anything that tostring()
+-- will convert. Returns v and all other arguments.
+-- Note that if an exception is caught, it should not be re-thrown with this
+-- function. Use error() instead to avoid adding another stack trace onto the
+-- message.
+-- Original idea from: http://lua.space/general/assert-usage-caveat
+function xassert(v, ...)
+  if not v then
+    local argc = select("#", ...)
+    if argc > 0 then
+      dlog.errorWithTraceback(string.rep("%s", argc):format(...), 3)
+    else
+      dlog.errorWithTraceback("assertion failed!", 3)
+    end
+  end
+  return v, ...
+end
+
+-- dlog.errorWithTraceback(message: string[, level: number])
+-- 
+-- Throws the error message, and includes a stack trace in the output. An
+-- optional level number specifies the level to start the traceback (defaults to
+-- 1, and usually should be set to 2).
+function dlog.errorWithTraceback(message, level)
+  local traceMsg = string.gsub(debug.traceback(message, level), "\t", "  ")
   if dlog.logErrorsToOutput then
     dlog.out("error", traceMsg)
   end
-  error(traceMsg)
+  error(traceMsg, level)
 end
 
 -- FIXME this should be used everywhere and same for the block globals stuff #############################################################################################################
--- dlog.checkArgs(value1: any, types1: string, ...)
+-- dlog.checkArgs(val: any, typ: string, ...)
 -- 
 -- Re-implementation of the checkArg() built-in function. Asserts that the given
 -- arguments match the types they are supposed to. This version fixes issues
 -- the original function had with tables as arguments and allows the types
 -- string to be a comma-separated list.
 -- Example: dlog.checkArgs(my_first_arg, "number", my_second_arg, "table,nil")
-function dlog.checkArgs(...)
-  local arg = table.pack(...)
-  for i = 2, arg.n, 2 do
-    if not string.find(arg[i], type(arg[i - 1]), 1, true) then
-      dlog.errorWithTraceback("bad argument at index #" .. i - 1 .. " (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")")
+local checkArgsHelper
+function dlog.checkArgs(val, typ, ...)
+  if not string.find(typ, type(val), 1, true) then
+    dlog.errorWithTraceback("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 3)
+  end
+  return checkArgsHelper(3, ...)
+end
+checkArgsHelper = function(i, val, typ, ...)
+  if typ then
+    if not string.find(typ, type(val), 1, true) then
+      dlog.errorWithTraceback("bad argument at index #" .. i .. " (" .. typ .. " expected, got " .. type(val) .. ")", 3)
     end
+    return checkArgsHelper(i + 2, ...)
   end
 end
 
@@ -175,7 +207,7 @@ function dlog.tableToString(t)
   local function tableToStringHelper(t, spacing)
     for k, v in pairs(t) do
       if type(v) == "table" then
-        str = str .. spacing .. tostring(k) .. ": {\n"
+        str = str .. spacing .. tostring(k) .. ": " .. tostring(v) .. " {\n"
         tableToStringHelper(v, spacing .. "  ")
         str = str .. spacing .. "}\n"
       else
@@ -203,22 +235,22 @@ end
 function dlog.out(subsystem, ...)
   if dlog.enableOutput and (dlog.subsystems[subsystem] or (dlog.subsystems["*"] and dlog.subsystems[subsystem] == nil)) then
     local arg = table.pack(...)
-    local str = ""
     for i = 1, arg.n do
       if type(arg[i]) == "function" then
         arg[i] = arg[i]()
       end
       if type(arg[i]) == "table" then
-        str = str .. dlog.tableToString(arg[i])
-      else
-        str = str .. " " .. tostring(arg[i])
+        arg[i] = dlog.tableToString(arg[i])
+      elseif type(arg[i]) ~= "string" then
+        arg[i] = tostring(arg[i])
       end
     end
+    local str = table.concat(arg)
     if dlog.fileOutput then
-      dlog.fileOutput:write(os.date(), " dlog:", subsystem, str, "\n")
+      dlog.fileOutput:write(os.date(), " dlog:", subsystem, " ", str, "\n")
     end
     if dlog.stdOutput then
-      io.write("dlog:", subsystem, str, "\n")
+      io.write("dlog:", subsystem, " ", str, "\n")
     end
   end
 end

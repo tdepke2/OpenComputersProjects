@@ -3,6 +3,36 @@ local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
 local vector = include("vector")
 
+-- FIXME might want to put this in dstructs.lua instead ##################################################################################################################
+
+-- Modified version of dstructs.objectsEqual() to use rawget() compares. See
+-- "dstructs.lua" for original implementation.
+local function rawObjectsEqual(obj1, obj2)
+  if type(obj1) ~= type(obj2) then
+    return false
+  elseif type(obj1) ~= "table" then
+    return obj1 == obj2
+  end
+  
+  -- Confirm all items in obj1 are in obj2 (and they are equal).
+  local n1 = 0
+  for k1, v1 in pairs(obj1) do
+    local v2 = rawget(obj2, k1)
+    if v2 == nil or not rawObjectsEqual(v1, v2) then
+      return false
+    end
+    n1 = n1 + 1
+  end
+  
+  -- Count items in obj2, and confirm this matches the length of obj1.
+  local n2 = 0
+  for k2, _ in pairs(obj2) do
+    n2 = n2 + 1
+  end
+  
+  return n1 == n2
+end
+
 -- Test construction, access/assignment of values.
 local function test1()
   print("test1")
@@ -253,9 +283,40 @@ local function test4()
   assert((v2 == {type = "vector", n = 3, [1] = 1, [2] = 2, [3] = 3}) == true)
 end
 
--- Test modifiers.
+-- Test table.move custom implementation (if used).
 local function test5()
   print("test5")
+  local v1 = vector()
+  local v2 = vector(1, 2, 3)
+  local v3 = vector(4, 5, nil, nil, 6, 7, nil)
+  local v4 = vector(nil, nil, -5, nil, 7, nil)
+  
+  -- Illegally change vector sizes to suppress range checks.
+  v1.n = 11
+  v2.n = 12
+  v3.n = 13
+  v4.n = 14
+  
+  assert(rawObjectsEqual(v1, {n = 11}))
+  assert(rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
+  table.move(v2, 1, 3, 1, v1)
+  assert(rawObjectsEqual(v1, {n = 11, [1] = 1, [2] = 2, [3] = 3}))
+  assert(rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
+  table.move(v3, 7, 4, -2, v2)
+  assert(rawObjectsEqual(v1, {n = 11, [1] = 1, [2] = 2, [3] = 3}))
+  assert(rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
+  table.move(v3, 4, 7, -2, v2)
+  assert(rawObjectsEqual(v1, {n = 11, [1] = 1, [2] = 2, [3] = 3}))
+  assert(rawObjectsEqual(v2, {n = 12, [-1] = 6, [0] = 7, [2] = 2, [3] = 3}))
+  
+  assert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 5, [5] = 6, [6] = 7}))
+  table.move(v3, 1, 7, 2)
+  assert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 4, [3] = 5, [6] = 6, [7] = 7}))
+end
+
+-- Test modifiers.
+local function test6()
+  print("test6")
   local v1 = vector()
   local v2 = vector(1, 2, 3)
   local v3 = vector(4, 5, 6)
@@ -283,6 +344,8 @@ local function test5()
   assert(v == vector(-2, 1, 5, 3, 9))
   
   -- FIXME need to test inserting multiple vals and sparse vectors with inserts #############################################################################
+  
+  -- FIXME we should replace calls to assert with xassert ########################################
 end
 
 local function main()
@@ -291,8 +354,11 @@ local function main()
   test3()
   test4()
   test5()
+  test6()
   print("all tests passing!")
 end
 local status, ret = pcall(main)
 dlog.osBlockNewGlobals(false)
-assert(status, ret)
+if not status then
+  dlog.errorWithTraceback(ret)
+end
