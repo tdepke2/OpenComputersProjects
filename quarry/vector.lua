@@ -28,6 +28,17 @@ print(v1:cross(v2))
 --]]
 
 
+-- Check for optional dependency dlog.
+local dlog
+local xassert = assert
+do
+  local status, ret = pcall(require, "dlog")
+  if status then
+    dlog = ret
+    xassert = dlog.xassert
+  end
+end
+
 local vector = {}
 
 -- Enables vector() function call as a shortcut to vector.new().
@@ -43,7 +54,12 @@ local vectorMeta = {
 
 setmetatable(vectorMeta, {
   __index = function(t, k)
-    error("attempt to read undefined member \"" .. tostring(k) .. "\" in vector.")
+    local message = "attempt to read undefined member \"" .. tostring(k) .. "\" in vector."
+    if dlog then
+      dlog.errorWithTraceback(message, 4)
+    else
+      error(message, 3)
+    end
   end
 })
 
@@ -52,7 +68,7 @@ setmetatable(vectorMeta, {
 -- vector entries).
 function vectorMeta.__index(t, k)
   if type(k) == "number" then
-    assert(k == math.floor(k) and k >= 1 and k <= t.n, "index " .. k .. " is out of vector bounds or non-integer.")
+    xassert(k == math.floor(k) and k >= 1 and k <= t.n, "index " .. k .. " is out of vector bounds or non-integer.")
     return 0
   end
   return vectorMeta[k]
@@ -62,7 +78,7 @@ end
 -- element if key is integer.
 function vectorMeta.__newindex(t, k, v)
   if type(k) == "number" then
-    assert(k == math.floor(k) and k >= 1 and k <= t.n, "index " .. k .. " is out of vector bounds or non-integer.")
+    xassert(k == math.floor(k) and k >= 1 and k <= t.n, "index " .. k .. " is out of vector bounds or non-integer.")
   end
   rawset(t, k, v)
 end
@@ -73,7 +89,7 @@ end
 -- Adds two vectors together, the vectors must be the same size. Returns new
 -- vector with the component-wise sum.
 function vectorMeta.add(lhs, rhs)
-  assert(lhs.type == "vector" and rhs.type == "vector" and lhs.n == rhs.n, "attempt to perform vector arithmetic with invalid type or wrong dimensions.")
+  xassert(lhs.type == "vector" and rhs.type == "vector" and lhs.n == rhs.n, "attempt to perform vector arithmetic with invalid type or wrong dimensions.")
   local result = {}
   for i = 1, lhs.n do
     result[i] = lhs[i] + rhs[i]
@@ -88,7 +104,7 @@ vectorMeta.__add = vectorMeta.add
 -- Subtracts two vectors, the vectors must be the same size. Returns new vector
 -- with the component-wise difference.
 function vectorMeta.sub(lhs, rhs)
-  assert(lhs.type == "vector" and rhs.type == "vector" and lhs.n == rhs.n, "attempt to perform vector arithmetic with invalid type or wrong dimensions.")
+  xassert(lhs.type == "vector" and rhs.type == "vector" and lhs.n == rhs.n, "attempt to perform vector arithmetic with invalid type or wrong dimensions.")
   local result = {}
   for i = 1, lhs.n do
     result[i] = lhs[i] - rhs[i]
@@ -117,7 +133,7 @@ function vectorMeta.mul(lhs, rhs)
     end
     return vector.new(lhs.n, result)
   else
-    assert(lhs.type == "vector" and rhs.type == "vector" and lhs.n == rhs.n, "attempt to perform vector arithmetic with invalid type or wrong dimensions.")
+    xassert(lhs.type == "vector" and rhs.type == "vector" and lhs.n == rhs.n, "attempt to perform vector arithmetic with invalid type or wrong dimensions.")
     for i = 1, lhs.n do
       result[i] = lhs[i] * rhs[i]
     end
@@ -146,7 +162,7 @@ function vectorMeta.div(lhs, rhs)
     end
     return vector.new(lhs.n, result)
   else
-    assert(lhs.type == "vector" and rhs.type == "vector" and lhs.n == rhs.n, "attempt to perform vector arithmetic with invalid type or wrong dimensions.")
+    xassert(lhs.type == "vector" and rhs.type == "vector" and lhs.n == rhs.n, "attempt to perform vector arithmetic with invalid type or wrong dimensions.")
     for i = 1, lhs.n do
       result[i] = lhs[i] / rhs[i]
     end
@@ -172,7 +188,7 @@ vectorMeta.__unm = vectorMeta.negate
 -- must be in range [1, vec.n + 1]. If count is specified, this is the number of
 -- elements added and also the change in size of the vector.
 function vectorMeta:insert(pos, value, count)
-  assert(pos == math.floor(pos) and pos >= 1 and pos <= self.n + 1, "index " .. pos .. " is out of vector bounds or non-integer.")
+  xassert(pos == math.floor(pos) and pos >= 1 and pos <= self.n + 1, "index " .. pos .. " is out of vector bounds or non-integer.")
   count = count or 1
   self.n = self.n + count
   table.move(self, pos, self.n - count, pos + count)
@@ -309,7 +325,7 @@ function vector.new(...)
     end
     return setmetatable(vec, vectorMeta)
   elseif arg.n == 2 and type(arg[1]) == "number" and type(arg[2]) == "table" then
-    assert(arg[1] >= 0 and arg[1] == math.floor(arg[1]), "vector size must be non-negative integer.")
+    xassert(arg[1] >= 0 and arg[1] == math.floor(arg[1]), "vector size must be non-negative integer.")
     arg[2].n = arg[1]
     return setmetatable(arg[2], vectorMeta)
   else

@@ -16,10 +16,15 @@ restart of the program that is being tested.
 
 local dlog = {}
 
--- Configuration options.
+-- Configuration options:
+-- Set errors to direct to dlog.out() using the "error" subsystem before getting passed to error().
 dlog.logErrorsToOutput = true
+-- Enables the xassert() call as a global function. To disable, this must be set to false here before loading dlog module.
+dlog.defineGlobalXassert = true
+-- FIXME NYI ####################################
+dlog.tracebackWithErrors = true
 
--- Private data members, no touchy.
+-- Private data members, no touchy:
 dlog.fileOutput = nil
 dlog.stdOutput = true
 dlog.enableOutput = true
@@ -34,6 +39,7 @@ dlog.subsystems = {
 } -- FIXME just setting some defaults for when I reboot servers, should change this table back to empty later on. #################################################################
 dlog.env2 = nil
 
+-- dlog.xassert(v: boolean, ...): ...
 -- xassert(v: boolean, ...): ...
 -- 
 -- Extended assert, a global replacement for the standard assert() function.
@@ -45,7 +51,7 @@ dlog.env2 = nil
 -- function. Use error() instead to avoid adding another stack trace onto the
 -- message.
 -- Original idea from: http://lua.space/general/assert-usage-caveat
-function xassert(v, ...)
+function dlog.xassert(v, ...)
   if not v then
     local argc = select("#", ...)
     if argc > 0 then
@@ -55,6 +61,9 @@ function xassert(v, ...)
     end
   end
   return v, ...
+end
+if dlog.defineGlobalXassert then
+  xassert = dlog.xassert
 end
 
 -- dlog.errorWithTraceback(message: string[, level: number])
@@ -107,44 +116,75 @@ end
 -- Note: this function uses some extreme fuckery and modifies the system
 -- behavior, use at your own risk!
 function dlog.osBlockNewGlobals(state)
-  local environmentMetatable = getmetatable(_ENV) or {}    -- Package-level ENV used by OS.
+  local environmentMetatable = getmetatable(_ENV)    -- Module-level ENV.
   
-  if state then
-    local env2 = rawget(environmentMetatable, "__index")    -- ENV at next level down?
-    if type(env2) ~= "table" then
-      return
-    end
-    local _G = _G    -- Need to add any used globals as locals, otherwise we get stack overflow.
+  -- The _ENV in OpenOS is set up like a hierarchy of tables that delegate access/modification to the parent.
+  -- The top of this hierarchy is _G where Lua/OpenOS globals are defined, and next in line is the table where user globals declared in main process and modules get defined.
+  -- Typically in Lua, _G is the same as _ENV._G and globals get added directly in the _ENV table.
+  -- See /boot/01_process.lua for details.
+  if state and not dlog.env2 then
+    local env2 = rawget(environmentMetatable, "__index")    -- ENV at next level up.
     
-    environmentMetatable.__newindex = function(_, key, value)
-      dlog.errorWithTraceback("attempt to write to undeclared global variable " .. key)
-      --print("__newindex invoked for " .. key)
-      env2[key] = value
-    end
-    environmentMetatable.__index = function(t, key)
-      if not _G[key] then
-        dlog.errorWithTraceback("attempt to read from undeclared global variable " .. key)
+    -- Be careful here: Certain globals (or undefined ones) need to be aliased to local vars when used in these metamethods, otherwise we get stack overflow.
+    rawset(environmentMetatable, "__index", function(t, key)
+      local v = env2[key]
+      if v == nil then
+        dlog.errorWithTraceback("attempt to read from undeclared global variable " .. key, 3)
         --print("__index invoked for " .. key)
       end
-      return env2[key]
-    end
+      return v
+    end)
+    rawset(environmentMetatable, "__newindex", function(_, key, value)
+      if env2[key] == nil then
+        dlog.errorWithTraceback("attempt to write to undeclared global variable " .. key, 3)
+        --print("__newindex invoked for " .. key)
+      end
+      env2[key] = value
+    end)
     
     dlog.env2 = env2
-  elseif dlog.env2 then
+  elseif not state and dlog.env2 then
     local env2 = dlog.env2
     
     -- Reset the metatable to the same way it is set up in /boot/01_process.lua in the intercept_load() function.
-    environmentMetatable.__newindex = function(_, key, value)
+    rawset(environmentMetatable, "__index", env2)
+    rawset(environmentMetatable, "__newindex", function(_, key, value)
       env2[key] = value
-    end
-    environmentMetatable.__index = env2
+    end)
     
     dlog.env2 = nil
-  else
-    return
+  end
+end
+
+-- dlog.osGetGlobalsList(): table
+-- 
+-- Collects a table of all global variables currently defined. Specifically,
+-- this shows the contents of _G and any globals accessible by the running
+-- process. This function is designed for debugging purposes only.
+function dlog.osGetGlobalsList()
+  local envLevel = _ENV
+  local result = {}
+  
+  while envLevel do
+    --print(tostring(envLevel) .. " {")
+    -- Iterate without using pairs() to avoid __pairs metamethod.
+    for k, v in next, envLevel do
+      --print("  " .. tostring(k) .. ": " .. tostring(v))
+      result[k] = v
+    end
+    --print("}")
+    
+    envLevel = getmetatable(envLevel)
+    if envLevel then
+      envLevel = rawget(envLevel, "__index")
+      -- If we find an __index set to a function, assume dlog.osBlockNewGlobals() is in effect and jump to the cached _ENV value.
+      if type(envLevel) == "function" then
+        envLevel = dlog.env2
+      end
+    end
   end
   
-  setmetatable(_ENV, environmentMetatable)
+  return result
 end
 
 -- dlog.setFileOut(filename: string[, mode: string])
