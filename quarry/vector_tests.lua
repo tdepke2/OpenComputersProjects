@@ -274,6 +274,8 @@ local function test4()
   xassert((v2 == vector(1, 2, 3)) == true)
   xassert((v2 == vector(1, 2)) == false)
   xassert((v2 == vector(1, 2, 3, nil)) == false)
+  xassert((v4 == v5) == false)
+  xassert((v5 == v4) == false)
   xassert((v5 == vector(-5, 7, 0)) == true)
   xassert((vector(-5, 7, 0) == v5) == true)
   xassert((v5 == vector(-5, 7.00001, 0)) == false)
@@ -287,6 +289,32 @@ end
 -- Test table.move custom implementation (if used).
 local function test5()
   print("test5")
+  -- Test with plain tables.
+  local t1 = {}
+  local t2 = {[1] = 1.1, [2] = 2.2, [3] = 3.3}
+  local t3 = {[2] = -7.6, [3] = 8, [6] = 9.9}
+  
+  table.move(t2, 3, 1, 1, t1)
+  xassert(rawObjectsEqual(t1, {}))
+  xassert(rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [3] = 3.3}))
+  table.move(t3, 3, 3, 0, t1)
+  xassert(rawObjectsEqual(t1, {[0] = 8}))
+  xassert(rawObjectsEqual(t3, {[2] = -7.6, [3] = 8, [6] = 9.9}))
+  table.move(t2, 1, 3, 1, t1)
+  xassert(rawObjectsEqual(t1, {[0] = 8, [1] = 1.1, [2] = 2.2, [3] = 3.3}))
+  xassert(rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [3] = 3.3}))
+  table.move(t3, 1, 6, 3, t2)
+  xassert(rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [4] = -7.6, [5] = 8, [8] = 9.9}))
+  xassert(rawObjectsEqual(t3, {[2] = -7.6, [3] = 8, [6] = 9.9}))
+  table.move(t1, 2, 4, -1, t2)
+  xassert(rawObjectsEqual(t1, {[0] = 8, [1] = 1.1, [2] = 2.2, [3] = 3.3}))
+  xassert(rawObjectsEqual(t2, {[-1] = 2.2, [0] = 3.3, [2] = 2.2, [4] = -7.6, [5] = 8, [8] = 9.9}))
+  table.move(t2, -1, 4, 0)
+  xassert(rawObjectsEqual(t2, {[-1] = 2.2, [0] = 2.2, [1] = 3.3, [3] = 2.2, [5] = -7.6, [8] = 9.9}))
+  table.move(t2, 3, 9, 2)
+  xassert(rawObjectsEqual(t2, {[-1] = 2.2, [0] = 2.2, [1] = 3.3, [2] = 2.2, [4] = -7.6, [7] = 9.9}))
+  
+  -- Test with internal vector tables.
   local v1 = vector()
   local v2 = vector(1, 2, 3)
   local v3 = vector(4, 5, nil, nil, 6, 7, nil)
@@ -304,15 +332,13 @@ local function test5()
   xassert(rawObjectsEqual(v1, {n = 11, [1] = 1, [2] = 2, [3] = 3}))
   xassert(rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
   table.move(v3, 7, 4, -2, v2)
-  xassert(rawObjectsEqual(v1, {n = 11, [1] = 1, [2] = 2, [3] = 3}))
   xassert(rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
-  table.move(v3, 4, 7, -2, v2)
-  xassert(rawObjectsEqual(v1, {n = 11, [1] = 1, [2] = 2, [3] = 3}))
-  xassert(rawObjectsEqual(v2, {n = 12, [-1] = 6, [0] = 7, [2] = 2, [3] = 3}))
-  
+  xassert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 5, [5] = 6, [6] = 7}))
+  table.move(v3, 4, 7, 1, v2)
+  xassert(rawObjectsEqual(v2, {n = 12, [1] = 0, [2] = 6, [3] = 7, [4] = 0}))
   xassert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 5, [5] = 6, [6] = 7}))
   table.move(v3, 1, 7, 2)
-  xassert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 4, [3] = 5, [6] = 6, [7] = 7}))
+  xassert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 4, [3] = 5, [4] = 0, [5] = 0, [6] = 6, [7] = 7, [8] = 0}))
 end
 
 -- Test modifiers.
