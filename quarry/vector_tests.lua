@@ -263,6 +263,7 @@ local function test4()
   print(v)
   print(v:tostring())
   print(v:tostring("%.3f"))
+  print(vector(6.7, {}, function() return 2 end, nil, nil, "test", nil))
   
   xassert(#v2 == math.sqrt(1 + 4 + 9))
   xassert(v3:magnitude() == math.sqrt(16 + 25 + 36))
@@ -351,6 +352,7 @@ local function test6()
   local v5 = vector(-5, 7, nil)
   local v
   
+  -- Test copy constructor.
   v = vector(v1)
   xassert(v.n == 0)
   xassert(v == v1)
@@ -361,20 +363,126 @@ local function test6()
   v[2] = 5
   xassert(v ~= v2)
   
+  -- Test insert, erase, and append.
   xassert(v == vector(1, 5, 3))
   xassert(not pcall(function() v:insert(0, 9) end))
   xassert(not pcall(function() v:insert(5, 9) end))
   xassert(v.n == 3)
   v:insert(4, 9)
-  xassert(v == vector(1, 5, 3, 9))
+  xassert(rawObjectsEqual(v, {n = 4, [1] = 1, [2] = 5, [3] = 3, [4] = 9}))
   v:insert(1, -2)
-  xassert(v == vector(-2, 1, 5, 3, 9))
+  xassert(rawObjectsEqual(v, {n = 5, [1] = -2, [2] = 1, [3] = 5, [4] = 3, [5] = 9}))
+  v:insert(3, 5.78)
+  xassert(rawObjectsEqual(v, {n = 6, [1] = -2, [2] = 1, [3] = 5.78, [4] = 5, [5] = 3, [6] = 9}))
+  xassert(not pcall(function() v:erase(0) end))
+  xassert(not pcall(function() v:erase(7) end))
+  v:erase(6)
+  xassert(rawObjectsEqual(v, {n = 5, [1] = -2, [2] = 1, [3] = 5.78, [4] = 5, [5] = 3}))
+  v:erase(1)
+  xassert(rawObjectsEqual(v, {n = 4, [1] = 1, [2] = 5.78, [3] = 5, [4] = 3}))
+  v:erase(3)
+  xassert(rawObjectsEqual(v, {n = 3, [1] = 1, [2] = 5.78, [3] = 3}))
+  v:insert(3, nil, 2)
+  v:insert(1, nil)
+  xassert(rawObjectsEqual(v, {n = 6, [2] = 1, [3] = 5.78, [6] = 3}))
+  v:insert(7, nil, 3)
+  xassert(rawObjectsEqual(v, {n = 9, [2] = 1, [3] = 5.78, [6] = 3}))
+  xassert(not pcall(function() v:insert(1, -2.3, 2.1) end))
+  v:insert(1, -2.3, 2)
+  xassert(rawObjectsEqual(v, {n = 11, [1] = -2.3, [2] = -2.3, [4] = 1, [5] = 5.78, [8] = 3}))
+  v:insert(5, 1.05, 3)
+  xassert(rawObjectsEqual(v, {n = 14, [1] = -2.3, [2] = -2.3, [4] = 1, [5] = 1.05, [6] = 1.05, [7] = 1.05, [8] = 5.78, [11] = 3}))
+  xassert(not pcall(function() v:erase(4, 9.2) end))
+  v:erase(4, 9)
+  xassert(rawObjectsEqual(v, {n = 8, [1] = -2.3, [2] = -2.3, [5] = 3}))
+  v:erase(1, 1)
+  xassert(rawObjectsEqual(v, {n = 7, [1] = -2.3, [4] = 3}))
+  v:append(6.78)
+  xassert(rawObjectsEqual(v, {n = 8, [1] = -2.3, [4] = 3, [8] = 6.78}))
+  v:append(2.5)
+  xassert(rawObjectsEqual(v, {n = 9, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5}))
+  v:append(7.9)
+  xassert(rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5, [10] = 7.9}))
+  v:erase(10, 9)
+  xassert(rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5, [10] = 7.9}))
+  v:erase(9, 10)
+  xassert(rawObjectsEqual(v, {n = 8, [1] = -2.3, [4] = 3, [8] = 6.78}))
+  v:append(nil)
+  v:append(1.23)
+  xassert(rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [10] = 1.23}))
+  v:erase(1, 10)
+  xassert(rawObjectsEqual(v, {n = 0}))
   
-  -- FIXME need to test inserting multiple vals and sparse vectors with inserts #############################################################################
-  
-  -- FIXME do we need to add __pairs or __ipairs functionality?? #########################
+  -- Test concatenate and resize.
+  v = v2:concatenate(v3)
+  xassert(rawObjectsEqual(v, {n = 6, [1] = 1, [2] = 2, [3] = 3, [4] = 4, [5] = 5, [6] = 6}))
+  v = v3 .. v2
+  xassert(rawObjectsEqual(v, {n = 6, [1] = 4, [2] = 5, [3] = 6, [4] = 1, [5] = 2, [6] = 3}))
+  v = v1 .. v5 .. v3 .. v4 .. v1
+  xassert(rawObjectsEqual(v, {n = 8, [1] = -5, [2] = 7, [4] = 4, [5] = 5, [6] = 6, [7] = -5, [8] = 7}))
+  xassert(not pcall(function() print(v2 .. 123) end))
+  xassert(not pcall(function() print(123 .. v2) end))
+  v = v5 .. v3
+  xassert(not pcall(function() v:resize(3.01) end))
+  v:resize(4)
+  xassert(rawObjectsEqual(v, {n = 4, [1] = -5, [2] = 7, [4] = 4}))
+  v:resize(4)
+  xassert(rawObjectsEqual(v, {n = 4, [1] = -5, [2] = 7, [4] = 4}))
+  v:resize(3)
+  xassert(rawObjectsEqual(v, {n = 3, [1] = -5, [2] = 7}))
+  v:resize(2)
+  xassert(rawObjectsEqual(v, {n = 2, [1] = -5, [2] = 7}))
+  v:resize(11)
+  xassert(rawObjectsEqual(v, {n = 11, [1] = -5, [2] = 7}))
+  v:resize(0)
+  xassert(rawObjectsEqual(v, {n = 0}))
+  v:resize(100)
+  xassert(rawObjectsEqual(v, {n = 100}))
   
   -- FIXME refactor dlog.errorWithTraceback -> verboseError and add a config option to enable/disable the stack trace.
+end
+
+-- Test iteration.
+local function test7()
+  print("test7")
+  local t1 = {}
+  local v1 = vector()
+  local v2 = vector(1, 2, 3.6, "stuff", t1)
+  local v3 = vector(nil, -5, 7, nil, nil, 0.032)
+  local checklist, counter
+  
+  checklist = {}
+  counter = 1
+  for k, v in pairs(v1) do
+    xassert(k ~= nil)
+    xassert(checklist[k] == v)
+    checklist[k] = nil
+    counter = counter + 1
+  end
+  xassert(next(checklist) == nil)
+  xassert(counter == 0 + 1)
+  
+  checklist = {1, 2, 3.6, "stuff", t1}
+  counter = 1
+  for k, v in pairs(v2) do
+    xassert(k ~= nil)
+    xassert(checklist[k] == v)
+    checklist[k] = nil
+    counter = counter + 1
+  end
+  xassert(next(checklist) == nil)
+  xassert(counter == 5 + 1)
+  
+  checklist = {[2] = -5, [3] = 7, [6] = 0.032}
+  counter = 1
+  for k, v in pairs(v3) do
+    xassert(k ~= nil)
+    xassert(checklist[k] == v)
+    checklist[k] = nil
+    counter = counter + 1
+  end
+  xassert(next(checklist) == nil)
+  xassert(counter == 3 + 1)
 end
 
 local function main()
@@ -384,6 +492,7 @@ local function main()
   test4()
   test5()
   test6()
+  test7()
   print("all tests passing!")
 end
 local status, ret = pcall(main)
