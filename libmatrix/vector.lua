@@ -126,6 +126,32 @@ function vectorMeta.__newindex(t, k, v)
   rawset(t, k, v)
 end
 
+-- vector.new(x: any, y: any, z: any, ...): table
+-- vector.new(size: number, data: table): table
+-- vector.new(vec: table): table
+-- Can also use __call directly: vector(...): table
+-- 
+-- Construct new vector by passing each value in order (nil values are accepted
+-- for sparse vectors), pass a number for the size and a table for the contents,
+-- or pass a vector to make a copy from. If the size is specified, it must be a
+-- non-negative integer. Returns the new vector.
+function vector.new(...)
+  local arg = table.pack(...)
+  if arg.n == 1 and type(arg[1]) == "table" and arg[1].type == "vector" then
+    local vec = {}
+    for k, v in next, arg[1] do
+      vec[k] = v
+    end
+    return setmetatable(vec, vectorMeta)
+  elseif arg.n == 2 and type(arg[1]) == "number" and type(arg[2]) == "table" then
+    xassert(arg[1] == math.floor(arg[1]) and arg[1] >= 0, "vector size must be non-negative integer.")
+    arg[2].n = arg[1]
+    return setmetatable(arg[2], vectorMeta)
+  else
+    return setmetatable(arg, vectorMeta)
+  end
+end
+
 -- vector:add(rhs: table): table
 -- Can also use __add directly: lhs + rhs
 -- 
@@ -402,54 +428,76 @@ function vectorMeta.equals(lhs, rhs)
 end
 vectorMeta.__eq = vectorMeta.equals
 
-function vectorMeta:dot()
-  
-end
-
-function vectorMeta:cross()
-  
-end
-
-function vectorMeta:normalize()
-  
-end
-
-function vectorMeta:angle()
-  
-end
-
-function vectorMeta:rotate()
-  
-end
-
-function vectorMeta:round()
-  
-end
-
--- vector.new(x: any, y: any, z: any, ...): table
--- vector.new(size: number, data: table): table
--- vector.new(vec: table): table
--- Can also use __call directly: vector(...): table
+-- vector:dot(rhs: table): number
 -- 
--- Construct new vector by passing each value in order (nil values are accepted
--- for sparse vectors), pass a number for the size and a table for the contents,
--- or pass a vector to make a copy from. If the size is specified, it must be a
--- non-negative integer. Returns the new vector.
-function vector.new(...)
-  local arg = table.pack(...)
-  if arg.n == 1 and type(arg[1]) == "table" and arg[1].type == "vector" then
-    local vec = {}
-    for k, v in next, arg[1] do
-      vec[k] = v
-    end
-    return setmetatable(vec, vectorMeta)
-  elseif arg.n == 2 and type(arg[1]) == "number" and type(arg[2]) == "table" then
-    xassert(arg[1] == math.floor(arg[1]) and arg[1] >= 0, "vector size must be non-negative integer.")
-    arg[2].n = arg[1]
-    return setmetatable(arg[2], vectorMeta)
-  else
-    return setmetatable(arg, vectorMeta)
+-- Computes the dot product of the vectors and returns a scalar value (number).
+-- For two vectors that are perpendicular (orthogonal), the dot product will
+-- equal zero (or very close to zero due to rounding errors with floating-point
+-- numbers).
+function vectorMeta:dot(rhs)
+  xassert(rhs.type == "vector" and self.n == rhs.n, "attempt to perform vector dot product with invalid type or wrong dimensions.")
+  local sum = 0
+  for i = 1, self.n do
+    sum = sum + self[i] * rhs[i]
   end
+  return sum
+end
+
+-- vector:cross(rhs: table): table
+-- 
+-- Computes the cross product of the vectors and returns this resulting vector.
+-- The result will be perpendicular (orthogonal) to the two given vectors. The
+-- direction of the cross product can be found using the right-hand rule, and
+-- the magnitude is the same as the area of the parallelogram that the vectors
+-- span.
+function vectorMeta:cross(rhs)
+  xassert(rhs.type == "vector" and self.n == 3 and rhs.n == 3, "attempt to perform vector cross product with invalid type or wrong dimensions (vectors must be 3 dimensional).")
+  return vector.new(
+    self[2] * rhs[3] - self[3] * rhs[2],
+    self[3] * rhs[1] - self[1] * rhs[3],
+    self[1] * rhs[2] - self[2] * rhs[1]
+  )
+end
+
+-- vector:normalize(): table
+-- 
+-- Computes the unit vector (vector with magnitude of one) in the direction of
+-- the current vector. Note that because of rounding errors with floating-point
+-- numbers, the magnitude of this resulting vector may not always be exactly
+-- one.
+function vectorMeta:normalize()
+  return self / #self
+end
+
+-- vector:angle(rhs: table): number
+-- 
+-- Computes the angle between the vectors and returns this value in radians.
+function vectorMeta:angle(rhs)
+  xassert(rhs.type == "vector" and self.n == rhs.n, "attempt to calculate angle between vectors with invalid type or wrong dimensions.")
+  return math.acos(self:dot(rhs) / #self / #rhs)
+end
+
+-- vector:round([threshold: number]): table
+-- 
+-- Rounds each element in the vector to the nearest integer value, and returns a
+-- new vector with these values. If threshold is specified, this is used to
+-- determine the value to round to (threshold is 0.5 by default). For positive
+-- numbers, the threshold basically represents the minimum fractional component
+-- of the number that is required to round up. With a threshold of 1.0 elements
+-- will always round down, and with a threshold like 1e-300 elements will always
+-- round up.
+function vectorMeta:round(threshold)
+  threshold = threshold or 0.5
+  local result = {}
+  for i = 1, self.n do
+    local int, frac = math.modf(self[i])
+    if frac < 0 then
+      result[i] = (-frac < 1 - threshold and int or int - 1)
+    else
+      result[i] = (frac < threshold and int or int + 1)
+    end
+  end
+  return vector.new(self.n, result)
 end
 
 return vector

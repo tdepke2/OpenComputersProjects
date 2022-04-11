@@ -34,6 +34,16 @@ local function rawObjectsEqual(obj1, obj2)
   return n1 == n2
 end
 
+-- Compare two numeric values and determine if they are close enough to being equal.
+local function approxEqual(a, b)
+  return math.abs(a - b) < 0.000001
+end
+
+-- Check if a numeric value is not-a-number (by definition, the number is not equal to itself).
+local function isNaN(a)
+  return a ~= a
+end
+
 -- Test construction, access/assignment of values.
 local function test1()
   print("test1")
@@ -256,8 +266,11 @@ local function test4()
   local v3 = vector(4, 5, 6)
   local v4 = vector(-5, 7)
   local v5 = vector(-5, 7, nil)
+  local v6 = vector(2.67, -0.4, 3.34)
+  local v7 = vector(9.76, 5.2, -4.8)
   local v
   
+  -- Test tostring().
   v = -v2 / (v5 * 22 + v3)
   xassert(v.n == 3)
   print(v)
@@ -265,9 +278,11 @@ local function test4()
   print(v:tostring("%.3f"))
   print(vector(6.7, {}, function() return 2 end, nil, nil, "test", nil))
   
+  -- Test magnitude().
   xassert(#v2 == math.sqrt(1 + 4 + 9))
   xassert(v3:magnitude() == math.sqrt(16 + 25 + 36))
   
+  -- Test equals().
   xassert((v1 == v2) == false)
   xassert((v2 == v1) == false)
   xassert((v1 == v1) == true)
@@ -285,6 +300,69 @@ local function test4()
   xassert((v2 == {}) == false)
   xassert(({} == v2) == false)
   xassert((v2 == {type = "vector", n = 3, [1] = 1, [2] = 2, [3] = 3}) == true)
+  
+  -- Test dot product.
+  xassert(not pcall(function() v2:dot(123) end))
+  xassert(not pcall(function() v2:dot(v4) end))
+  xassert(not pcall(function() v4:dot(v2) end))
+  xassert(v2:dot(v3) == 32)
+  xassert(v2:dot(v3) == v3:dot(v2))
+  xassert(v2:dot(v5) == 9)
+  xassert(approxEqual(v6:dot(v7), 7.9472))
+  xassert(approxEqual(v7:dot(v6), 7.9472))
+  
+  -- Test cross product.
+  xassert(not pcall(function() v2:cross(123) end))
+  xassert(not pcall(function() v2:cross(v4) end))
+  xassert(not pcall(function() v4:cross(v2) end))
+  xassert(not pcall(function() v4:cross(v4) end))
+  xassert(v2:cross(v3) == vector(-3, 6, -3))
+  xassert(v3:cross(v2) == vector(3, -6, 3))
+  v = v6:cross(v7)
+  xassert(v.n == 3)
+  xassert(approxEqual(v[1], -15.448))
+  xassert(approxEqual(v[2], 45.4144))
+  xassert(approxEqual(v[3], 17.788))
+  
+  -- Test normalize().
+  xassert(v2:normalize() == vector(1/math.sqrt(14), 2/math.sqrt(14), 3/math.sqrt(14)))
+  xassert(v4:normalize() == vector(-5/math.sqrt(74), 7/math.sqrt(74)))
+  v = v6:normalize()
+  xassert(v.n == 3)
+  xassert(approxEqual(v[1], 0.6216956))
+  xassert(approxEqual(v[2], -0.0931379))
+  xassert(approxEqual(v[3], 0.7777017))
+  xassert(vector(1, 0, 0):normalize() == vector(1, 0, 0))
+  xassert(vector(0, -1, 0):normalize() == vector(0, -1, 0))
+  v = vector(0, 0, 0):normalize()
+  xassert(v.n == 3)
+  xassert(isNaN(v[1]))
+  xassert(isNaN(v[2]))
+  xassert(isNaN(v[3]))
+  
+  -- Test angle().
+  xassert(not pcall(function() v1:angle(123) end))
+  xassert(not pcall(function() v1:angle(v2) end))
+  xassert(not pcall(function() v2:angle(v1) end))
+  xassert(not pcall(function() v2:angle(v4) end))
+  xassert(v2:angle(v2) == 0)
+  xassert(v2:angle(v3) == math.acos(32 / math.sqrt(14) / math.sqrt(77)))
+  xassert(v2:angle(v3) == v3:angle(v2))
+  xassert(approxEqual(v6:angle(v7), 1.4166930))
+  
+  -- Test round().
+  xassert(v1:round() == v1)
+  xassert(v2:round() == v2)
+  xassert(v4:round() == v4)
+  xassert(v5:round() == v5)
+  xassert(v6:round() == vector(3, 0, 3))
+  xassert(v7:round() == vector(10, 5, -5))
+  xassert(v5:round(1) == v5)
+  xassert(v6:round(1) == vector(2, -1, 3))
+  xassert(v7:round(1) == vector(9, 5, -5))
+  xassert(v5:round(0.000001) == v5)
+  xassert(v6:round(0.000001) == vector(3, 0, 4))
+  xassert(v7:round(0.000001) == vector(10, 6, -4))
 end
 
 -- Test table.move custom implementation (if used).
