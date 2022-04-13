@@ -100,7 +100,7 @@ local CellGrid = {
 -- error or typo).
 setmetatable(CellGrid, {
   __index = function(t, k)
-    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in CellGrid class.")
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in CellGrid class.", 4)
   end
 })
 
@@ -382,7 +382,7 @@ local Game = {}
 -- error or typo).
 setmetatable(Game, {
   __index = function(t, k)
-    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Game class.")
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Game class.", 4)
   end
 })
 

@@ -46,7 +46,7 @@ local MyApp = {}
 -- error or typo).
 setmetatable(MyApp, {
   __index = function(t, k)
-    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in MyApp class.")
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in MyApp class.", 4)
   end
 })
 

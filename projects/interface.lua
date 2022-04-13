@@ -76,7 +76,7 @@ local Gui = {
 -- error or typo).
 setmetatable(Gui, {
   __index = function(t, k)
-    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Gui class.")
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Gui class.", 4)
   end
 })
 
@@ -1150,7 +1150,7 @@ local Interface = {}
 -- error or typo).
 setmetatable(Interface, {
   __index = function(t, k)
-    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Interface class.")
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Interface class.", 4)
   end
 })
 

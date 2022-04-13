@@ -16,13 +16,19 @@ restart of the program that is being tested.
 
 local dlog = {}
 
--- Configuration options:
--- Set errors to direct to dlog.out() using the "error" subsystem before getting passed to error().
+--[[
+Configuration options:
+--]]
+-- Set errors to direct to dlog.out() using the "error" subsystem before getting
+-- passed to error().
 dlog.logErrorsToOutput = true
--- Enables the xassert() call as a global function. To disable, this must be set to false here before loading dlog module.
+-- Enables the xassert() call as a global function. To disable, this must be set
+-- to false here before loading dlog module.
 dlog.defineGlobalXassert = true
--- FIXME NYI ####################################
-dlog.tracebackWithErrors = true
+-- Enables dlog.verboseError() to append a stack trace with the error message.
+-- In some cases it is helpful to disable to avoid getting multiple stack traces
+-- in an error message.
+dlog.verboseErrorTraceback = true
 
 -- Private data members, no touchy:
 dlog.fileOutput = nil
@@ -55,9 +61,9 @@ function dlog.xassert(v, ...)
   if not v then
     local argc = select("#", ...)
     if argc > 0 then
-      dlog.errorWithTraceback(string.rep("%s", argc):format(...), 3)
+      dlog.verboseError(string.rep("%s", argc):format(...), 3)
     else
-      dlog.errorWithTraceback("assertion failed!", 3)
+      dlog.verboseError("assertion failed!", 3)
     end
   end
   return v, ...
@@ -66,17 +72,20 @@ if dlog.defineGlobalXassert then
   xassert = dlog.xassert
 end
 
--- dlog.errorWithTraceback(message: string[, level: number])
+-- dlog.verboseError(message: string[, level: number])
 -- 
--- Throws the error message, and includes a stack trace in the output. An
--- optional level number specifies the level to start the traceback (defaults to
--- 1, and usually should be set to 2).
-function dlog.errorWithTraceback(message, level)
-  local traceMsg = string.gsub(debug.traceback(message, level), "\t", "  ")
-  if dlog.logErrorsToOutput then
-    dlog.out("error", traceMsg)
+-- Throws the error message, and includes a stack trace in the output (when
+-- enabled with dlog.verboseErrorTraceback). An optional level number specifies
+-- the level to start the error and traceback (defaults to 1, and usually should
+-- be set to 2).
+function dlog.verboseError(message, level)
+  if dlog.verboseErrorTraceback then
+    message = string.gsub(debug.traceback(message, level), "\t", "  ")
   end
-  error(traceMsg, level)
+  if dlog.logErrorsToOutput then
+    dlog.out("error", message)
+  end
+  error(message, level)
 end
 
 -- FIXME this should be used everywhere and same for the block globals stuff #############################################################################################################
@@ -90,14 +99,14 @@ end
 local checkArgsHelper
 function dlog.checkArgs(val, typ, ...)
   if not string.find(typ, type(val), 1, true) then
-    dlog.errorWithTraceback("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 3)
+    dlog.verboseError("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 3)
   end
   return checkArgsHelper(3, ...)
 end
 checkArgsHelper = function(i, val, typ, ...)
   if typ then
     if not string.find(typ, type(val), 1, true) then
-      dlog.errorWithTraceback("bad argument at index #" .. i .. " (" .. typ .. " expected, got " .. type(val) .. ")", 3)
+      dlog.verboseError("bad argument at index #" .. i .. " (" .. typ .. " expected, got " .. type(val) .. ")", 3)
     end
     return checkArgsHelper(i + 2, ...)
   end
@@ -129,14 +138,14 @@ function dlog.osBlockNewGlobals(state)
     rawset(environmentMetatable, "__index", function(t, key)
       local v = env2[key]
       if v == nil then
-        dlog.errorWithTraceback("attempt to read from undeclared global variable " .. key, 3)
+        dlog.verboseError("attempt to read from undeclared global variable " .. key, 3)
         --print("__index invoked for " .. key)
       end
       return v
     end)
     rawset(environmentMetatable, "__newindex", function(_, key, value)
       if env2[key] == nil then
-        dlog.errorWithTraceback("attempt to write to undeclared global variable " .. key, 3)
+        dlog.verboseError("attempt to write to undeclared global variable " .. key, 3)
         --print("__newindex invoked for " .. key)
       end
       env2[key] = value

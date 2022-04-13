@@ -99,7 +99,7 @@ setmetatable(vectorMeta, {
   __index = function(t, k)
     local message = "attempt to read undefined member \"" .. tostring(k) .. "\" in vector."
     if dlog then
-      dlog.errorWithTraceback(message, 4)
+      dlog.verboseError(message, 4)
     else
       error(message, 3)
     end

@@ -118,7 +118,7 @@ function dlog.checkArgs(...)
   local arg = table.pack(...)
   for i = 2, arg.n, 2 do
     if not string.find(arg[i], type(arg[i - 1]), 1, true) then
-      dlog.errorWithTraceback("bad argument at index #" .. i - 1 .. " (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")")
+      dlog.verboseError("bad argument at index #" .. i - 1 .. " (" .. arg[i] .. " expected, got " .. type(arg[i - 1]) .. ")")
     end
   end
 end
@@ -127,7 +127,7 @@ end
 function dlog.checkArgs2(...)
   for i = 2, select("#", ...), 2 do
     if not string.find((select(i, ...)), type(select(i - 1, ...)), 1, true) then
-      dlog.errorWithTraceback("bad argument at index #" .. i - 1 .. " (" .. (select(i, ...)) .. " expected, got " .. type(select(i - 1, ...)) .. ")")
+      dlog.verboseError("bad argument at index #" .. i - 1 .. " (" .. (select(i, ...)) .. " expected, got " .. type(select(i - 1, ...)) .. ")")
     end
   end
 end
@@ -135,7 +135,7 @@ end
 -- Faster than previous.
 function dlog.checkArgs3(v, t, ...)
   if not string.find(t, type(v), 1, true) then
-    dlog.errorWithTraceback("bad argument at index #" .. i - 1 .. " (" .. t .. " expected, got " .. type(v) .. ")")
+    dlog.verboseError("bad argument at index #" .. i - 1 .. " (" .. t .. " expected, got " .. type(v) .. ")")
   end
   if select("#", ...) > 0 then
     return dlog.checkArgs3(...)
@@ -146,7 +146,7 @@ end
 function dlog.checkArgs4(val, typ, ...)
   if typ then
     if not string.find(typ, type(val), 1, true) then
-      dlog.errorWithTraceback("bad argument at index #" .. i - 1 .. " (" .. typ .. " expected, got " .. type(val) .. ")")
+      dlog.verboseError("bad argument at index #" .. i - 1 .. " (" .. typ .. " expected, got " .. type(val) .. ")")
     end
     return dlog.checkArgs4(...)
   end
@@ -156,14 +156,14 @@ end
 local checkArgsHelper
 function dlog.checkArgs5(val, typ, ...)
   if not string.find(typ, type(val), 1, true) then
-    dlog.errorWithTraceback("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 3)
+    dlog.verboseError("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 3)
   end
   return checkArgsHelper(3, ...)
 end
 checkArgsHelper = function(i, val, typ, ...)
   if typ then
     if not string.find(typ, type(val), 1, true) then
-      dlog.errorWithTraceback("bad argument at index #" .. i .. " (" .. typ .. " expected, got " .. type(val) .. ")", 3)
+      dlog.verboseError("bad argument at index #" .. i .. " (" .. typ .. " expected, got " .. type(val) .. ")", 3)
     end
     return checkArgsHelper(i + 2, ...)
   end

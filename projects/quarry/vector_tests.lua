@@ -487,8 +487,6 @@ local function test6()
   xassert(dstructs.rawObjectsEqual(v, {n = 0}))
   v:resize(100)
   xassert(dstructs.rawObjectsEqual(v, {n = 100}))
-  
-  -- FIXME refactor dlog.errorWithTraceback -> verboseError and add a config option to enable/disable the stack trace.
 end
 
 -- Test iteration.

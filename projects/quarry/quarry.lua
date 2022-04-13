@@ -107,7 +107,7 @@ local Quarry = {}
 -- Hook up errors to throw on access to nil class members.
 setmetatable(Quarry, {
   __index = function(t, k)
-    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Quarry class.")
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Quarry class.", 4)
   end
 })
 
@@ -774,6 +774,6 @@ end
 local status, err = pcall(main)
 dlog.osBlockNewGlobals(false)
 if not status then
-  --dlog.errorWithTraceback(err)
+  --dlog.verboseError(err)
   assert(status, err)
 end

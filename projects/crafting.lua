@@ -295,7 +295,7 @@ local Crafting = {}
 -- error or typo).
 setmetatable(Crafting, {
   __index = function(t, k)
-    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Crafting class.")
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Crafting class.", 4)
   end
 })
 

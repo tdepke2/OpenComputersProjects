@@ -165,7 +165,7 @@ local Storage = {}
 -- error or typo).
 setmetatable(Storage, {
   __index = function(t, k)
-    dlog.errorWithTraceback("Attempt to read undefined member " .. tostring(k) .. " in Storage class.")
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Storage class.", 4)
   end
 })
 
