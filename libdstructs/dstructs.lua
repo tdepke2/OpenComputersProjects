@@ -6,25 +6,26 @@ Data structures.
 
 local dstructs = {}
 
--- dstructs.objectsEqual(obj1: any, obj2: any): boolean
+-- dstructs.rawObjectsEqual(obj1: any, obj2: any): boolean
 -- 
--- Helper function to determine if two tables (or other data) are equivalent
--- using a recursive comparison. Currently this does not compare metatables and
--- assumes there are no cycles caused by tables referencing previous ones.
--- Returns true if and only if all of the elements in obj1 match elements in
--- obj2 and all elements in obj2 match elements in obj1.
-function dstructs.objectsEqual(obj1, obj2)
-  if obj1 == obj2 then
-    return true
-  elseif type(obj1) ~= type(obj2) or type(obj1) ~= "table" then
+-- Checks two tables (or other data) to determine if they are equivalent using a
+-- recursive comparison. This does a "raw" comparison meaning any metamethods
+-- like __index, __newindex, __eq, and __pairs will be ignored. Currently this
+-- does not compare metatables and assumes there are no cycles caused by tables
+-- referencing previous ones. Returns true if and only if all key-value pairs in
+-- obj1 and obj2 are equivalent.
+function dstructs.rawObjectsEqual(obj1, obj2)
+  if type(obj1) ~= type(obj2) then
     return false
+  elseif type(obj1) ~= "table" then
+    return obj1 == obj2
   end
   
   -- Confirm all items in obj1 are in obj2 (and they are equal).
   local n1 = 0
-  for k1, v1 in pairs(obj1) do
-    local v2 = obj2[k1]
-    if v2 == nil or not dstructs.objectsEqual(v1, v2) then
+  for k1, v1 in next, obj1 do
+    local v2 = rawget(obj2, k1)
+    if v2 == nil or not dstructs.rawObjectsEqual(v1, v2) then
       return false
     end
     n1 = n1 + 1
@@ -32,7 +33,7 @@ function dstructs.objectsEqual(obj1, obj2)
   
   -- Count items in obj2, and confirm this matches the length of obj1.
   local n2 = 0
-  for k2, _ in pairs(obj2) do
+  for k2, _ in next, obj2 do
     n2 = n2 + 1
   end
   

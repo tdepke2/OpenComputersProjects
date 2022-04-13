@@ -549,10 +549,10 @@ function solver.testDependencySolver(loadRecipesFunc, verifyRecipesFunc)
   storageItems = {}
   status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
   assert(status == "missing")
-  assert(dstructs.objectsEqual(recipeIndices, {4, 3, 1}))
-  assert(dstructs.objectsEqual(recipeBatches, {1, 1, 4}))
-  assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
-  assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  assert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 1}))
+  assert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 4}))
+  assert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
+  assert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
   -- Craft 16 torches, have 1 log and 4 coal.
   storageItems = {}
@@ -560,10 +560,10 @@ function solver.testDependencySolver(loadRecipesFunc, verifyRecipesFunc)
   addStorageItem("minecraft:coal/0", "Coal", 4, 64)
   status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
   assert(status == "ok")
-  assert(dstructs.objectsEqual(recipeIndices, {4, 3, 1}))
-  assert(dstructs.objectsEqual(recipeBatches, {1, 1, 4}))
-  assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
-  assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  assert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 1}))
+  assert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 4}))
+  assert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
+  assert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
   -- Craft 16 torches, have 1 log, 1 charcoal, and 3 coal.
   storageItems = {}
@@ -572,10 +572,10 @@ function solver.testDependencySolver(loadRecipesFunc, verifyRecipesFunc)
   addStorageItem("minecraft:coal/0", "Coal", 3, 64)
   status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
   assert(status == "ok")
-  assert(dstructs.objectsEqual(recipeIndices, {4, 3, 2, 1}))
-  assert(dstructs.objectsEqual(recipeBatches, {1, 1, 1, 3}))
-  assert(dstructs.objectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 3, ["minecraft:coal/1"] = 1}))
-  assert(dstructs.objectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  assert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 2, 1}))
+  assert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 1, 3}))
+  assert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 3, ["minecraft:coal/1"] = 1}))
+  assert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
 --[[
 

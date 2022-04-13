@@ -2,37 +2,8 @@ local include = require("include")
 local dlog = include("dlog")
 dlog.logErrorsToOutput = false
 dlog.osBlockNewGlobals(true)
+local dstructs = include("dstructs")
 local vector = include("vector")
-
--- FIXME might want to put this in dstructs.lua instead ##################################################################################################################
-
--- Modified version of dstructs.objectsEqual() to use rawget() compares and
--- avoid __pairs calls. See "dstructs.lua" for original implementation.
-local function rawObjectsEqual(obj1, obj2)
-  if type(obj1) ~= type(obj2) then
-    return false
-  elseif type(obj1) ~= "table" then
-    return obj1 == obj2
-  end
-  
-  -- Confirm all items in obj1 are in obj2 (and they are equal).
-  local n1 = 0
-  for k1, v1 in next, obj1 do
-    local v2 = rawget(obj2, k1)
-    if v2 == nil or not rawObjectsEqual(v1, v2) then
-      return false
-    end
-    n1 = n1 + 1
-  end
-  
-  -- Count items in obj2, and confirm this matches the length of obj1.
-  local n2 = 0
-  for k2, _ in next, obj2 do
-    n2 = n2 + 1
-  end
-  
-  return n1 == n2
-end
 
 -- Compare two numeric values and determine if they are close enough to being equal.
 local function approxEqual(a, b)
@@ -374,24 +345,24 @@ local function test5()
   local t3 = {[2] = -7.6, [3] = 8, [6] = 9.9}
   
   table.move(t2, 3, 1, 1, t1)
-  xassert(rawObjectsEqual(t1, {}))
-  xassert(rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [3] = 3.3}))
+  xassert(dstructs.rawObjectsEqual(t1, {}))
+  xassert(dstructs.rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [3] = 3.3}))
   table.move(t3, 3, 3, 0, t1)
-  xassert(rawObjectsEqual(t1, {[0] = 8}))
-  xassert(rawObjectsEqual(t3, {[2] = -7.6, [3] = 8, [6] = 9.9}))
+  xassert(dstructs.rawObjectsEqual(t1, {[0] = 8}))
+  xassert(dstructs.rawObjectsEqual(t3, {[2] = -7.6, [3] = 8, [6] = 9.9}))
   table.move(t2, 1, 3, 1, t1)
-  xassert(rawObjectsEqual(t1, {[0] = 8, [1] = 1.1, [2] = 2.2, [3] = 3.3}))
-  xassert(rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [3] = 3.3}))
+  xassert(dstructs.rawObjectsEqual(t1, {[0] = 8, [1] = 1.1, [2] = 2.2, [3] = 3.3}))
+  xassert(dstructs.rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [3] = 3.3}))
   table.move(t3, 1, 6, 3, t2)
-  xassert(rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [4] = -7.6, [5] = 8, [8] = 9.9}))
-  xassert(rawObjectsEqual(t3, {[2] = -7.6, [3] = 8, [6] = 9.9}))
+  xassert(dstructs.rawObjectsEqual(t2, {[1] = 1.1, [2] = 2.2, [4] = -7.6, [5] = 8, [8] = 9.9}))
+  xassert(dstructs.rawObjectsEqual(t3, {[2] = -7.6, [3] = 8, [6] = 9.9}))
   table.move(t1, 2, 4, -1, t2)
-  xassert(rawObjectsEqual(t1, {[0] = 8, [1] = 1.1, [2] = 2.2, [3] = 3.3}))
-  xassert(rawObjectsEqual(t2, {[-1] = 2.2, [0] = 3.3, [2] = 2.2, [4] = -7.6, [5] = 8, [8] = 9.9}))
+  xassert(dstructs.rawObjectsEqual(t1, {[0] = 8, [1] = 1.1, [2] = 2.2, [3] = 3.3}))
+  xassert(dstructs.rawObjectsEqual(t2, {[-1] = 2.2, [0] = 3.3, [2] = 2.2, [4] = -7.6, [5] = 8, [8] = 9.9}))
   table.move(t2, -1, 4, 0)
-  xassert(rawObjectsEqual(t2, {[-1] = 2.2, [0] = 2.2, [1] = 3.3, [3] = 2.2, [5] = -7.6, [8] = 9.9}))
+  xassert(dstructs.rawObjectsEqual(t2, {[-1] = 2.2, [0] = 2.2, [1] = 3.3, [3] = 2.2, [5] = -7.6, [8] = 9.9}))
   table.move(t2, 3, 9, 2)
-  xassert(rawObjectsEqual(t2, {[-1] = 2.2, [0] = 2.2, [1] = 3.3, [2] = 2.2, [4] = -7.6, [7] = 9.9}))
+  xassert(dstructs.rawObjectsEqual(t2, {[-1] = 2.2, [0] = 2.2, [1] = 3.3, [2] = 2.2, [4] = -7.6, [7] = 9.9}))
   
   -- Test with internal vector tables.
   local v1 = vector()
@@ -405,19 +376,19 @@ local function test5()
   v3.n = 13
   v4.n = 14
   
-  xassert(rawObjectsEqual(v1, {n = 11}))
-  xassert(rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
+  xassert(dstructs.rawObjectsEqual(v1, {n = 11}))
+  xassert(dstructs.rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
   table.move(v2, 1, 3, 1, v1)
-  xassert(rawObjectsEqual(v1, {n = 11, [1] = 1, [2] = 2, [3] = 3}))
-  xassert(rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
+  xassert(dstructs.rawObjectsEqual(v1, {n = 11, [1] = 1, [2] = 2, [3] = 3}))
+  xassert(dstructs.rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
   table.move(v3, 7, 4, -2, v2)
-  xassert(rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
-  xassert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 5, [5] = 6, [6] = 7}))
+  xassert(dstructs.rawObjectsEqual(v2, {n = 12, [1] = 1, [2] = 2, [3] = 3}))
+  xassert(dstructs.rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 5, [5] = 6, [6] = 7}))
   table.move(v3, 4, 7, 1, v2)
-  xassert(rawObjectsEqual(v2, {n = 12, [1] = 0, [2] = 6, [3] = 7, [4] = 0}))
-  xassert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 5, [5] = 6, [6] = 7}))
+  xassert(dstructs.rawObjectsEqual(v2, {n = 12, [1] = 0, [2] = 6, [3] = 7, [4] = 0}))
+  xassert(dstructs.rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 5, [5] = 6, [6] = 7}))
   table.move(v3, 1, 7, 2)
-  xassert(rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 4, [3] = 5, [4] = 0, [5] = 0, [6] = 6, [7] = 7, [8] = 0}))
+  xassert(dstructs.rawObjectsEqual(v3, {n = 13, [1] = 4, [2] = 4, [3] = 5, [4] = 0, [5] = 0, [6] = 6, [7] = 7, [8] = 0}))
 end
 
 -- Test modifiers.
@@ -447,75 +418,75 @@ local function test6()
   xassert(not pcall(function() v:insert(5, 9) end))
   xassert(v.n == 3)
   v:insert(4, 9)
-  xassert(rawObjectsEqual(v, {n = 4, [1] = 1, [2] = 5, [3] = 3, [4] = 9}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 4, [1] = 1, [2] = 5, [3] = 3, [4] = 9}))
   v:insert(1, -2)
-  xassert(rawObjectsEqual(v, {n = 5, [1] = -2, [2] = 1, [3] = 5, [4] = 3, [5] = 9}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 5, [1] = -2, [2] = 1, [3] = 5, [4] = 3, [5] = 9}))
   v:insert(3, 5.78)
-  xassert(rawObjectsEqual(v, {n = 6, [1] = -2, [2] = 1, [3] = 5.78, [4] = 5, [5] = 3, [6] = 9}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 6, [1] = -2, [2] = 1, [3] = 5.78, [4] = 5, [5] = 3, [6] = 9}))
   xassert(not pcall(function() v:erase(0) end))
   xassert(not pcall(function() v:erase(7) end))
   v:erase(6)
-  xassert(rawObjectsEqual(v, {n = 5, [1] = -2, [2] = 1, [3] = 5.78, [4] = 5, [5] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 5, [1] = -2, [2] = 1, [3] = 5.78, [4] = 5, [5] = 3}))
   v:erase(1)
-  xassert(rawObjectsEqual(v, {n = 4, [1] = 1, [2] = 5.78, [3] = 5, [4] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 4, [1] = 1, [2] = 5.78, [3] = 5, [4] = 3}))
   v:erase(3)
-  xassert(rawObjectsEqual(v, {n = 3, [1] = 1, [2] = 5.78, [3] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 3, [1] = 1, [2] = 5.78, [3] = 3}))
   v:insert(3, nil, 2)
   v:insert(1, nil)
-  xassert(rawObjectsEqual(v, {n = 6, [2] = 1, [3] = 5.78, [6] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 6, [2] = 1, [3] = 5.78, [6] = 3}))
   v:insert(7, nil, 3)
-  xassert(rawObjectsEqual(v, {n = 9, [2] = 1, [3] = 5.78, [6] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 9, [2] = 1, [3] = 5.78, [6] = 3}))
   xassert(not pcall(function() v:insert(1, -2.3, 2.1) end))
   v:insert(1, -2.3, 2)
-  xassert(rawObjectsEqual(v, {n = 11, [1] = -2.3, [2] = -2.3, [4] = 1, [5] = 5.78, [8] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 11, [1] = -2.3, [2] = -2.3, [4] = 1, [5] = 5.78, [8] = 3}))
   v:insert(5, 1.05, 3)
-  xassert(rawObjectsEqual(v, {n = 14, [1] = -2.3, [2] = -2.3, [4] = 1, [5] = 1.05, [6] = 1.05, [7] = 1.05, [8] = 5.78, [11] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 14, [1] = -2.3, [2] = -2.3, [4] = 1, [5] = 1.05, [6] = 1.05, [7] = 1.05, [8] = 5.78, [11] = 3}))
   xassert(not pcall(function() v:erase(4, 9.2) end))
   v:erase(4, 9)
-  xassert(rawObjectsEqual(v, {n = 8, [1] = -2.3, [2] = -2.3, [5] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 8, [1] = -2.3, [2] = -2.3, [5] = 3}))
   v:erase(1, 1)
-  xassert(rawObjectsEqual(v, {n = 7, [1] = -2.3, [4] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 7, [1] = -2.3, [4] = 3}))
   v:append(6.78)
-  xassert(rawObjectsEqual(v, {n = 8, [1] = -2.3, [4] = 3, [8] = 6.78}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 8, [1] = -2.3, [4] = 3, [8] = 6.78}))
   v:append(2.5)
-  xassert(rawObjectsEqual(v, {n = 9, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 9, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5}))
   v:append(7.9)
-  xassert(rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5, [10] = 7.9}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5, [10] = 7.9}))
   v:erase(10, 9)
-  xassert(rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5, [10] = 7.9}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [9] = 2.5, [10] = 7.9}))
   v:erase(9, 10)
-  xassert(rawObjectsEqual(v, {n = 8, [1] = -2.3, [4] = 3, [8] = 6.78}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 8, [1] = -2.3, [4] = 3, [8] = 6.78}))
   v:append(nil)
   v:append(1.23)
-  xassert(rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [10] = 1.23}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 10, [1] = -2.3, [4] = 3, [8] = 6.78, [10] = 1.23}))
   v:erase(1, 10)
-  xassert(rawObjectsEqual(v, {n = 0}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 0}))
   
   -- Test concatenate and resize.
   v = v2:concatenate(v3)
-  xassert(rawObjectsEqual(v, {n = 6, [1] = 1, [2] = 2, [3] = 3, [4] = 4, [5] = 5, [6] = 6}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 6, [1] = 1, [2] = 2, [3] = 3, [4] = 4, [5] = 5, [6] = 6}))
   v = v3 .. v2
-  xassert(rawObjectsEqual(v, {n = 6, [1] = 4, [2] = 5, [3] = 6, [4] = 1, [5] = 2, [6] = 3}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 6, [1] = 4, [2] = 5, [3] = 6, [4] = 1, [5] = 2, [6] = 3}))
   v = v1 .. v5 .. v3 .. v4 .. v1
-  xassert(rawObjectsEqual(v, {n = 8, [1] = -5, [2] = 7, [4] = 4, [5] = 5, [6] = 6, [7] = -5, [8] = 7}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 8, [1] = -5, [2] = 7, [4] = 4, [5] = 5, [6] = 6, [7] = -5, [8] = 7}))
   xassert(not pcall(function() print(v2 .. 123) end))
   xassert(not pcall(function() print(123 .. v2) end))
   v = v5 .. v3
   xassert(not pcall(function() v:resize(3.01) end))
   v:resize(4)
-  xassert(rawObjectsEqual(v, {n = 4, [1] = -5, [2] = 7, [4] = 4}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 4, [1] = -5, [2] = 7, [4] = 4}))
   v:resize(4)
-  xassert(rawObjectsEqual(v, {n = 4, [1] = -5, [2] = 7, [4] = 4}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 4, [1] = -5, [2] = 7, [4] = 4}))
   v:resize(3)
-  xassert(rawObjectsEqual(v, {n = 3, [1] = -5, [2] = 7}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 3, [1] = -5, [2] = 7}))
   v:resize(2)
-  xassert(rawObjectsEqual(v, {n = 2, [1] = -5, [2] = 7}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 2, [1] = -5, [2] = 7}))
   v:resize(11)
-  xassert(rawObjectsEqual(v, {n = 11, [1] = -5, [2] = 7}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 11, [1] = -5, [2] = 7}))
   v:resize(0)
-  xassert(rawObjectsEqual(v, {n = 0}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 0}))
   v:resize(100)
-  xassert(rawObjectsEqual(v, {n = 100}))
+  xassert(dstructs.rawObjectsEqual(v, {n = 100}))
   
   -- FIXME refactor dlog.errorWithTraceback -> verboseError and add a config option to enable/disable the stack trace.
 end
