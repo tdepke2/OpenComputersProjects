@@ -50,12 +50,14 @@ function wnet.send(modem, address, port, message)
     -- Substring message into multiple pieces and send each. The first one includes a "/<packet count>" after the packet number.
     local packetCount = math.ceil(#message / wnet.maxLength)
     for i = 1, packetCount do
+      local sequence = wnet.packetNumber .. (i == 1 and "/" .. packetCount or "")
+      local subMessage = string.sub(message, (i - 1) * wnet.maxLength + 1, i * wnet.maxLength)
       if address then
-        modem.send(address, port, wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(message, (i - 1) * wnet.maxLength + 1, i * wnet.maxLength))
+        modem.send(address, port, sequence, subMessage)
       else
-        modem.broadcast(port, wnet.packetNumber .. (i == 1 and "/" .. packetCount or ""), string.sub(message, (i - 1) * wnet.maxLength + 1, i * wnet.maxLength))
+        modem.broadcast(port, sequence, subMessage)
       end
-      dlog.out("wnet", "Packet to ", (address == nil and "BROAD" or string.sub(address, 1, 5)), ":", port, " -> ", wnet.packetNumber, (i == 1 and "/" .. packetCount or ""), string.sub(message, (i - 1) * wnet.maxLength + 1, i * wnet.maxLength))
+      dlog.out("wnet", "Packet to ", (address == nil and "BROAD" or string.sub(address, 1, 5)), ":", port, " -> ", sequence, " ", subMessage)
       wnet.packetNumber = wnet.packetNumber + 1
     end
   end
