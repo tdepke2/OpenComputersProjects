@@ -35,7 +35,7 @@ local function stringToItemName(s)
   if not string.find(s, "/") then
     s = s .. "/0"
   end
-  assert(string.match(s, "[%w_]+:[%w_]+/%d+n?") == s, "Item name does not have valid format.")
+  xassert(string.match(s, "[%w_]+:[%w_]+/%d+n?") == s, "Item name does not have valid format.")
   return s
 end
 
@@ -44,8 +44,8 @@ end
 local function stringToInteger(s, minVal)
   minVal = minVal or math.mininteger
   local x = tonumber(s)
-  assert(not string.find(s, "[^%d-]") and x, "String \"" .. s .. "\" has invalid format for integer value.")
-  assert(x >= minVal, "Integer must be greater than or equal to " .. minVal .. ".")
+  xassert(not string.find(s, "[^%d-]") and x, "String \"", s, "\" has invalid format for integer value.")
+  xassert(x >= minVal, "Integer must be greater than or equal to ", minVal, ".")
   return x
 end
 
@@ -59,7 +59,7 @@ local function loadRecipes(stations, recipes, filename)
   local stationEntry, stationName, recipeEntry
   local function loadRecipesParser(line, lineNum)
     if line == "" then
-      assert(parseState == "" or (parseState == "re_inp" and next(recipeEntry.inp)), "End of file reached, missing some data.")
+      xassert(parseState == "" or (parseState == "re_inp" and next(recipeEntry.inp)), "End of file reached, missing some data.")
       return
     end
     
@@ -67,12 +67,12 @@ local function loadRecipes(stations, recipes, filename)
     if parseState == "re_inp" then    -- Within recipe inputs definition.
       if not (next(tokens) == nil or string.byte(tokens[1], #tokens[1]) == string.byte(":", 1) or tokens[1] == "station") then
         if stationName == "craft" then    -- <item name> <slot index 1> <slot index 2> ...
-          assert(tokens[2], "Expected \"<item name> <slot index 1> <slot index 2> ...\".")
+          xassert(tokens[2], "Expected \"<item name> <slot index 1> <slot index 2> ...\".")
           local itemName = stringToItemName(tokens[1])
           local usedSlots = {}
           for _, input in ipairs(recipeEntry.inp) do
             if input[1] == itemName then
-              assert(false, "Duplicate input item name \"" .. itemName .. "\".")
+              xassert(false, "Duplicate input item name \"", itemName, "\".")
             end
             for i = 2, #input do
               usedSlots[input[i]] = true
@@ -82,16 +82,16 @@ local function loadRecipes(stations, recipes, filename)
           local recipeInputEntry = recipeEntry.inp[#recipeEntry.inp]
           for i = 2, #tokens do
             local slotNumber = stringToInteger(tokens[i], 1)
-            assert(not usedSlots[slotNumber], "Duplicate slot number " .. slotNumber .. ".")
+            xassert(not usedSlots[slotNumber], "Duplicate slot number ", slotNumber, ".")
             recipeInputEntry[#recipeInputEntry + 1] = slotNumber
             usedSlots[slotNumber] = true
           end
         else    -- <count> <item name>
-          assert(not tokens[3], "Expected \"<count> <item name>\".")
+          xassert(not tokens[3], "Expected \"<count> <item name>\".")
           local itemName = stringToItemName(tokens[2])
           for _, input in ipairs(recipeEntry.inp) do
             if input[1] == itemName then
-              assert(false, "Duplicate input item name \"" .. itemName .. "\".")
+              xassert(false, "Duplicate input item name \"", itemName, "\".")
             end
           end
           recipeEntry.inp[#recipeEntry.inp + 1] = {itemName, stringToInteger(tokens[1], 1)}
@@ -102,12 +102,12 @@ local function loadRecipes(stations, recipes, filename)
     
     if parseState == "re_out" then    -- Within recipe outputs definition.
       if tokens[1] == "with" then
-        assert(not tokens[2], "Unexpected data after \"with\".")
+        xassert(not tokens[2], "Unexpected data after \"with\".")
         parseState = "re_inp"
       else    -- <count> <item name> "<item label>" <max stack size>
         local itemLabel = string.match(line, "\"(.*)\"")
-        assert(#tokens >= 4 and itemLabel, "Expected \'<count> <item name> \"<item label>\" <max stack size>\'.")
-        assert(not recipeEntry.out[stringToItemName(tokens[2])], "Duplicate output item name \"" .. stringToItemName(tokens[2]) .. "\".")
+        xassert(#tokens >= 4 and itemLabel, "Expected \'<count> <item name> \"<item label>\" <max stack size>\'.")
+        xassert(not recipeEntry.out[stringToItemName(tokens[2])], "Duplicate output item name \"", stringToItemName(tokens[2]), "\".")
         recipeEntry.out[stringToItemName(tokens[2])] = stringToInteger(tokens[1], 1)
         recipes[stringToItemName(tokens[2])] = recipes[stringToItemName(tokens[2])] or {}
         local itemNameEntry = recipes[stringToItemName(tokens[2])]
@@ -117,12 +117,12 @@ local function loadRecipes(stations, recipes, filename)
       end
     elseif parseState == "st" then    -- Within station definition.
       if tokens[1] == "in" then    -- in <x> <y> <z> <down|up|north|south|west|east>
-        assert(sides[tokens[5]] and not tokens[6], "Expected \"in <x> <y> <z> <down|up|north|south|west|east>\" with integer coords.")
-        assert(not stationEntry.inp, "Station must have only one input.")
+        xassert(sides[tokens[5]] and not tokens[6], "Expected \"in <x> <y> <z> <down|up|north|south|west|east>\" with integer coords.")
+        xassert(not stationEntry.inp, "Station must have only one input.")
         stationEntry.inp = {stringToInteger(tokens[2]), stringToInteger(tokens[3]), stringToInteger(tokens[4]), sides[tokens[5]]}
       elseif tokens[1] == "out" then    -- out <x> <y> <z> <down/up/north/south/west/east>
-        assert(sides[tokens[5]] and not tokens[6], "Expected \"out <x> <y> <z> <down|up|north|south|west|east>\" with integer coords.")
-        assert(not stationEntry.out, "Station must have only one output.")
+        xassert(sides[tokens[5]] and not tokens[6], "Expected \"out <x> <y> <z> <down|up|north|south|west|east>\" with integer coords.")
+        xassert(not stationEntry.out, "Station must have only one output.")
         stationEntry.out = {stringToInteger(tokens[2]), stringToInteger(tokens[3]), stringToInteger(tokens[4]), sides[tokens[5]]}
       elseif tokens[1] == "path" then    -- path<n> <x> <y> <z>
         
@@ -131,15 +131,15 @@ local function loadRecipes(stations, recipes, filename)
       elseif tokens[1] == "type" then    -- type default|sequential|bulk
         
       elseif tokens[1] == "end" then    -- end
-        assert(not tokens[2], "Unexpected data after \"end\".")
-        assert(stationEntry.inp, "No input provided for station.")
+        xassert(not tokens[2], "Unexpected data after \"end\".")
+        xassert(stationEntry.inp, "No input provided for station.")
         stationEntry.out = stationEntry.out or stationEntry.inp
         parseState = ""
       else
-        assert(false, "Unexpected data \"" .. tokens[1] .. "\".")
+        xassert(false, "Unexpected data \"", tokens[1], "\".")
       end
     elseif string.byte(tokens[1], #tokens[1]) == string.byte(":", 1) then    -- <station name>:
-      assert(#tokens[1] > 1 and string.find(tokens[1], "[^%w_]") == #tokens[1] and not tokens[2], "Station name must contain only alphanumeric characters and underscores (with a colon at end).")
+      xassert(#tokens[1] > 1 and string.find(tokens[1], "[^%w_]") == #tokens[1] and not tokens[2], "Station name must contain only alphanumeric characters and underscores (with a colon at end).")
       stationName = string.sub(tokens[1], 1, #tokens[1] - 1)
       recipes[#recipes + 1] = {}
       recipeEntry = recipes[#recipes]
@@ -150,7 +150,7 @@ local function loadRecipes(stations, recipes, filename)
       end
       parseState = "re_out"
     elseif tokens[1] == "station" then    -- station <station name>
-      assert(not (string.find(tokens[2], "[^%w_]") or tokens[3]), "Station name must contain only alphanumeric characters and underscores.")
+      xassert(not (string.find(tokens[2], "[^%w_]") or tokens[3]), "Station name must contain only alphanumeric characters and underscores.")
       local n = 1
       while stations[tokens[2] .. n] do
         n = n + 1
@@ -159,7 +159,7 @@ local function loadRecipes(stations, recipes, filename)
       stationEntry = stations[tokens[2] .. n]
       parseState = "st"
     else
-      assert(false, "Unexpected data \"" .. tokens[1] .. "\".")
+      xassert(false, "Unexpected data \"", tokens[1], "\".")
     end
   end
   
@@ -178,7 +178,7 @@ local function loadRecipes(stations, recipes, filename)
     loadRecipesParser("", lineNum)
   end)
   if not status then
-    assert(false, "In file \"" .. filename .. "\" at line " .. lineNum .. ": " .. msg)
+    error("In file \"" .. filename .. "\" at line " .. lineNum .. ": " .. msg)
   end
   
   file:close()
@@ -191,11 +191,11 @@ local function loadRobotsConfig(filename)
   
   local function loadRobotsConfigParser(line, lineNum)
     if line == "" then
-      assert(robotConnections, "End of file reached, missing some data.")
+      xassert(robotConnections, "End of file reached, missing some data.")
       return
     end
     
-    assert(not robotConnections, "Unexpected data \"" .. line .. "\".")
+    xassert(not robotConnections, "Unexpected data \"", line, "\".")
     robotConnections = serialization.unserialize(line)
   end
   
@@ -214,7 +214,7 @@ local function loadRobotsConfig(filename)
     loadRobotsConfigParser("", lineNum)
   end)
   if not status then
-    assert(false, "In file \"" .. filename .. "\" at line " .. lineNum .. ": " .. msg)
+    error("In file \"" .. filename .. "\" at line " .. lineNum .. ": " .. msg)
   end
   
   file:close()
@@ -283,7 +283,7 @@ local function verifyRecipes(stations, recipes)
   dlog.checkArgs(stations, "table", recipes, "table")
   for i, recipe in ipairs(recipes) do
     if recipe.station and not stations[recipe.station .. "1"] then
-      assert(false, "Recipe " .. i .. " for " .. next(recipe.out) .. " requires station " .. recipe.station .. ", but station not found.")
+      xassert(false, "Recipe ", i, " for ", next(recipe.out), " requires station ", recipe.station, ", but station not found.")
     end
   end
 end
@@ -316,7 +316,7 @@ end
 -- though.
 local function updateStoredItem(craftRequest, itemName, deltaAmount)
   dlog.checkArgs(craftRequest, "table", itemName, "string", deltaAmount, "number")
-  dlog.out("updateStoredItem", "Stored item " .. itemName .. " changed by amount " .. deltaAmount .. " (total now " .. craftRequest.storedItems[itemName].total + deltaAmount .. ").")
+  dlog.out("updateStoredItem", "Stored item ", itemName, " changed by amount ", deltaAmount, " (total now ", craftRequest.storedItems[itemName].total + deltaAmount, ").")
   if deltaAmount == 0 then
     return
   end
@@ -509,10 +509,10 @@ packer.callbacks.stor_drone_item_list = Crafting.handleStorDroneItemList
 -- request). Apply the diff to keep it synced.
 function Crafting:handleStorDroneItemDiff(_, _, operation, result, droneItemsDiff)
   if operation == "insert" and self.droneInventories.pendingInsert then
-    assert(self.droneInventories.pendingInsert == "pending")
+    xassert(self.droneInventories.pendingInsert == "pending")
     self.droneInventories.pendingInsert = result
   elseif operation == "extract" and self.droneInventories.pendingExtract then
-    assert(self.droneInventories.pendingExtract == "pending")
+    xassert(self.droneInventories.pendingExtract == "pending")
     self.droneInventories.pendingExtract = result
   end
   
@@ -555,11 +555,11 @@ function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
   self.interfaceServerAddresses[address] = true
   local status, recipeIndices, recipeBatches, itemInputs, itemOutputs = craft_solver.solveDependencyGraph(self.recipes, self.storageItems, itemName, amount)
   
-  dlog.out("craftCheckRecipe", "status = " .. status)
+  dlog.out("craftCheckRecipe", "status = ", status)
   if status == "ok" or status == "missing" then
     dlog.out("craftCheckRecipe", "recipeIndices/recipeBatches:")
     for i = 1, #recipeIndices do
-      dlog.out("craftCheckRecipe", recipeIndices[i] .. " (" .. next(self.recipes[recipeIndices[i]].out) .. ") = " .. recipeBatches[i])
+      dlog.out("craftCheckRecipe", recipeIndices[i], " (", next(self.recipes[recipeIndices[i]].out), ") = ", recipeBatches[i])
     end
     dlog.out("craftCheckRecipe", "itemInputs/itemOutputs:", itemInputs, itemOutputs)
   end
@@ -570,7 +570,7 @@ function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
   -- Check for expired tickets and remove them.
   for ticket, request in pairs(self.pendingCraftRequests) do
     if computer.uptime() > request.creationTime + 10 then
-      dlog.out("craftCheckRecipe", "Ticket " .. ticket .. " has expired")
+      dlog.out("craftCheckRecipe", "Ticket ", ticket, " has expired")
       self.pendingCraftRequests[ticket] = nil
     end
   end
@@ -584,7 +584,7 @@ function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
         break
       end
     end
-    dlog.out("craftCheckRecipe", "Creating ticket " .. ticket)
+    dlog.out("craftCheckRecipe", "Creating ticket ", ticket)
     self.pendingCraftRequests[ticket] = {}
     self.pendingCraftRequests[ticket].creationTime = computer.uptime()
     self.pendingCraftRequests[ticket].recipeIndices = recipeIndices
@@ -657,7 +657,7 @@ function Crafting:handleCraftRecipeStart(_, _, ticket)
   if not self.pendingCraftRequests[ticket] then
     return
   end
-  assert(not self.activeCraftRequests[ticket], "Attempt to start recipe for ticket " .. ticket .. " which is already running.")
+  xassert(not self.activeCraftRequests[ticket], "Attempt to start recipe for ticket ", ticket, " which is already running.")
   wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_start(ticket))
   self.activeCraftRequests[ticket] = self.pendingCraftRequests[ticket]
   self.pendingCraftRequests[ticket] = nil
@@ -721,7 +721,7 @@ packer.callbacks.craft_recipe_cancel = Crafting.handleCraftRecipeCancel
 
 -- Drone has encountered a compile/runtime error.
 function Crafting:handleDroneError(_, _, errType, errMessage)
-  dlog.out("drone", "Drone " .. errType .. " error: " .. string.format("%q", errMessage))
+  dlog.out("drone", "Drone ", errType, " error: ", string.format("%q", errMessage))
 end
 packer.callbacks.drone_error = Crafting.handleDroneError
 
@@ -736,18 +736,18 @@ packer.callbacks.robot_upload_rlua_result = Crafting.handleRobotUploadRluaResult
 -- Robot has finished a crafting operation. Verify that all of the robots
 -- finished doing stuff before we continue.
 function Crafting:handleRobotFinishedCraft(address, _, ticket, taskID)
-  assert(self.workers.robots[address] == "busy", "Robot reported finished craft but was not marked busy.")
+  xassert(self.workers.robots[address] == "busy", "Robot reported finished craft but was not marked busy.")
   self.workers.robots[address] = "free"
   
   local cachedCraftingTask = self.activeCraftRequests[ticket].craftingTasks[taskID]
-  assert(cachedCraftingTask.robots[address], "Robot reported finished craft but was not marked for task.")
+  xassert(cachedCraftingTask.robots[address], "Robot reported finished craft but was not marked for task.")
   cachedCraftingTask.robots[address] = nil
   
-  dlog.out("robot", "Robot finished crafting for ticket " .. ticket .. " and task " .. taskID)
+  dlog.out("robot", "Robot finished crafting for ticket ", ticket, " and task ", taskID)
   if next(cachedCraftingTask.robots) ~= nil then
     return
   end
-  dlog.out("robot", "Task " .. taskID .. " is finished.")
+  dlog.out("robot", "Task ", taskID, " is finished.")
   
   -- Add newly crafted items to storedItems.
   for outputName, amount in pairs(cachedCraftingTask.recipe.out) do
@@ -764,7 +764,7 @@ packer.callbacks.robot_finished_craft = Crafting.handleRobotFinishedCraft
 
 -- Robot has encountered a compile/runtime error.
 function Crafting:handleRobotError(_, _, errType, errMessage)
-  dlog.out("robot", "Robot " .. errType .. " error: " .. string.format("%q", errMessage))
+  dlog.out("robot", "Robot ", errType, " error: ", string.format("%q", errMessage))
   
   -- Crafting operation ran into an error and needs to stop. Error gets reported to interface.
   if errType == "crafting_failed" then
@@ -829,11 +829,11 @@ function Crafting:setupThreadFunc(mainContext)
   --self.storageItems["stuff:impossible/0"].total = 1
   --local status, recipeIndices, recipeBatches, requiredItems = craft_solver.solveDependencyGraph(self.recipes, self.storageItems, "stuff:nou/0", 100)
   
-  --dlog.out("info", "status = " .. status)
+  --dlog.out("info", "status = ", status)
   --if status == "ok" or status == "missing" then
     --dlog.out("info", "recipeIndices/recipeBatches:")
     --for i = 1, #recipeIndices do
-      --dlog.out("info", recipeIndices[i] .. " (" .. next(self.recipes[recipeIndices[i]].out) .. ") -> " .. recipeBatches[i])
+      --dlog.out("info", recipeIndices[i], " (", next(self.recipes[recipeIndices[i]].out), ") -> ", recipeBatches[i])
     --end
     --dlog.out("info", "requiredItems:", requiredItems)
   --end
@@ -936,7 +936,7 @@ end
 -- FIXME if we ever need to use this outside of the crafting thread, this needs to be thread-safe. Use a spin lock to do this. #################################
 function Crafting:allocateDroneInventory(ticket, usage, needRobots)
   dlog.checkArgs(ticket, "string,nil", usage, "string", needRobots, "boolean,nil")
-  assert(usage == "input" or usage == "output", "Provided usage is not valid.")
+  xassert(usage == "input" or usage == "output", "Provided usage is not valid.")
   needRobots = needRobots or false
   
   local droneInvIndex
@@ -949,7 +949,7 @@ function Crafting:allocateDroneInventory(ticket, usage, needRobots)
       end
       -- If found an input inventory, flush it back to storage.
       if self.droneInventories.inv[self.droneInventories.firstFree].status == "input" then
-        assert(self:flushDroneInventory(ticket, self.droneInventories.firstFree, true), "Failed to flush drone inventory " .. self.droneInventories.firstFree .. " to storage.")
+        xassert(self:flushDroneInventory(ticket, self.droneInventories.firstFree, true), "Failed to flush drone inventory ", self.droneInventories.firstFree, " to storage.")
       end
     end
     
@@ -965,7 +965,7 @@ function Crafting:allocateDroneInventory(ticket, usage, needRobots)
       end
       -- If found an input inventory, flush it back to storage.
       if self.droneInventories.inv[self.droneInventories.firstFreeWithRobot].status == "input" then
-        assert(self:flushDroneInventory(ticket, self.droneInventories.firstFreeWithRobot, true), "Failed to flush drone inventory " .. self.droneInventories.firstFreeWithRobot .. " to storage.")
+        xassert(self:flushDroneInventory(ticket, self.droneInventories.firstFreeWithRobot, true), "Failed to flush drone inventory ", self.droneInventories.firstFreeWithRobot, " to storage.")
       end
     end
     
@@ -977,8 +977,8 @@ function Crafting:allocateDroneInventory(ticket, usage, needRobots)
   self.droneInventories.inv[droneInvIndex].status = usage
   self.droneInventories.inv[droneInvIndex].ticket = ticket
   
-  dlog.out("allocateDroneInventory", "Allocated index " .. droneInvIndex .. " as an " .. usage .. " for ticket " .. ticket)
-  dlog.out("allocateDroneInventory", "firstFree = " .. self.droneInventories.firstFree .. ", firstFreeWithRobot = " .. self.droneInventories.firstFreeWithRobot)
+  dlog.out("allocateDroneInventory", "Allocated index ", droneInvIndex, " as an ", usage, " for ticket ", ticket)
+  dlog.out("allocateDroneInventory", "firstFree = ", self.droneInventories.firstFree, ", firstFreeWithRobot = ", self.droneInventories.firstFreeWithRobot)
   
   return droneInvIndex
 end
@@ -991,7 +991,7 @@ end
 function Crafting:flushDroneInventory(ticket, droneInvIndex, waitForCompletion)
   dlog.checkArgs(ticket, "string,nil", droneInvIndex, "number", waitForCompletion, "boolean")
   
-  dlog.out("flushDroneInventory", "Requesting flush for index " .. droneInvIndex)
+  dlog.out("flushDroneInventory", "Requesting flush for index ", droneInvIndex)
   
   self.droneInventories.pendingInsert = "pending"
   wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(droneInvIndex, ticket))
@@ -1009,7 +1009,7 @@ function Crafting:flushDroneInventory(ticket, droneInvIndex, waitForCompletion)
       i = i + 1
     end
     
-    dlog.out("flushDroneInventory", "Result is " .. self.droneInventories.pendingInsert)
+    dlog.out("flushDroneInventory", "Result is ", self.droneInventories.pendingInsert)
     
     result = (self.droneInventories.pendingInsert == "ok")
     self.droneInventories.pendingInsert = nil
@@ -1221,7 +1221,7 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
   
   -- If the recipeStartIndex passed the array length, no more crafting tasks remain, and supply inventories have all been flushed, the crafting request is complete.
   if craftRequest.recipeStartIndex > #craftRequest.recipeIndices and next(craftRequest.craftingTasks) == nil then
-    dlog.out("updateCraftRequest", "Request " .. ticket .. " has finished, returning items to storage.")
+    dlog.out("updateCraftRequest", "Request ", ticket, " has finished, returning items to storage.")
     if next(craftRequest.supplyIndices) ~= nil then
       self:flushDroneInventory(ticket, (next(craftRequest.supplyIndices)), true)
     else
@@ -1230,15 +1230,15 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
       
       -- Sanity checks to confirm all stored items have an amount of zero and no more drone inventories are bound to this ticket.
       for itemName, storedItem in pairs(craftRequest.storedItems) do
-        assert(storedItem.total == 0, "Ticket " .. ticket .. " has finished but storedItem for " .. itemName .. " has amount " .. storedItem.total)
+        xassert(storedItem.total == 0, "Ticket ", ticket, " has finished but storedItem for ", itemName, " has amount ", storedItem.total)
       end
       for i, inv in pairs(self.droneInventories.inv) do
-        assert(inv.ticket ~= ticket, "Ticket " .. ticket .. " has finished but drone inventory " .. i .. " still bound to ticket.")
+        xassert(inv.ticket ~= ticket, "Ticket ", ticket, " has finished but drone inventory ", i, " still bound to ticket.")
       end
       
       -- FIXME signal that request completed and ticket can be removed. ######################################
       
-      dlog.out("updateCraftRequest", "Removing completed request " .. ticket)
+      dlog.out("updateCraftRequest", "Removing completed request ", ticket)
       self.activeCraftRequests[ticket] = nil
       
     end
@@ -1287,7 +1287,7 @@ function Crafting:commandThreadFunc(mainContext)
     elseif input[1] == "update_firmware" then    -- Command update_firmware. Updates firmware on all active devices (robots, drones, etc).
       io.write("Broadcasting firmware to active devices...\n")
       local srcFile, errMessage = io.open("robot.lua", "rb")
-      assert(srcFile, "Cannot open source file \"robot.lua\": " .. tostring(errMessage))
+      xassert(srcFile, "Cannot open source file \"robot.lua\": ", tostring(errMessage))
       local dlogWnetState = dlog.subsystems.wnet
       dlog.setSubsystem("wnet", false)
       wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload_eeprom(srcFile:read("*a")))

@@ -44,7 +44,7 @@ local function loadRoutingConfig(filename)
   -- Add the connections to the routing category for inventoryType.
   local function addToRouting(inventoryType, line)
     local connections = string.match(line, "\"[^\"]*\";%s*connections%s*=%s*([%d:,]+)")
-    assert(connections, "Bad format for inventory name and connections")
+    xassert(connections, "Bad format for inventory name and connections")
     local routingInventory = routing[inventoryType]
     routingInventory[#routingInventory + 1] = {}
     local routingInventoryLast = routingInventory[#routingInventory]
@@ -55,7 +55,7 @@ local function loadRoutingConfig(filename)
       routingInventoryLast[transIndex] = side
       routing.transposer[transIndex][inventoryType .. #routingInventory] = side
     end
-    assert(next(routingInventoryLast) ~= nil, "Invalid connections format")
+    xassert(next(routingInventoryLast) ~= nil, "Invalid connections format")
   end
   
   -- Use a coroutine to load the file.
@@ -64,52 +64,52 @@ local function loadRoutingConfig(filename)
     if not co then
       co = coroutine.create(function(line)
         -- Line "transposers:"
-        assert(line == "transposers:", "Expected \"transposers:\"")
+        xassert(line == "transposers:", "Expected \"transposers:\"")
         line = coroutine.yield()
         while line ~= "storage:" do
           -- Line "<index> = <uuid>"
           local index, address = string.match(line, "(%d+)%s*=%s*([%w%-]+)")
-          assert(index, "Bad format for index and UUID")
-          assert(tonumber(index) == #transposers + 1, "Index is incorrect")
+          xassert(index, "Bad format for index and UUID")
+          xassert(tonumber(index) == #transposers + 1, "Index is incorrect")
           local validatedAddress = component.get(address, "transposer")
-          assert(validatedAddress, "Unable to find transposer " .. address)
+          xassert(validatedAddress, "Unable to find transposer ", address)
           transposers[#transposers + 1] = component.proxy(validatedAddress)
           routing.transposer[#transposers] = {}
           line = coroutine.yield()
         end
         -- Line "storage:"
-        assert(line == "storage:", "Expected \"storage:\"")
+        xassert(line == "storage:", "Expected \"storage:\"")
         line = coroutine.yield()
         while line ~= "input:" do
           addToRouting("storage", line)
           line = coroutine.yield()
         end
-        assert(#routing.storage > 0, "Network must contain at least one storage inventory, ")
+        xassert(#routing.storage > 0, "Network must contain at least one storage inventory, ")
         -- Line "input:"
-        assert(line == "input:", "Expected \"input:\"")
+        xassert(line == "input:", "Expected \"input:\"")
         line = coroutine.yield()
         while line ~= "output:" do
           addToRouting("input", line)
           line = coroutine.yield()
         end
-        assert(#routing.input == 1, "Network must contain exactly one input inventory, ")
+        xassert(#routing.input == 1, "Network must contain exactly one input inventory, ")
         -- Line "output:"
-        assert(line == "output:", "Expected \"output:\"")
+        xassert(line == "output:", "Expected \"output:\"")
         line = coroutine.yield()
         while line ~= "transfer:" do
           addToRouting("output", line)
           line = coroutine.yield()
         end
-        assert(#routing.output == 1, "Network must contain exactly one output inventory, ")
+        xassert(#routing.output == 1, "Network must contain exactly one output inventory, ")
         -- Line "transfer:"
-        assert(line == "transfer:", "Expected \"transfer:\"")
+        xassert(line == "transfer:", "Expected \"transfer:\"")
         line = coroutine.yield()
         while line ~= "drone:" do
           addToRouting("transfer", line)
           line = coroutine.yield()
         end
         -- Line "drone:"
-        assert(line == "drone:", "Expected \"drone:\"")
+        xassert(line == "drone:", "Expected \"drone:\"")
         line = coroutine.yield()
         while line ~= "" do
           addToRouting("drone", line)
@@ -118,12 +118,12 @@ local function loadRoutingConfig(filename)
         return
       end)
     elseif coroutine.status(co) == "dead" then
-      assert(false, "Unexpected data at line " .. lineNum .. " of \"" .. filename .. "\".")
+      xassert(false, "In file \"", filename, "\" at line ", lineNum, ": Unexpected data.")
     end
     
     local status, msg = coroutine.resume(co, line)
     if not status then
-      assert(false, msg .. " at line " .. lineNum .. " of \"" .. filename .. "\".")
+      error("In file \"" .. filename .. "\" at line " .. lineNum .. ": " .. msg)
     end
   end
   
@@ -143,7 +143,7 @@ local function loadRoutingConfig(filename)
   file:close()
   
   loadRoutingParser("", lineNum)
-  assert(coroutine.status(co) == "dead", "Missing some data, end of file \"" .. filename .. "\" reached.")
+  xassert(coroutine.status(co) == "dead", "In file \"", filename, "\": Missing some data, end of file reached.")
   
   return transposers, routing
 end
@@ -185,7 +185,7 @@ end
 -- found.
 function Storage:addStorageItems(invIndex, slot, item, amount, updateFirstEmpty)
   dlog.checkArgs(invIndex, "number", slot, "number", item, "table", amount, "number", updateFirstEmpty, "boolean")
-  --dlog.out("addStor", "addStorageItems(", invIndex, slot, item, amount, updateFirstEmpty, ")")
+  --dlog.out("addStor", "addStorageItems(", invIndex, " ", slot, " ", item, " ", amount, " ", updateFirstEmpty, ")")
   -- If updateFirstEmpty then find the first empty slot in storage system after the current invIndex and slot.
   if updateFirstEmpty then
     self.storageItems.data.firstEmptyIndex = nil
@@ -195,9 +195,9 @@ function Storage:addStorageItems(invIndex, slot, item, amount, updateFirstEmpty)
       local itemIter = self.transposers[transIndex].getAllStacks(side)
       for slot2 = (invIndex2 == invIndex and slot or 1), self.transposers[transIndex].getInventorySize(side) do
         local item2 = itemIter[slot2]
-        dlog.out("addStor", "Checking slot " .. slot2)
+        dlog.out("addStor", "Checking slot ", slot2)
         if item2.size == 0 then
-          dlog.out("addStor", "First empty changed to index " .. invIndex2 .. ", slot " .. slot2)
+          dlog.out("addStor", "First empty changed to index ", invIndex2, ", slot ", slot2)
           self.storageItems.data.firstEmptyIndex = invIndex2
           self.storageItems.data.firstEmptySlot = slot2
           break
@@ -239,11 +239,11 @@ function Storage:addStorageItems(invIndex, slot, item, amount, updateFirstEmpty)
     
     -- Update the insert/extract point to maintain the bounds. We do not update these locations if the item.size reaches the item.maxSize (because over-sized slots).
     if invIndex < self.storageItems[fullName].insertIndex or (invIndex == self.storageItems[fullName].insertIndex and slot < self.storageItems[fullName].insertSlot) then
-      dlog.out("addStor", "Insert point changed to index " .. invIndex .. ", slot " .. slot)
+      dlog.out("addStor", "Insert point changed to index ", invIndex, ", slot ", slot)
       self.storageItems[fullName].insertIndex = invIndex
       self.storageItems[fullName].insertSlot = slot
     elseif invIndex > self.storageItems[fullName].extractIndex or (invIndex == self.storageItems[fullName].extractIndex and slot > self.storageItems[fullName].extractSlot) then
-      dlog.out("addStor", "Extract point changed to index " .. invIndex .. ", slot " .. slot)
+      dlog.out("addStor", "Extract point changed to index ", invIndex, ", slot ", slot)
       self.storageItems[fullName].extractIndex = invIndex
       self.storageItems[fullName].extractSlot = slot
     end
@@ -255,7 +255,7 @@ end
 -- in the table if applicable.
 function Storage:removeStorageItems(invIndex, slot, item, amount)
   dlog.checkArgs(invIndex, "number", slot, "number", item, "table", amount, "number")
-  --dlog.out("removeStor", "removeStorageItems(", invIndex, slot, item, amount, ")")
+  --dlog.out("removeStor", "removeStorageItems(", invIndex, " ", slot, " ", item, " ", amount, ")")
   if amount == 0 then
     dlog.out("removeStor", "Amount is 0, done")
     return
@@ -265,7 +265,7 @@ function Storage:removeStorageItems(invIndex, slot, item, amount)
   local transIndex, side = next(self.routing.storage[invIndex])
   local itemsRemaining = self.transposers[transIndex].getSlotStackSize(side, slot)
   if itemsRemaining == 0 and (not self.storageItems.data.firstEmptyIndex or invIndex < self.storageItems.data.firstEmptyIndex or (invIndex == self.storageItems.data.firstEmptyIndex and slot < self.storageItems.data.firstEmptySlot)) then
-    dlog.out("removeStor", "First empty changed to index " .. invIndex .. ", slot " .. slot)
+    dlog.out("removeStor", "First empty changed to index ", invIndex, ", slot ", slot)
     self.storageItems.data.firstEmptyIndex = invIndex
     self.storageItems.data.firstEmptySlot = slot
   end
@@ -279,7 +279,7 @@ function Storage:removeStorageItems(invIndex, slot, item, amount)
   -- Update total and check if we can remove the table entry.
   self.storageItems[fullName].total = self.storageItems[fullName].total - amount
   if self.storageItems[fullName].total == 0 then
-    dlog.out("removeStor", "Removing item entry for " .. fullName)
+    dlog.out("removeStor", "Removing item entry for ", fullName)
     self.storageItems[fullName] = nil
     return
   end
@@ -293,11 +293,11 @@ function Storage:removeStorageItems(invIndex, slot, item, amount)
       for slot2 = (invIndex2 == invIndex and slot or self.transposers[transIndex].getInventorySize(side)), 1, -1 do
         local item2 = itemIter[slot2]
         if item2.size > 0 and getItemFullName(item2) == fullName then
-          dlog.out("removeStor", "Extract point changed to index " .. invIndex2 .. ", slot " .. slot2)
+          dlog.out("removeStor", "Extract point changed to index ", invIndex2, ", slot ", slot2)
           self.storageItems[fullName].extractIndex = invIndex2
           self.storageItems[fullName].extractSlot = slot2
           if invIndex2 < self.storageItems[fullName].insertIndex or (invIndex2 == self.storageItems[fullName].insertIndex and slot2 < self.storageItems[fullName].insertSlot) then
-            dlog.out("removeStor", "Insert point changed to index " .. invIndex2 .. ", slot " .. slot2)
+            dlog.out("removeStor", "Insert point changed to index ", invIndex2, ", slot ", slot2)
             self.storageItems[fullName].insertIndex = invIndex2
             self.storageItems[fullName].insertSlot = slot2
           end
@@ -305,15 +305,15 @@ function Storage:removeStorageItems(invIndex, slot, item, amount)
         end
       end
     end
-    assert(false, "removeStorageItems() failed: Unable to find next extractIndex/Slot in storage for " .. fullName)
+    xassert(false, "removeStorageItems() failed: Unable to find next extractIndex/Slot in storage for ", fullName)
   else
     if invIndex < self.storageItems[fullName].insertIndex or (invIndex == self.storageItems[fullName].insertIndex and slot < self.storageItems[fullName].insertSlot) then
-      dlog.out("removeStor", "Insert point changed to index " .. invIndex .. ", slot " .. slot)
+      dlog.out("removeStor", "Insert point changed to index ", invIndex, ", slot ", slot)
       self.storageItems[fullName].insertIndex = invIndex
       self.storageItems[fullName].insertSlot = slot
     end
     if invIndex < self.storageItems[fullName].extractIndex or (invIndex == self.storageItems[fullName].extractIndex and slot < self.storageItems[fullName].extractSlot) then
-      dlog.out("removeStor", "Extract point changed to index " .. invIndex .. ", slot " .. slot)
+      dlog.out("removeStor", "Extract point changed to index ", invIndex, ", slot ", slot)
       self.storageItems[fullName].extractIndex = invIndex
       self.storageItems[fullName].extractSlot = slot
     end
@@ -384,23 +384,23 @@ function Storage:routeItems(srcType, srcIndex, srcSlot, destType, destIndex, des
   for transIndex, side in pairs(self.routing[srcType][srcIndex]) do
     searchQueue:push_back({transIndex, side})
     transposerLinks[transIndex .. ":" .. side] = "s"    -- Add start links.
-    dlog.out("routeItems", "Adding", transIndex, side)
+    dlog.out("routeItems", "Adding ", transIndex, " ", side)
   end
   
   -- Run breadth-first search to find destination.
   while not searchQueue:empty() do
     local transIndexFirst, sideFirst = table.unpack(searchQueue:front())
     searchQueue:pop_front()
-    dlog.out("routeItems", "Got vals", transIndexFirst, sideFirst)
+    dlog.out("routeItems", "Got vals ", transIndexFirst, " ", sideFirst)
     
     -- From the current connection, check inventories that are adjacent to the transposer (except the one we started from).
     for invName, side in pairs(self.routing.transposer[transIndexFirst]) do
       if side ~= sideFirst then
-        dlog.out("routeItems", "Checking", invName, side)
+        dlog.out("routeItems", "Checking ", invName, " ", side)
         if invName == destInvName then
           endTransposerLink = transIndexFirst .. ":" .. side
           transposerLinks[endTransposerLink] = transIndexFirst .. ":" .. sideFirst
-          dlog.out("routeItems", "Found destination", invName, side)
+          dlog.out("routeItems", "Found destination ", invName, " ", side)
           searchQueue:clear()
           break
         end
@@ -413,7 +413,7 @@ function Storage:routeItems(srcType, srcIndex, srcSlot, destType, destIndex, des
             if transIndex2 ~= transIndexFirst then
               searchQueue:push_back({transIndex2, side2})
               transposerLinks[transIndex2 .. ":" .. side2] = transIndexFirst .. ":" .. side
-              dlog.out("routeItems", "Adding", transIndex2, side2)
+              dlog.out("routeItems", "Adding ", transIndex2, " ", side2)
             else
               transposerLinks[transIndex2 .. ":" .. side2] = transIndexFirst .. ":" .. sideFirst
             end
@@ -424,7 +424,7 @@ function Storage:routeItems(srcType, srcIndex, srcSlot, destType, destIndex, des
     end
   end
   
-  assert(endTransposerLink, "Routing item from " .. srcInvName .. " to " .. destInvName .. " could not be determined, the routing table may be invalid.")
+  xassert(endTransposerLink, "Routing item from ", srcInvName, " to ", destInvName, " could not be determined, the routing table may be invalid.")
   
   -- Follow the links in transposerLinks to get back to the start, add these to a stack to reverse the ordering.
   local connectionStack = dstructs.Deque:new()
@@ -444,13 +444,13 @@ function Storage:routeItems(srcType, srcIndex, srcSlot, destType, destIndex, des
     transIndex = tonumber(transIndex)
     connectionStack:pop_front()
     
-    dlog.out("routeItems", transIndex .. " -> " .. srcSide .. ", " .. sinkSide)
+    dlog.out("routeItems", transIndex, " -> ", srcSide, ", ", sinkSide)
     amountTransferred = math.floor(self.transposers[transIndex].transferItem(srcSide, sinkSide, amount, firstConnection and srcSlot or 1, connectionStack:empty() and destSlot or 1))
     
     
     -- Confirm that item moved, or if at the end lookup the inventory that the remaining items are now stuck in.
     if not connectionStack:empty() then
-      assert(amountTransferred == amount)
+      xassert(amountTransferred == amount)
     elseif amountTransferred ~= amount then
       for invName, side in pairs(self.routing.transposer[transIndex]) do
         if side == srcSide then
@@ -502,8 +502,8 @@ Extraction:
 -- that did transfer. The srcSlot and amount can be nil.
 function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
   dlog.checkArgs(srcType, "string", srcIndex, "number", srcSlot, "number,nil", amount, "number,nil")
-  --dlog.out("insertStor", "insertStorage(", srcType, srcIndex, srcSlot, amount, ")")
-  assert(srcType == "input" or srcType == "output" or srcType == "drone")
+  --dlog.out("insertStor", "insertStorage(", srcType, " ", srcIndex, " ", srcSlot, " ", amount, ")")
+  xassert(srcType == "input" or srcType == "output" or srcType == "drone")
   local srcTransIndex, srcSide = next(self.routing[srcType][srcIndex])
   
   -- Find the first slot to choose as a source if not given.
@@ -522,7 +522,7 @@ function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
     if not srcSlot then
       return true, 0
     end
-    dlog.out("insertStor", "Found srcSlot = " .. srcSlot)
+    dlog.out("insertStor", "Found srcSlot = ", srcSlot)
   end
   
   local srcItem = self.transposers[srcTransIndex].getStackInSlot(srcSide, srcSlot)
@@ -539,7 +539,7 @@ function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
   
   -- First, try to insert the items at the insertIndex if item exists in storage (could be full, could be an over-sized slot, etc).
   if self.storageItems[srcFullName] then
-    dlog.out("insertStor", "First try insert point at " .. self.storageItems[srcFullName].insertIndex .. ", " .. self.storageItems[srcFullName].insertSlot)
+    dlog.out("insertStor", "First try insert point at ", self.storageItems[srcFullName].insertIndex, ", ", self.storageItems[srcFullName].insertSlot)
     local amountTransferred, currInvName
     amountTransferred, currInvName, currSlot = self:routeItems(currType, currIndex, currSlot, "storage", self.storageItems[srcFullName].insertIndex, self.storageItems[srcFullName].insertSlot, amount)
     
@@ -548,7 +548,7 @@ function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
     if amountTransferred == amount then
       return true, originalAmount
     end
-    dlog.out("insertStor", "Oof, only transferred " .. amountTransferred .. " of " .. amount)
+    dlog.out("insertStor", "Oof, only transferred ", amountTransferred, " of ", amount)
     amount = amount - amountTransferred
     currType = string.match(currInvName, "%a+")
     currIndex = tonumber(string.match(currInvName, "%d+"))
@@ -564,9 +564,9 @@ function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
       local slotEnd = (invIndex == self.storageItems[srcFullName].extractIndex and self.storageItems[srcFullName].extractSlot or self.transposers[transIndex].getInventorySize(side))
       for slot = slotStart, slotEnd do
         local item = itemIter[slot]
-        dlog.out("insertStor", "Checking " .. invIndex .. ", " .. slot)
+        dlog.out("insertStor", "Checking ", invIndex, ", ", slot)
         if item.size > 0 and getItemFullName(item) == srcFullName then    -- Check if we can add to existing stack. Items may still fail to move here.
-          dlog.out("insertStor", "Found potential partial slot for " .. srcFullName)
+          dlog.out("insertStor", "Found potential partial slot for ", srcFullName)
           local amountTransferred, currInvName
           amountTransferred, currInvName, currSlot = self:routeItems(currType, currIndex, currSlot, "storage", invIndex, slot, amount)
           
@@ -577,7 +577,7 @@ function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
             self.storageItems[srcFullName].insertSlot = slot
             return true, originalAmount
           end
-          dlog.out("insertStor", "Oof, only transferred " .. amountTransferred .. " of " .. amount)
+          dlog.out("insertStor", "Oof, only transferred ", amountTransferred, " of ", amount)
           amount = amount - amountTransferred
           currType = string.match(currInvName, "%a+")
           currIndex = tonumber(string.match(currInvName, "%d+"))
@@ -589,9 +589,9 @@ function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
   
   -- Third, try to insert items at the firstEmptyIndex.
   if self.storageItems.data.firstEmptyIndex then
-    dlog.out("insertStor", "Third try first empty at " .. self.storageItems.data.firstEmptyIndex .. ", " .. self.storageItems.data.firstEmptySlot)
+    dlog.out("insertStor", "Third try first empty at ", self.storageItems.data.firstEmptyIndex, ", ", self.storageItems.data.firstEmptySlot)
     
-    assert(self:routeItems(currType, currIndex, currSlot, "storage", self.storageItems.data.firstEmptyIndex, self.storageItems.data.firstEmptySlot, amount) == amount)
+    xassert(self:routeItems(currType, currIndex, currSlot, "storage", self.storageItems.data.firstEmptyIndex, self.storageItems.data.firstEmptySlot, amount) == amount)
     
     if self.storageItems[srcFullName] then
       self.storageItems[srcFullName].insertIndex = self.storageItems.data.firstEmptyIndex
@@ -604,7 +604,7 @@ function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
   end
   
   -- Route any stuck items back to where they came from.
-  dlog.out("insertStor", "Routing stuck items back from " .. currType .. currIndex .. ":" .. currSlot)
+  dlog.out("insertStor", "Routing stuck items back from ", currType, " ", currIndex, " : ", currSlot)
   local currInvName
   _, currInvName, currSlot = self:routeItems(currType, currIndex, currSlot, srcType, srcIndex, srcSlot)
   if currInvName and currIndex ~= srcIndex then
@@ -616,7 +616,7 @@ function Storage:insertStorage(srcType, srcIndex, srcSlot, amount)
     local slot = 1
     while item do
       if next(item) == nil then
-        assert(self:routeItems(currType, currIndex, currSlot, srcType, srcIndex, slot) == amount, "Failed to transfer items back to source location.")
+        xassert(self:routeItems(currType, currIndex, currSlot, srcType, srcIndex, slot) == amount, "Failed to transfer items back to source location.")
         break
       end
       item = itemIter()
@@ -636,8 +636,8 @@ end
 -- will purposefully fail to extract these items.
 function Storage:extractStorage(destType, destIndex, destSlot, itemName, amount, reservedItems)
   dlog.checkArgs(destType, "string", destIndex, "number", destSlot, "number,nil", itemName, "string,nil", amount, "number,nil", reservedItems, "table,nil")
-  --dlog.out("extractStor", "extractStorage(", destType, destIndex, destSlot, itemName, amount, ")")
-  assert(destType == "input" or destType == "output" or destType == "drone")
+  --dlog.out("extractStor", "extractStorage(", destType, " ", destIndex, " ", destSlot, " ", itemName, " ", amount, ")")
+  xassert(destType == "input" or destType == "output" or destType == "drone")
   if not itemName then
     for itemName2, itemDetails in pairs(self.storageItems) do
       if itemName2 ~= "data" then
@@ -682,12 +682,12 @@ function Storage:extractStorage(destType, destIndex, destSlot, itemName, amount,
     if not destSlot then
       return false, 0
     end
-    dlog.out("extractStor", "Found destSlot = " .. destSlot)
+    dlog.out("extractStor", "Found destSlot = ", destSlot)
   end
   
   -- First, try to extract the items at the extractIndex.
   do
-    dlog.out("extractStor", "First try extract point at " .. self.storageItems[itemName].extractIndex .. ", " .. self.storageItems[itemName].extractSlot)
+    dlog.out("extractStor", "First try extract point at ", self.storageItems[itemName].extractIndex, ", ", self.storageItems[itemName].extractSlot)
     local transIndex, side = next(self.routing.storage[self.storageItems[itemName].extractIndex])
     local item = self.transposers[transIndex].getStackInSlot(side, self.storageItems[itemName].extractSlot)
     local sendAmount = math.floor(math.min(item.size, amount))
@@ -699,19 +699,19 @@ function Storage:extractStorage(destType, destIndex, destSlot, itemName, amount,
       local itemIter = self.transposers[transIndex].getAllStacks(side)
       for slot = self.storageItems[itemName].extractSlot - 1, 1, -1 do
         local item2 = itemIter[slot]
-        dlog.out("extractStor", "Checking to combine " .. invIndex .. ", " .. slot)
+        dlog.out("extractStor", "Checking to combine ", invIndex, ", ", slot)
         if item2.size > 0 and getItemFullName(item2) == itemName then
-          dlog.out("extractStor", "Combining items from slot " .. slot)
+          dlog.out("extractStor", "Combining items from slot ", slot)
           local amountTransferred = math.floor(self.transposers[transIndex].transferItem(side, side, amount - item.size, slot, self.storageItems[itemName].extractSlot))
           if amountTransferred == item2.size then
-            dlog.out("extractStor", "Special case: we created an empty slot at " .. slot)
+            dlog.out("extractStor", "Special case: we created an empty slot at ", slot)
             if not self.storageItems.data.firstEmptyIndex or invIndex < self.storageItems.data.firstEmptyIndex or (invIndex == self.storageItems.data.firstEmptyIndex and slot < self.storageItems.data.firstEmptySlot) then
-              dlog.out("extractStor", "First empty changed to " .. invIndex .. ", " .. slot)
+              dlog.out("extractStor", "First empty changed to ", invIndex, ", ", slot)
               self.storageItems.data.firstEmptyIndex = invIndex
               self.storageItems.data.firstEmptySlot = slot
             end
             if invIndex < self.storageItems[itemName].insertIndex or (invIndex == self.storageItems[itemName].insertIndex and slot < self.storageItems[itemName].insertSlot) then
-              dlog.out("extractStor", "Insert point changed to " .. invIndex .. ", " .. slot)
+              dlog.out("extractStor", "Insert point changed to ", invIndex, ", ", slot)
               self.storageItems[itemName].insertIndex = invIndex
               self.storageItems[itemName].insertSlot = slot
             end
@@ -737,7 +737,7 @@ function Storage:extractStorage(destType, destIndex, destSlot, itemName, amount,
     elseif amountTransferred < sendAmount then
       return false, amountTransferred
     end
-    dlog.out("extractStor", "Oof, only transferred " .. amountTransferred .. " of " .. amount)
+    dlog.out("extractStor", "Oof, only transferred ", amountTransferred, " of ", amount)
     amount = amount - amountTransferred
   end
   
@@ -749,9 +749,9 @@ function Storage:extractStorage(destType, destIndex, destSlot, itemName, amount,
       local itemIter = self.transposers[transIndex].getAllStacks(side)
       for slot = (invIndex == self.storageItems[itemName].extractIndex and self.storageItems[itemName].extractSlot or self.transposers[transIndex].getInventorySize(side)), 1, -1 do
         local item = itemIter[slot]
-        dlog.out("extractStor", "Checking " .. invIndex .. ", " .. slot)
+        dlog.out("extractStor", "Checking ", invIndex, ", ", slot)
         if item.size > 0 and getItemFullName(item) == itemName then
-          dlog.out("extractStor", "Found extract slot for " .. itemName)
+          dlog.out("extractStor", "Found extract slot for ", itemName)
           local sendAmount = math.floor(math.min(item.size, amount))
           local amountTransferred, currInvName, currSlot = self:routeItems("storage", invIndex, slot, destType, destIndex, destSlot, sendAmount)
           
@@ -768,7 +768,7 @@ function Storage:extractStorage(destType, destIndex, destSlot, itemName, amount,
           elseif amountTransferred < sendAmount then
             return false, originalAmount - amount + amountTransferred
           end
-          dlog.out("extractStor", "Oof, only transferred " .. amountTransferred .. " of " .. amount)
+          dlog.out("extractStor", "Oof, only transferred ", amountTransferred, " of ", amount)
           amount = amount - amountTransferred
         end
       end
@@ -804,7 +804,7 @@ function Storage:flushInventoriesToOutput(invType)
     local transIndex, side = next(srcConnections)
     for item, slot in invIterator(self.transposers[transIndex].getAllStacks(side)) do
       if next(item) ~= nil then
-        dlog.out("flush", "Found item in " .. invType .. srcIndex .. " slot " .. slot)
+        dlog.out("flush", "Found item in ", invType, " ", srcIndex, " slot ", slot)
         
         -- Find the first empty slot in output.
         local firstEmpty
@@ -817,7 +817,7 @@ function Storage:flushInventoriesToOutput(invType)
         end
         
         if firstEmpty then
-          assert(self:routeItems(invType, srcIndex, slot, "output", 1, firstEmpty, item.size) == item.size, "Failed to flush items to output inventory.")
+          xassert(self:routeItems(invType, srcIndex, slot, "output", 1, firstEmpty, item.size) == item.size, "Failed to flush items to output inventory.")
         else
           return false
         end
@@ -936,7 +936,7 @@ local function setDroneItemsSlot(droneItems, i, slot, size, maxSize, fullName)
     droneItems[i][slot].size = size
     droneItems[i][slot].maxSize = maxSize or droneItems[i][slot].maxSize
     droneItems[i][slot].fullName = fullName or droneItems[i][slot].fullName
-    assert(droneItems[i][slot].maxSize and droneItems[i][slot].fullName, "Drone items data entry is incomplete.")
+    xassert(droneItems[i][slot].maxSize and droneItems[i][slot].fullName, "Drone items data entry is incomplete.")
     droneItems[i].dirty = true
   end
 end
@@ -960,11 +960,11 @@ packer.callbacks.stor_insert = Storage.handleStorInsert
 
 -- Extract items from storage network.
 function Storage:handleStorExtract(_, _, itemName, amount)
-  dlog.out("cmdExtract", "Extract with item " .. tostring(itemName) .. " and amount " .. amount .. ".")
+  dlog.out("cmdExtract", "Extract with item ", itemName, " and amount ", amount, ".")
   -- Continuously extract item until we reach the amount or run out (or output full).
   while amount > 0 do
     local success, amountTransferred = self:extractStorage("output", 1, nil, itemName, amount, self.reservedItems)
-    dlog.out("cmdExtract", "result = ", success, amountTransferred)
+    dlog.out("cmdExtract", "result = ", success, " ", amountTransferred)
     if not success then
       break
     end
@@ -980,7 +980,7 @@ function Storage:handleStorRecipeReserve(address, _, ticket, requiredItems)
   -- Check for expired tickets and remove them.
   for ticket2, request in pairs(self.pendingCraftRequests) do
     if computer.uptime() > request.creationTime + 10 then
-      dlog.out("cmdRecipeReserve", "Ticket " .. ticket2 .. " has expired")
+      dlog.out("cmdRecipeReserve", "Ticket ", ticket2, " has expired")
       
       for itemName, amount in pairs(request.reserved) do
         changeReservedItemAmount(self.reservedItems, itemName, -amount)
@@ -1019,7 +1019,7 @@ packer.callbacks.stor_recipe_reserve = Storage.handleStorRecipeReserve
 -- Start a crafting operation. The pending ticket just moves to active.
 function Storage:handleStorRecipeStart(_, _, ticket)
   if self.pendingCraftRequests[ticket] then
-    assert(not self.activeCraftRequests[ticket], "Attempt to start recipe for ticket " .. ticket .. " which is already running.")
+    xassert(not self.activeCraftRequests[ticket], "Attempt to start recipe for ticket ", ticket, " which is already running.")
     self.activeCraftRequests[ticket] = self.pendingCraftRequests[ticket]
     self.activeCraftRequests[ticket].startTime = computer.uptime()
     self.pendingCraftRequests[ticket] = nil
@@ -1078,10 +1078,10 @@ function Storage:handleDroneInsert(address, _, droneInvIndex, ticket)
     else
       local itemName = getItemFullName(item)
       
-      dlog.out("hDroneInsert", "Found item in slot, inserting " .. itemName .. " with count " .. math.floor(item.size))
+      dlog.out("hDroneInsert", "Found item in slot, inserting ", itemName, " with count ", math.floor(item.size))
       
       local success, amountTransferred = self:insertStorage("drone", droneInvIndex, slot, item.size)
-      dlog.out("hDroneInsert", "insertStorage() returned " .. tostring(success) .. ", " .. amountTransferred)
+      dlog.out("hDroneInsert", "insertStorage() returned ", success, ", ", amountTransferred)
       if not success then
         result = "full";
       end
@@ -1120,23 +1120,23 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
   local extractItemName = extractList[extractIdx][1]
   local extractItemAmount = extractList[extractIdx][2]
   local result = "ok"
-  assert(extractList.supplyIndices[droneInvIndex] == nil, "Cannot specify supply index that matches droneInvIndex (index is " .. droneInvIndex .. ").")
+  xassert(extractList.supplyIndices[droneInvIndex] == nil, "Cannot specify supply index that matches droneInvIndex (index is ", droneInvIndex, ").")
   
   dlog.out("hDroneExtract", "reservedItems before:", self.reservedItems)
   
   -- Check if we can pull directly from other drone inventories
   -- (supplyIndices) and transfer items to current one.
   local function pullFromSupplyInventories(destSlot, extractItemName, amount)
-    dlog.out("hDroneExtract", "Looking for supply items " .. extractItemName .. " with amount " .. amount)
+    dlog.out("hDroneExtract", "Looking for supply items ", extractItemName, " with amount ", amount)
     for supplyIndex, _ in pairs(extractList.supplyIndices) do
       for slot, itemDetails in pairs(self.droneItems[supplyIndex]) do
         if slot ~= "dirty" and itemDetails.fullName == extractItemName then
-          dlog.out("hDroneExtract", "Found supply items in container " .. supplyIndex .. " slot " .. slot)
+          dlog.out("hDroneExtract", "Found supply items in container ", supplyIndex, " slot ", slot)
           
           -- Clamp amount to the total in that slot, and confirm items transfer to new slot.
           local transferAmount = math.min(amount, itemDetails.size)
           local maxSize = itemDetails.maxSize
-          assert(self:routeItems("drone", supplyIndex, slot, "drone", droneInvIndex, destSlot, transferAmount) == transferAmount, "Failed to transfer items between drone inventories.")
+          xassert(self:routeItems("drone", supplyIndex, slot, "drone", droneInvIndex, destSlot, transferAmount) == transferAmount, "Failed to transfer items between drone inventories.")
           setDroneItemsSlot(self.droneItems, supplyIndex, slot, itemDetails.size - transferAmount)
           setDroneItemsSlot(self.droneItems, droneInvIndex, destSlot, (self.droneItems[droneInvIndex][destSlot] and self.droneItems[droneInvIndex][destSlot].size or 0) + transferAmount, maxSize, extractItemName)
           return true, transferAmount, maxSize
@@ -1150,7 +1150,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
   -- Re-scan inventories marked as dirty (crafting operation had changed or is adding items into inventory).
   for supplyIndex, dirty in pairs(extractList.supplyIndices) do
     if dirty then
-      dlog.out("hDroneExtract", "Rescanning supply inventory " .. supplyIndex)
+      dlog.out("hDroneExtract", "Rescanning supply inventory ", supplyIndex)
       local transIndex, side = next(self.routing.drone[supplyIndex])
       local itemIter = self.transposers[transIndex].getAllStacks(side)
       local item = itemIter()
@@ -1181,7 +1181,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
     if next(item) == nil then
       -- Amount of items to extract clamped to the max stack size (clamped later once we know this size).
       local slotAmountRemaining = extractItemAmount
-      dlog.out("hDroneExtract", "Found free slot, extracting " .. extractItemName .. " with count " .. slotAmountRemaining)
+      dlog.out("hDroneExtract", "Found free slot, extracting ", extractItemName, " with count ", slotAmountRemaining)
       
       -- Repeatedly pull from other drone inventories that contain the target item.
       local supplyItemsFound = true
@@ -1199,7 +1199,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
         if ticket then
           -- Confirm we can take the items (they must have been reserved).
           if not self.activeCraftRequests[ticket].reserved[extractItemName] or self.activeCraftRequests[ticket].reserved[extractItemName] < slotAmountRemaining then
-            assert(false, "Item " .. extractItemName .. " with count " .. slotAmountRemaining .. " was not reserved! Crafting operation unable to extract items from storage.")
+            xassert(false, "Item ", extractItemName, " with count ", slotAmountRemaining, " was not reserved! Crafting operation unable to extract items from storage.")
           end
           -- Remove reservation of the items we need.
           self.activeCraftRequests[ticket].reserved[extractItemName] = self.activeCraftRequests[ticket].reserved[extractItemName] - slotAmountRemaining
@@ -1210,7 +1210,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
         local previousSlotTotal = (self.droneItems[droneInvIndex][slot] and self.droneItems[droneInvIndex][slot].size or 0)
         local maxSize = (self.storageItems[extractItemName] and self.storageItems[extractItemName].maxSize or 0)
         local success, amountTransferred = self:extractStorage("drone", droneInvIndex, slot, extractItemName, slotAmountRemaining, self.reservedItems)
-        dlog.out("hDroneExtract", "extractStorage() returned " .. tostring(success) .. ", " .. amountTransferred)
+        dlog.out("hDroneExtract", "extractStorage() returned ", success, ", ", amountTransferred)
         setDroneItemsSlot(self.droneItems, droneInvIndex, slot, previousSlotTotal + amountTransferred, maxSize, extractItemName)
         if not success then
           dlog.out("hDroneExtract", "OH NO, what da fuq? extractStorage() failed... guess we move on to next item")  -- ########################################################################
@@ -1367,7 +1367,7 @@ function Storage:inputSensorThreadFunc(mainContext)
   io.write("Input sensor waiting for redstone event...\n")
   while true do
     --local _, address, side, _, newValue = event.pull("redstone_changed")
-    --dlog.out("inputSensor", "Redstone update: ", address, side, old, new)
+    --dlog.out("inputSensor", "Redstone update: ", address, " ", side, " ", old, " ", new)
     local redstoneLevel = 0
     for i = 0, 5 do
       redstoneLevel = math.max(redstoneLevel, math.floor(rs.getInput(i)))
@@ -1380,7 +1380,7 @@ function Storage:inputSensorThreadFunc(mainContext)
       while item do
         if next(item) ~= nil then
           local success, amountTransferred = self:insertStorage("input", 1, slot)
-          dlog.out("inputSensor", "insertStorage() result = ", success, amountTransferred)
+          dlog.out("inputSensor", "insertStorage() result = ", success, " ", amountTransferred)
           sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
           os.sleep(0)    -- Yield to let other threads do I/O with storage if they need to.
         end

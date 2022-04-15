@@ -108,8 +108,8 @@ function CellGrid:new(width, height)
   self.__index = self
   self = setmetatable({}, self)
   
-  assert(width <= 0xFFFFFFFF and height <= 0xFFFFFFFF, "Grid size must be within 32-bits.")
-  assert(width % 2 == 0 and height % 4 == 0, "Grid width must be multiple of 2 and height must be multiple of 4.")
+  xassert(width <= 0xFFFFFFFF and height <= 0xFFFFFFFF, "Grid size must be within 32-bits.")
+  xassert(width % 2 == 0 and height % 4 == 0, "Grid width must be multiple of 2 and height must be multiple of 4.")
   
   self.width = width
   self.height = height
@@ -143,12 +143,12 @@ function CellGrid:drawBlockXY_(x, y)
 end
 
 function CellGrid:getCell(x, y)
-  assert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
+  xassert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
   return self.cells:get((y - 1) * self.width + x) & 0x01 == 0x01
 end
 
 function CellGrid:setCell(x, y, state)
-  assert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
+  xassert(x >= 1 and x <= self.width and y >= 1 and y <= self.height)
   
   local cell = self.cells:get((y - 1) * self.width + x)
   local pos = y << 32 | x
@@ -454,7 +454,7 @@ function Game:drawDebug()
 end
 
 function Game:handleKeyDown(keyboardAddress, char, code, playerName)
-  --dlog.out("event", "handleKeyDown", keyboardAddress, char, code, playerName)
+  --dlog.out("event", "handleKeyDown ", keyboardAddress, " ", char, " ", code, " ", playerName)
   
   if keyboard.isControl(char) then
     
@@ -469,12 +469,12 @@ function Game:handleKeyDown(keyboardAddress, char, code, playerName)
 end
 
 function Game:handleKeyUp(keyboardAddress, char, code, playerName)
-  --dlog.out("event", "handleKeyUp", keyboardAddress, char, code, playerName)
+  --dlog.out("event", "handleKeyUp ", keyboardAddress, " ", char, " ", code, " ", playerName)
   
 end
 
 function Game:handleTouch(screenAddress, x, y, button, playerName)
-  --dlog.out("event", "handleTouch", screenAddress, x, y, button, playerName)
+  --dlog.out("event", "handleTouch ", screenAddress, " ", x, " ", y, " ", button, " ", playerName)
   x = math.floor(x * 2 + 1)
   y = math.floor(y * 4 + 1)
   button = math.floor(button)

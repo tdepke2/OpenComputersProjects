@@ -937,7 +937,7 @@ function Gui:toggleButtonCancel()
 end
 
 function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
-  --dlog.out("event", "handleKeyDown", keyboardAddress, char, code, playerName)
+  --dlog.out("event", "handleKeyDown ", keyboardAddress, " ", char, " ", code, " ", playerName)
   if keyboard.isControl(char) then
     if code == keyboard.keys.lmenu then
       if not self.keyShowCraftingPressed then
@@ -1019,7 +1019,7 @@ function Gui:handleKeyDown(keyboardAddress, char, code, playerName)
 end
 
 function Gui:handleKeyUp(keyboardAddress, char, code, playerName)
-  --dlog.out("event", "handleKeyUp", keyboardAddress, char, code, playerName)
+  --dlog.out("event", "handleKeyUp ", keyboardAddress, " ", char, " ", code, " ", playerName)
   if keyboard.isControl(char) then
     if code == keyboard.keys.lmenu then
       if self.keyShowCraftingPressed then
@@ -1085,7 +1085,7 @@ function Gui:requestItem(itemName, button)
 end
 
 function Gui:handleTouch(screenAddress, x, y, button, playerName)
-  --dlog.out("event", "handleTouch", screenAddress, x, y, button, playerName)
+  --dlog.out("event", "handleTouch ", screenAddress, " ", x, " ", y, " ", button, " ", playerName)
   x = math.floor(x)
   y = math.floor(y)
   button = math.floor(button)
@@ -1120,7 +1120,7 @@ function Gui:handleTouch(screenAddress, x, y, button, playerName)
 end
 
 function Gui:handleScroll(screenAddress, x, y, direction, playerName)
-  --dlog.out("event", "handleScroll", screenAddress, x, y, direction, playerName)
+  --dlog.out("event", "handleScroll ", screenAddress, " ", x, " ", y, " ", direction, " ", playerName)
   if x < self.area.craftingItem.x then
     self:updateScrollBar(direction)
     self:drawAreaItem()
@@ -1296,7 +1296,7 @@ end
 -- Listens for incoming packets over the network and deals with them.
 function Interface:modemThreadFunc(mainContext)
   dlog.out("main", "Modem thread starts.")
-  dlog.out("modem", "Listening on port " .. COMMS_PORT .. "...\n")
+  dlog.out("modem", "Listening on port ", COMMS_PORT, "...\n")
   while true do
     local address, port, message = wnet.receive()
     if port == COMMS_PORT then

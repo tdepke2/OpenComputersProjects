@@ -185,10 +185,10 @@ function Quarry:forceMove(direction)
     end
     if err == "impossible move" then
       -- Impossible move can happen if the robot has reached a flight limitation, or tries to move into an unloaded chunk.
-      assert(false, "Attempt to move failed with \"" .. err .. "\", a flight upgrade or chunkloader may be required.")
+      xassert(false, "Attempt to move failed with \"", err, "\", a flight upgrade or chunkloader may be required.")
     else
       -- Other errors might be "not enough energy", etc.
-      assert(false, "Attempt to move failed with \"" .. tostring(err) .. "\".")
+      xassert(false, "Attempt to move failed with \"", err, "\".")
     end
   end
 end
@@ -199,7 +199,7 @@ function Quarry:forceTurn(clockwise)
     coroutine.yield(ReturnReasons.energyLow)
   end
   local result, err = robnav.turn(clockwise)
-  assert(result, "Attempt to turn failed with \"" .. tostring(err) .. "\".")
+  xassert(result, "Attempt to turn failed with \"", err, "\".")
 end
 
 -- Wrapper for crobot.swing(), throws an exception on failure. Protects the held
@@ -208,13 +208,13 @@ end
 function Quarry:forceSwing(direction, side, sneaky)
   local result, msg
   if (crobot.durability() or 1.0) <= self.toolDurabilityMin then
-    assert(icontroller.equip())
+    xassert(icontroller.equip())
     result, msg = crobot.swing(direction, side, sneaky)
-    assert(icontroller.equip())
+    xassert(icontroller.equip())
   else
     result, msg = crobot.swing(direction, side, sneaky)
   end
-  assert(result or (msg ~= "block" and msg ~= "replaceable" and msg ~= "passable"), "Attempt to swing tool failed, unable to break block.")
+  xassert(result or (msg ~= "block" and msg ~= "replaceable" and msg ~= "passable"), "Attempt to swing tool failed, unable to break block.")
   if self.withinMainCoroutine then
     if computer.energy() <= self.energyLevelMin then
       coroutine.yield(ReturnReasons.energyLow)
@@ -241,7 +241,7 @@ function Quarry:forceMine(direction, side, sneaky)
         return
       end
     end
-    assert(false, "Attempt to swing tool failed with message \"" .. tostring(msg) .. "\".")
+    xassert(false, "Attempt to swing tool failed with message \"", msg, "\".")
   end
 end
 
@@ -267,20 +267,20 @@ function Quarry:forcePlace(direction, side, sneaky)
         return
       end
     end
-    assert(false, "Attempt to place block failed with \"" .. tostring(err) .. "\".")
+    xassert(false, "Attempt to place block failed with \"", err, "\".")
   end
 end
 
 function Quarry:layerMine()
-  assert(false, "Quarry:layerMine() not implemented.")
+  xassert(false, "Quarry:layerMine() not implemented.")
 end
 
 function Quarry:layerTurn()
-  assert(false, "Quarry:layerTurn() not implemented.")
+  xassert(false, "Quarry:layerTurn() not implemented.")
 end
 
 function Quarry:layerDown()
-  assert(false, "Quarry:layerDown() not implemented.")
+  xassert(false, "Quarry:layerDown() not implemented.")
 end
 
 function Quarry:quarryStart()
@@ -374,7 +374,7 @@ function Quarry:itemRearrange()
         lastItemName = internalInvItems[foundSlot].itemName
         stockedItems[slot] = lastItemName
         crobot.select(foundSlot)
-        assert(crobot.transferTo(slot))
+        xassert(crobot.transferTo(slot))
         internalInvItems[slot], internalInvItems[foundSlot] = internalInvItems[foundSlot], internalInvItems[slot]
         if crobot.count(foundSlot) == 0 then
           internalInvItems[foundSlot] = nil
@@ -400,7 +400,7 @@ function Quarry:itemDeposit(stockedItems, outputSide)
   -- Push remaining slots to output.
   for slot = 1, internalInventorySize do
     if not stockedItems[slot] and crobot.count(slot) > 0 then
-      dlog.out("itemDeposit", "drop item in slot", slot)
+      dlog.out("itemDeposit", "drop item in slot ", slot)
       crobot.select(slot)
       crobot.drop(outputSide)
       while crobot.count() > 0 do
@@ -466,7 +466,7 @@ function Quarry:itemRestock(inputSide)
       break
     end
     
-    dlog.out("itemRestock", "checking slot " .. slot .. " with stock levels:", slotStockEntry)
+    dlog.out("itemRestock", "checking slot ", slot, " with stock levels:", slotStockEntry)
     
     if crobot.space(slot) > 0 then
       -- Find the slots for the type of item we need to extract from the inventory. Use the same item in the current slot, or the first one that matches one of the options in slotStockEntry.
@@ -497,7 +497,7 @@ function Quarry:itemRestock(inputSide)
         while crobot.space(slot) > 0 do
           local externSlot = next(inputItemSlots)
           local numTransferred = icontroller.suckFromSlot(inputSide, externSlot, crobot.space(slot))
-          assert(numTransferred)
+          xassert(numTransferred)
           inputItemSlots[externSlot] = inputItemSlots[externSlot] - numTransferred
           if inputItemSlots[externSlot] <= 0 then
             inputItemSlots[externSlot] = nil
@@ -541,7 +541,7 @@ function Quarry:itemRestock(inputSide)
       dlog.out("itemRestock", "waiting for mining tool...")
     end
     
-    assert(icontroller.suckFromSlot(inputSide, bestToolSlot))
+    xassert(icontroller.suckFromSlot(inputSide, bestToolSlot))
   end
   icontroller.equip()
 end
@@ -565,8 +565,10 @@ function Quarry:run()
     self.withinMainCoroutine = true
     local status, ret = coroutine.resume(co)
     self.withinMainCoroutine = false
-    assert(status, ret)
-    dlog.out("run", "return reason =", ReturnReasons[ret])
+    if not status then
+      error(ret)
+    end
+    dlog.out("run", "return reason = ", ReturnReasons[ret])
     
     -- Return to home position.
     dlog.out("run", "moving to home position.")
@@ -614,9 +616,9 @@ function Quarry:run()
     -- Go back to working area.
     dlog.out("run", "moving back to working position.")
     if selectedSlotType == 1  then
-      assert(self:selectBuildBlock())
+      xassert(self:selectBuildBlock())
     elseif selectedSlotType == 2  then
-      assert(self:selectStairBlock())
+      xassert(self:selectStairBlock())
     end
     while robnav.y > yLast + 2 do
       self:forceMove(sides.bottom)
@@ -636,7 +638,7 @@ function Quarry:run()
       self:forceMove(sides.bottom)
     end
     robnav.turnTo(rLast)
-    assert(robnav.x == xLast and robnav.y == yLast and robnav.z == zLast and robnav.r == rLast)
+    xassert(robnav.x == xLast and robnav.y == yLast and robnav.z == zLast and robnav.r == rLast)
   end
 end
 
@@ -774,6 +776,5 @@ end
 local status, err = pcall(main)
 dlog.osBlockNewGlobals(false)
 if not status then
-  --dlog.verboseError(err)
-  assert(status, err)
+  error(err)
 end

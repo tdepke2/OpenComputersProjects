@@ -167,7 +167,7 @@ end
 -- restoreCraftState() later on within the same recursion depth.
 local function cacheCraftState(recursionDepth, solverState, cache)
   local spacing = string.rep("  ", recursionDepth)
-  dlog.out("recipeSolver", spacing .. "Caching craft state...")
+  dlog.out("recipeSolver", spacing, "Caching craft state...")
   
   cache.itemInputs = setmetatable({}, SolverState.defaultZeroMeta)
   for k, v in pairs(solverState.itemInputs) do
@@ -210,14 +210,14 @@ local function cacheCraftState(recursionDepth, solverState, cache)
   
   cache.numMissingItems = solverState.numMissingItems
   cache.valid = true
-  dlog.out("recipeSolver", spacing .. "cache:", cache)
+  dlog.out("recipeSolver", spacing, "cache:", cache)
 end
 
 -- Restore solverState. See assumptions made in cacheCraftState().
 local function restoreCraftState(recursionDepth, solverState, cache)
   local spacing = string.rep("  ", recursionDepth)
-  dlog.out("recipeSolver", spacing .. "Restoring craft state...")
-  assert(cache.valid, "Restore attempted before call to cacheCraftState()")
+  dlog.out("recipeSolver", spacing, "Restoring craft state...")
+  xassert(cache.valid, "Restore attempted before call to cacheCraftState()")
   
   solverState.itemInputs = cache.itemInputs
   solverState.itemNAOutputs = cache.itemNAOutputs
@@ -248,15 +248,15 @@ local recursiveSolve, attemptRecipe
 -- the number of items processed from the craft* stacks (not the same as the
 -- dependency "tree" depth).
 recursiveSolve = function(recursionDepth, solverState)
-  assert(recursionDepth < 50, "Recipe too complex or not possible.")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
+  xassert(recursionDepth < 50, "Recipe too complex or not possible.")    -- FIXME may want to limit the max number of calls in addition to max depth. ############################################
   local spacing = string.rep("  ", recursionDepth)
   local currentName, currentIndex, currentAmount = solverState:craftTop()
-  dlog.out("recipeSolver", spacing .. "recursiveSolve(" .. recursionDepth .. ")")
+  dlog.out("recipeSolver", spacing, "recursiveSolve(", recursionDepth, ")")
   
   -- If recipe for the target item has been pre-selected or there is only one recipe option, then use that one only (tail call optimization).
   -- Else, in the case that there are multiple recipes that make the item, use the following strategy to attempt some combinations of the recipes that are likely to succeed.
   if currentIndex ~= -1 then
-    dlog.out("recipeSolver", spacing .. "Recipe " .. currentIndex .. " was pre-selected")
+    dlog.out("recipeSolver", spacing, "Recipe ", currentIndex, " was pre-selected")
     return attemptRecipe(recursionDepth, solverState)
   elseif #solverState.recipes[currentName] == 1 then
     solverState.craftIndices[solverState.craftStackSize] = solverState.recipes[currentName][1]
@@ -265,7 +265,7 @@ recursiveSolve = function(recursionDepth, solverState)
     local solverStateCache = {}
     
     -- Try each alternate recipe independently (no mixing different types).
-    dlog.out("recipeSolver", spacing .. "Mix method 1: try each recipe independently.")
+    dlog.out("recipeSolver", spacing, "Mix method 1: try each recipe independently.")
     for _, recipeIndex in ipairs(solverState.recipes[currentName]) do
       cacheCraftState(recursionDepth, solverState, solverStateCache)
       solverState.craftIndices[solverState.craftStackSize] = recipeIndex
@@ -308,15 +308,15 @@ recursiveSolve = function(recursionDepth, solverState)
         downscaledNumPos = downscaledNumPos + 1
       end
     end
-    dlog.out("recipeSolver", spacing .. "downscaledAmounts:", downscaledAmounts)
+    dlog.out("recipeSolver", spacing, "downscaledAmounts:", downscaledAmounts)
     
     -- If all recipes downscaled and total less than amount needed, break early (cannot be crafted).
     if downscaledAmountsSum < currentAmount and downscaledNumInf == 0 then
-      dlog.out("recipeSolver", spacing .. "All downscaled to less than total required, crafting not possible.")
+      dlog.out("recipeSolver", spacing, "All downscaled to less than total required, crafting not possible.")
       return -- FIXME instead we need to eval attemptRecipe() to get a missing items result (or do we? hmm) #################################################################################
     end
     
-    dlog.out("recipeSolver", spacing .. "Mix method 2: try downscaled recipes first, split even across the remainder.")
+    dlog.out("recipeSolver", spacing, "Mix method 2: try downscaled recipes first, split even across the remainder.")
     local remainingCraftAmount = currentAmount
     cacheCraftState(recursionDepth, solverState, solverStateCache)
     for i, downscaled in ipairs(downscaledAmounts) do
@@ -325,7 +325,7 @@ recursiveSolve = function(recursionDepth, solverState)
         remainingCraftAmount = remainingCraftAmount - newAmount
         solverState.craftIndices[solverState.craftStackSize] = solverState.recipes[currentName][i]
         solverState.craftAmounts[solverState.craftStackSize] = newAmount
-        dlog.out("recipeSolver", spacing .. "Added amount " .. newAmount .. " for recipe " .. solverState.recipes[currentName][i] .. " (i = " .. i .. ")")
+        dlog.out("recipeSolver", spacing, "Added amount ", newAmount, " for recipe ", solverState.recipes[currentName][i], " (i = ", i, ")")
         
         if remainingCraftAmount == 0 then
           break
@@ -344,7 +344,7 @@ recursiveSolve = function(recursionDepth, solverState)
           remainingNumInf = remainingNumInf - 1
           solverState.craftIndices[solverState.craftStackSize] = solverState.recipes[currentName][i]
           solverState.craftAmounts[solverState.craftStackSize] = newAmount
-          dlog.out("recipeSolver", spacing .. "Added amount " .. newAmount .. " for recipe " .. solverState.recipes[currentName][i] .. " (i = " .. i .. ")")
+          dlog.out("recipeSolver", spacing, "Added amount ", newAmount, " for recipe ", solverState.recipes[currentName][i], " (i = ", i, ")")
           
           if remainingCraftAmount == 0 then
             break
@@ -355,7 +355,7 @@ recursiveSolve = function(recursionDepth, solverState)
         end
       end
     end
-    assert(remainingCraftAmount == 0, "Mix method 2 failed: recipe distribution incorrect.")
+    xassert(remainingCraftAmount == 0, "Mix method 2 failed: recipe distribution incorrect.")
     attemptRecipe(recursionDepth, solverState)
     restoreCraftState(recursionDepth, solverState, solverStateCache)
     if solverState.resultStatus == "ok" then
@@ -363,8 +363,8 @@ recursiveSolve = function(recursionDepth, solverState)
       return
     end
     
-    dlog.out("recipeSolver", spacing .. "Mix method 3: split even across all recipes.")
-    dlog.out("recipeSolver", spacing .. "oops, NYI")
+    dlog.out("recipeSolver", spacing, "Mix method 3: split even across all recipes.")
+    dlog.out("recipeSolver", spacing, "oops, NYI")
     
   end
 end
@@ -375,7 +375,7 @@ end
 attemptRecipe = function(recursionDepth, solverState)
   local spacing = string.rep("  ", recursionDepth)
   local currentName, currentIndex, currentAmount = solverState:craftTop()
-  dlog.out("recipeSolver", spacing .. "Trying recipe " .. currentIndex .. " for " .. currentName .. " with amount " .. currentAmount)
+  dlog.out("recipeSolver", spacing, "Trying recipe ", currentIndex, " for ", currentName, " with amount ", currentAmount)
   local currentRecipe = solverState.recipes[currentIndex]
   
   -- Compute amount multiplier as the number of items we need to craft over the number of items we get from the recipe (rounded up).
@@ -395,22 +395,22 @@ attemptRecipe = function(recursionDepth, solverState)
     if addAmount > availableAmount then
       if solverState.recipes[inputName] then
         -- Add the addAmount minus availableAmount to craft* stacks if the recipe is known.
-        dlog.out("recipeSolver", spacing .. "Craft " .. addAmount - availableAmount .. " of " .. inputName)
+        dlog.out("recipeSolver", spacing, "Craft ", addAmount - availableAmount, " of ", inputName)
         solverState:craftPush(inputName, -1, addAmount - availableAmount)
       else
         -- Recipe not known so this item will prevent crafting, add to numMissingItems.
-        dlog.out("recipeSolver", spacing .. "Missing " .. addAmount - availableAmount .. " of " .. inputName)
+        dlog.out("recipeSolver", spacing, "Missing ", addAmount - availableAmount, " of ", inputName)
         solverState.numMissingItems = solverState.numMissingItems + addAmount - availableAmount
       end
     end
     
-    dlog.out("recipeSolver", spacing .. "Require " .. addAmount .. " more of " .. inputName)
+    dlog.out("recipeSolver", spacing, "Require ", addAmount, " more of ", inputName)
     solverState:addItemInput(inputName, addAmount)
   end
   
   -- For each recipe output, add the item outputs to solverState.
   for outputName, amount in pairs(currentRecipe.out) do
-    dlog.out("recipeSolver", spacing .. "Add " .. mult * amount .. " of output " .. outputName)
+    dlog.out("recipeSolver", spacing, "Add ", mult * amount, " of output ", outputName)
     solverState:addItemOutput(outputName, mult * amount)
   end
   
@@ -419,16 +419,16 @@ attemptRecipe = function(recursionDepth, solverState)
     solverState:craftPop()
     solverState:buildNextNAOutput()
   end
-  dlog.out("recipeSolver", spacing .. "Update NA outputs completed, solverState.outputStackSize = ", solverState.outputStackSize, ", solverState.itemNAOutputs = ", solverState.itemNAOutputs)
+  dlog.out("recipeSolver", spacing, "Update NA outputs completed, solverState.outputStackSize = ", solverState.outputStackSize, ", solverState.itemNAOutputs = ", solverState.itemNAOutputs)
   
   -- If no more recipes remaining, solution found. Otherwise we do recursive call.
   if solverState:craftEmpty() then
-    dlog.out("recipeSolver", spacing .. "Found solution, numMissingItems = " .. solverState.numMissingItems)
-    assert(solverState.outputStackSize == 0, "Got solution, but solverState.outputStackSize not empty.")
+    dlog.out("recipeSolver", spacing, "Found solution, numMissingItems = ", solverState.numMissingItems)
+    xassert(solverState.outputStackSize == 0, "Got solution, but solverState.outputStackSize not empty.")
     
-    dlog.out("recipeSolver", spacing .. "itemInputs/itemOutputs and processedIndices/processedBatches:", solverState.itemInputs, solverState.itemNAOutputs)
+    dlog.out("recipeSolver", spacing, "itemInputs/itemOutputs and processedIndices/processedBatches:", solverState.itemInputs, solverState.itemNAOutputs)
     for i = 1, #solverState.processedIndices do
-      dlog.out("recipeSolver", spacing .. i .. ": index " .. solverState.processedIndices[i] .. " batch " .. solverState.processedBatches[i])
+      dlog.out("recipeSolver", spacing, i, ": index ", solverState.processedIndices[i], " batch ", solverState.processedBatches[i])
     end
     
     --[[
@@ -437,12 +437,12 @@ attemptRecipe = function(recursionDepth, solverState)
     for k, v in pairs(requiredItems) do
       craftingTotal = craftingTotal + math.max(v - (storageItems[k] and storageItems[k].total or 0), 0)
     end
-    dlog.out("recipeSolver", "craftingTotal = " .. craftingTotal)
+    dlog.out("recipeSolver", "craftingTotal = ", craftingTotal)
     --]]
     
     -- Check if the total number of missing items is a new low, and update the result if so.
     if solverState.numMissingItems < solverState.bestNumMissingItems then
-      dlog.out("recipeSolver", spacing .. "New best found!")
+      dlog.out("recipeSolver", spacing, "New best found!")
       solverState.bestNumMissingItems = solverState.numMissingItems
       if solverState.numMissingItems == 0 then
         solverState.resultStatus = "ok"
@@ -472,8 +472,8 @@ attemptRecipe = function(recursionDepth, solverState)
           solverState.resultOutputs[k] = netOutput
         end
       end
-      dlog.out("recipeSolver", spacing .. "resultInputs = ", solverState.resultInputs)
-      dlog.out("recipeSolver", spacing .. "resultOutputs = ", solverState.resultOutputs)
+      dlog.out("recipeSolver", spacing, "resultInputs = ", solverState.resultInputs)
+      dlog.out("recipeSolver", spacing, "resultOutputs = ", solverState.resultOutputs)
     end
   else
     return recursiveSolve(recursionDepth + 1, solverState)
@@ -512,7 +512,7 @@ function solver.solveDependencyGraph(recipes, storageItems, itemName, amount)
   local solverState = SolverState:new(recipes, storageItems)
   solverState:craftPush(itemName, -1, amount)
   
-  dlog.out("recipeSolver", "Crafting " .. amount .. " of " .. itemName)
+  dlog.out("recipeSolver", "Crafting ", amount, " of ", itemName)
   
   local status, err = pcall(recursiveSolve, 0, solverState)
   if not status then
@@ -521,7 +521,7 @@ function solver.solveDependencyGraph(recipes, storageItems, itemName, amount)
   end
   
   dlog.out("recipeSolver", "Done.")
-  dlog.out("recipeSolver", "resultStatus, resultIndices, resultBatches, resultInputs, resultOutputs:", solverState.resultStatus, solverState.resultIndices, solverState.resultBatches, solverState.resultInputs, solverState.resultOutputs)
+  dlog.out("recipeSolver", "resultStatus, resultIndices, resultBatches, resultInputs, resultOutputs: ", solverState.resultStatus, solverState.resultIndices, solverState.resultBatches, solverState.resultInputs, solverState.resultOutputs)
   return solverState.resultStatus, solverState.resultIndices, solverState.resultBatches, solverState.resultInputs, solverState.resultOutputs
 end
 
@@ -548,22 +548,22 @@ function solver.testDependencySolver(loadRecipesFunc, verifyRecipesFunc)
   -- Craft 16 torches, have nothing.
   storageItems = {}
   status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
-  assert(status == "missing")
-  assert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 1}))
-  assert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 4}))
-  assert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
-  assert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  xassert(status == "missing")
+  xassert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 1}))
+  xassert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 4}))
+  xassert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
+  xassert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
   -- Craft 16 torches, have 1 log and 4 coal.
   storageItems = {}
   addStorageItem("minecraft:log/0", "Oak Log", 1, 64)
   addStorageItem("minecraft:coal/0", "Coal", 4, 64)
   status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
-  assert(status == "ok")
-  assert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 1}))
-  assert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 4}))
-  assert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
-  assert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  xassert(status == "ok")
+  xassert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 1}))
+  xassert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 4}))
+  xassert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 4}))
+  xassert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
   -- Craft 16 torches, have 1 log, 1 charcoal, and 3 coal.
   storageItems = {}
@@ -571,11 +571,11 @@ function solver.testDependencySolver(loadRecipesFunc, verifyRecipesFunc)
   addStorageItem("minecraft:coal/1", "Charcoal", 1, 64)
   addStorageItem("minecraft:coal/0", "Coal", 3, 64)
   status, recipeIndices, recipeBatches, itemInputs, itemOutputs = solver.solveDependencyGraph(recipes, storageItems, "minecraft:torch/0", 16)
-  assert(status == "ok")
-  assert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 2, 1}))
-  assert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 1, 3}))
-  assert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 3, ["minecraft:coal/1"] = 1}))
-  assert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
+  xassert(status == "ok")
+  xassert(dstructs.rawObjectsEqual(recipeIndices, {4, 3, 2, 1}))
+  xassert(dstructs.rawObjectsEqual(recipeBatches, {1, 1, 1, 3}))
+  xassert(dstructs.rawObjectsEqual(itemInputs, {["minecraft:log/0"] = 1, ["minecraft:coal/0"] = 3, ["minecraft:coal/1"] = 1}))
+  xassert(dstructs.rawObjectsEqual(itemOutputs, {["minecraft:torch/0"] = 16, ["minecraft:planks/0"] = 2}))
   
 --[[
 

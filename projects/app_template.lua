@@ -28,7 +28,7 @@ local dstructs = include("dstructs")
 local packer = include("packer")
 local wnet = include("wnet")
 
--- Global constants.
+-- Configuration constants.
 local COMMS_PORT = 123
 local DLOG_FILE_OUT = "/tmp/messages"
 
@@ -54,6 +54,7 @@ function MyApp:new(vals)
   self.__index = self
   self = setmetatable({}, self)
   
+  xassert(#vals >= 3, "size of vals is too small (expected at least 3, got ", #vals, ").")
   self.dat = vals
   
   return self
@@ -73,7 +74,7 @@ end
 -- "test_message" (which won't actually work since this header is not yet
 -- defined). See packer module for more details.
 function MyApp:handleTestMessage(address, port, message)
-  io.write("got message from " .. address .. ": " .. tostring(message) .. "\n")
+  io.write("got message from ", address, ": ", tostring(message), "\n")
   
   -- Send a reply back (also needs to be defined in packer to work).
   wnet.send(modem, address, COMMS_PORT, packer.pack.test_message_reply("hello"))
@@ -88,15 +89,19 @@ function MyApp:setupThreadFunc(mainContext)
   
   someLocalFunction()
   
-  io.write(self:doThing(1) .. "\n")
-  io.write(self:doThing(2) .. "\n")
-  io.write(self:doThing() .. "\n")
+  io.write(self:doThing(1), "\n")
+  io.write(self:doThing(2), "\n")
+  io.write(self:doThing(), "\n")
+  
+  -- Example of a typo that could cause a hard to find bug.
+  -- This gets caught and throws an exception thanks to dlog.osBlockNewGlobals().
+  --mainContex = {}
   
   -- Report system started to any listening devices.
   --wnet.send(modem, nil, COMMS_PORT, packer.pack.my_app_started())
   
   dlog.out("setup", "Setup done! Enter commands at the prompt for more options, or press Ctrl + C to exit.")
-  dlog.out("setup", "Take a look in \"" .. DLOG_FILE_OUT .. "\" to see all dlog messages.")
+  dlog.out("setup", "Take a look in \"", DLOG_FILE_OUT, "\" to see all dlog messages.")
   
   mainContext.threadSuccess = true
   dlog.out("main", "Setup thread ends.")
@@ -106,7 +111,7 @@ end
 -- Listens for incoming packets over the network and deals with them.
 function MyApp:modemThreadFunc(mainContext)
   dlog.out("main", "Modem thread starts.")
-  io.write("Listening for commands on port " .. COMMS_PORT .. "...\n")
+  io.write("Listening for commands on port ", COMMS_PORT, "...\n")
   while true do
     local address, port, message = wnet.receive()
     if port == COMMS_PORT then
@@ -188,7 +193,7 @@ local function main()
       io.write("Tests not yet implemented.\n")
       exit()
     else
-      io.stderr:write("Unknown argument \"" .. tostring(args[1]) .. "\".\n")
+      io.stderr:write("Unknown argument \"", tostring(args[1]), "\".\n")
       exit()
     end
   end

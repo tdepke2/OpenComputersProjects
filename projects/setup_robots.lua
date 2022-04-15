@@ -44,7 +44,7 @@ local function stringToItemName(s)
   if not string.find(s, "/") then
     s = s .. "/0"
   end
-  assert(string.match(s, "[%w_]+:[%w_]+/%d+n?") == s, "Item name does not have valid format.")
+  xassert(string.match(s, "[%w_]+:[%w_]+/%d+n?") == s, "Item name does not have valid format.")
   return s
 end
 
@@ -147,7 +147,7 @@ local function main()
   local droneItems
   wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_get_drone_item_list())
   local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "stor_drone_item_list,", 5)
-  assert(address, "Lost connection with storage server (request timed out).")
+  xassert(address, "Lost connection with storage server (request timed out).")
   droneItems = packer.unpack.stor_drone_item_list(data)
   
   -- Create a table to track the connections of robots for each drone inventory, and make a copy of robotAddresses to check off the list.
@@ -169,12 +169,12 @@ local function main()
     
     wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_extract(i, nil, extractList))
     local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "stor_drone_item_diff,", 5)
-    assert(address, "Lost connection with storage server (request timed out).")
+    xassert(address, "Lost connection with storage server (request timed out).")
     local _, result, droneItemsDiff = packer.unpack.stor_drone_item_diff(data)
     applyDroneItemsDiff(droneItems, droneItemsDiff)
-    assert(result ~= "missing", "Item \"" .. setupConfig.searchItem .. "\" was not found in storage.")
-    assert(result == "ok", "Extract to drone inventory failed.")
-    assert(droneItems[i][1].fullName == setupConfig.searchItem and not droneItems[i][2], "Unexpected contents in inventory.")
+    xassert(result ~= "missing", "Item \"", setupConfig.searchItem, "\" was not found in storage.")
+    xassert(result == "ok", "Extract to drone inventory failed.")
+    xassert(droneItems[i][1].fullName == setupConfig.searchItem and not droneItems[i][2], "Unexpected contents in inventory.")
     
     -- Item moved, the current inventory becomes the supply one (and dirty flag is false as we don't change the contents externally).
     extractList.supplyIndices[i - 1] = nil
@@ -184,7 +184,7 @@ local function main()
     wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_scan_adjacent(setupConfig.searchItem, 1))
     for j = 1, numRobotAddresses do
       local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "robot_scan_adjacent_result,", 5)
-      assert(address, "Communication with robot failed, got responses from " .. j - 1 .. " of " .. numRobotAddresses .. " bots.")
+      xassert(address, "Communication with robot failed, got responses from ", j - 1, " of ", numRobotAddresses, " bots.")
       local foundSide = packer.unpack.robot_scan_adjacent_result(data)
       robotConnections[i][address] = foundSide
       if foundSide then
@@ -196,10 +196,10 @@ local function main()
   -- Add residual item back into storage system.
   wnet.send(modem, storageServerAddress, COMMS_PORT, packer.pack.stor_drone_insert(#droneItems, nil))
   local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "stor_drone_item_diff,", 5)
-  assert(address, "Lost connection with storage server (request timed out).")
+  xassert(address, "Lost connection with storage server (request timed out).")
   local _, result, droneItemsDiff = packer.unpack.stor_drone_item_diff(data)
   applyDroneItemsDiff(droneItems, droneItemsDiff)
-  assert(result == "ok", "Insert from drone inventory to storage failed.")
+  xassert(result == "ok", "Insert from drone inventory to storage failed.")
   
   if next(remainingRobotAddresses) then
     local numRemaining = 0
@@ -225,4 +225,6 @@ end
 
 local status, err = pcall(main)
 dlog.osBlockNewGlobals(false)
-assert(status, err)
+if not status then
+  error(err)
+end
