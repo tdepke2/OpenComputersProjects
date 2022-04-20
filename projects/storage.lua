@@ -843,14 +843,14 @@ end
 -- Strip off the unnecessary data in storageItems and send over the network to
 -- specified addresses (or broadcast if nil). Items that are reserved are hidden
 -- away.
-local function sendAvailableItems(addresses, storageItems, reservedItems)
+function Storage:sendAvailableItems(addresses)
   local items = {}
-  for itemName, itemDetails in pairs(storageItems) do
-    if itemName ~= "data" and itemDetails.total > (reservedItems[itemName] or 0) then
+  for itemName, itemDetails in pairs(self.storageItems) do
+    if itemName ~= "data" and itemDetails.total > (self.reservedItems[itemName] or 0) then
       items[itemName] = {}
       items[itemName].maxSize = itemDetails.maxSize
       items[itemName].label = itemDetails.label
-      items[itemName].total = itemDetails.total - math.max(reservedItems[itemName] or 0, 0)
+      items[itemName].total = itemDetails.total - math.max(self.reservedItems[itemName] or 0, 0)
     end
   end
   sendToAddresses(addresses, packer.pack.stor_item_list(items))
@@ -860,13 +860,13 @@ end
 -- Compiles the changes made to storageItems since the last call to this
 -- function, and sends the changes over network to the addresses (or broadcast
 -- if nil). Items that are reserved are hidden away.
-local function sendAvailableItemsDiff(addresses, storageItems, reservedItems)
+function Storage:sendAvailableItemsDiff(addresses)
   -- Merge changes from storageItems and reservedItems together.
   local mergedChanges = {}
-  for itemName, _ in pairs(storageItems.data.changes) do
+  for itemName, _ in pairs(self.storageItems.data.changes) do
     mergedChanges[itemName] = true
   end
-  for itemName, _ in pairs(reservedItems.data.changes) do
+  for itemName, _ in pairs(self.reservedItems.data.changes) do
     mergedChanges[itemName] = true
   end
   
@@ -875,23 +875,23 @@ local function sendAvailableItemsDiff(addresses, storageItems, reservedItems)
   for itemName, _ in pairs(mergedChanges) do
     -- Find previous and current amount available.
     -- We clamp to non-negative values to discard negative reserved amounts and account for reservations greater than what is stored.
-    local currentTotal = (storageItems[itemName] and storageItems[itemName].total or 0)
-    local previousAvailable = math.max((storageItems.data.changes[itemName] or currentTotal) - math.max(reservedItems.data.changes[itemName] or reservedItems[itemName] or 0, 0), 0)
-    local currentAvailable = math.max(currentTotal - math.max(reservedItems[itemName] or 0, 0), 0)
+    local currentTotal = (self.storageItems[itemName] and self.storageItems[itemName].total or 0)
+    local previousAvailable = math.max((self.storageItems.data.changes[itemName] or currentTotal) - math.max(self.reservedItems.data.changes[itemName] or self.reservedItems[itemName] or 0, 0), 0)
+    local currentAvailable = math.max(currentTotal - math.max(self.reservedItems[itemName] or 0, 0), 0)
     
     if currentAvailable ~= 0 then
       if previousAvailable ~= currentAvailable then
         itemsDiff[itemName] = {}
-        itemsDiff[itemName].maxSize = storageItems[itemName].maxSize
-        itemsDiff[itemName].label = storageItems[itemName].label
+        itemsDiff[itemName].maxSize = self.storageItems[itemName].maxSize
+        itemsDiff[itemName].label = self.storageItems[itemName].label
         itemsDiff[itemName].total = currentAvailable
       end
     elseif previousAvailable ~= 0 then
       itemsDiff[itemName] = {}
       itemsDiff[itemName].total = 0
     end
-    storageItems.data.changes[itemName] = nil
-    reservedItems.data.changes[itemName] = nil
+    self.storageItems.data.changes[itemName] = nil
+    self.reservedItems.data.changes[itemName] = nil
   end
   if next(itemsDiff) ~= nil then
     sendToAddresses(addresses, packer.pack.stor_item_diff(itemsDiff))
@@ -899,45 +899,40 @@ local function sendAvailableItemsDiff(addresses, storageItems, reservedItems)
 end
 
 
--- Set amount for a reserved item. Adds a new entry to changes to keep track of
--- previous amount.
-local function setReservedItemAmount(reservedItems, itemName, amount)
-  if not reservedItems.data.changes[itemName] then
-    reservedItems.data.changes[itemName] = (reservedItems[itemName] or 0)
+-- Change the amount for a reserved item by adding deltaAmount. Adds a new entry
+-- to changes to keep track of previous amount.
+function Storage:changeReservedItemAmount(itemName, deltaAmount)
+  local amount = (self.reservedItems[itemName] or 0)
+  if not self.reservedItems.data.changes[itemName] then
+    self.reservedItems.data.changes[itemName] = amount
   end
-  if amount ~= 0 then
-    reservedItems[itemName] = amount
+  if amount + deltaAmount ~= 0 then
+    self.reservedItems[itemName] = amount + deltaAmount
   else
-    reservedItems[itemName] = nil
+    self.reservedItems[itemName] = nil
   end
-end
-
-
--- Same as setReservedItemAmount(), but adds amount to the current value.
-local function changeReservedItemAmount(reservedItems, itemName, amount)
-  setReservedItemAmount(reservedItems, itemName, (reservedItems[itemName] or 0) + amount)
 end
 
 
 -- Updates an item stack at an index and slot of droneItems. Marks the whole
 -- index as dirty if the item amount changed (so that a diff can be sent later
 -- to update servers that keep a copy of this table).
-local function setDroneItemsSlot(droneItems, i, slot, size, maxSize, fullName)
-  dlog.checkArgs(droneItems, "table", i, "number", slot, "number", size, "number", maxSize, "number,nil", fullName, "string,nil")
+function Storage:setDroneItemsSlot(i, slot, size, maxSize, fullName)
+  dlog.checkArgs(i, "number", slot, "number", size, "number", maxSize, "number,nil", fullName, "string,nil")
   if size == 0 then
-    if droneItems[i][slot] then
-      droneItems[i][slot] = nil
-      droneItems[i].dirty = true
+    if self.droneItems[i][slot] then
+      self.droneItems[i][slot] = nil
+      self.droneItems[i].dirty = true
     end
   else
-    if not droneItems[i][slot] then
-      droneItems[i][slot] = {}
+    if not self.droneItems[i][slot] then
+      self.droneItems[i][slot] = {}
     end
-    droneItems[i][slot].size = size
-    droneItems[i][slot].maxSize = maxSize or droneItems[i][slot].maxSize
-    droneItems[i][slot].fullName = fullName or droneItems[i][slot].fullName
-    xassert(droneItems[i][slot].maxSize and droneItems[i][slot].fullName, "Drone items data entry is incomplete.")
-    droneItems[i].dirty = true
+    self.droneItems[i][slot].size = size
+    self.droneItems[i][slot].maxSize = maxSize or self.droneItems[i][slot].maxSize
+    self.droneItems[i][slot].fullName = fullName or self.droneItems[i][slot].fullName
+    xassert(self.droneItems[i][slot].maxSize and self.droneItems[i][slot].fullName, "Drone items data entry is incomplete.")
+    self.droneItems[i].dirty = true
   end
 end
 
@@ -945,7 +940,7 @@ end
 -- Device is searching for this storage server, respond with storage items list.
 function Storage:handleStorDiscover(address, _)
   self.craftInterServerAddresses[address] = true
-  sendAvailableItems({[address]=true}, self.storageItems, self.reservedItems)
+  self:sendAvailableItems({[address]=true})
 end
 packer.callbacks.stor_discover = Storage.handleStorDiscover
 
@@ -953,7 +948,7 @@ packer.callbacks.stor_discover = Storage.handleStorDiscover
 -- Insert items into the storage network.
 function Storage:handleStorInsert(_, _)
   dlog.out("cmdInsert", "result = ", self:insertStorage("input", 1))
-  sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+  self:sendAvailableItemsDiff(self.craftInterServerAddresses)
 end
 packer.callbacks.stor_insert = Storage.handleStorInsert
 
@@ -970,7 +965,7 @@ function Storage:handleStorExtract(_, _, itemName, amount)
     end
     amount = amount - amountTransferred
   end
-  sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+  self:sendAvailableItemsDiff(self.craftInterServerAddresses)
 end
 packer.callbacks.stor_extract = Storage.handleStorExtract
 
@@ -983,7 +978,7 @@ function Storage:handleStorRecipeReserve(address, _, ticket, itemInputs)
       dlog.out("cmdRecipeReserve", "Ticket ", ticket2, " has expired")
       
       for itemName, amount in pairs(request.reserved) do
-        changeReservedItemAmount(self.reservedItems, itemName, -amount)
+        self:changeReservedItemAmount(itemName, -amount)
       end
       self.pendingCraftRequests[ticket2] = nil
     end
@@ -993,7 +988,7 @@ function Storage:handleStorRecipeReserve(address, _, ticket, itemInputs)
   -- The reserved amounts should always be positive.
   local reserveFailed = false
   for itemName, amount in pairs(itemInputs) do
-    changeReservedItemAmount(self.reservedItems, itemName, amount)
+    self:changeReservedItemAmount(itemName, amount)
     if (self.reservedItems[itemName] or 0) > (self.storageItems[itemName] and self.storageItems[itemName].total or 0) then
       reserveFailed = true
     end
@@ -1006,12 +1001,12 @@ function Storage:handleStorRecipeReserve(address, _, ticket, itemInputs)
     self.pendingCraftRequests[ticket].reserved = itemInputs
   else
     for itemName, amount in pairs(itemInputs) do
-      changeReservedItemAmount(self.reservedItems, itemName, -amount)
+      self:changeReservedItemAmount(itemName, -amount)
     end
     wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_cancel(ticket))
   end
   
-  sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+  self:sendAvailableItemsDiff(self.craftInterServerAddresses)
 end
 packer.callbacks.stor_recipe_reserve = Storage.handleStorRecipeReserve
 
@@ -1032,16 +1027,16 @@ packer.callbacks.stor_recipe_start = Storage.handleStorRecipeStart
 function Storage:handleStorRecipeCancel(_, _, ticket)
   if self.pendingCraftRequests[ticket] then
     for itemName, amount in pairs(self.pendingCraftRequests[ticket].reserved) do
-      changeReservedItemAmount(self.reservedItems, itemName, -amount)
+      self:changeReservedItemAmount(itemName, -amount)
     end
     self.pendingCraftRequests[ticket] = nil
-    sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+    self:sendAvailableItemsDiff(self.craftInterServerAddresses)
   elseif self.activeCraftRequests[ticket] then
     for itemName, amount in pairs(self.activeCraftRequests[ticket].reserved) do
-      changeReservedItemAmount(self.reservedItems, itemName, -amount)
+      self:changeReservedItemAmount(itemName, -amount)
     end
     self.activeCraftRequests[ticket] = nil
-    sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+    self:sendAvailableItemsDiff(self.craftInterServerAddresses)
   end
 end
 packer.callbacks.stor_recipe_cancel = Storage.handleStorRecipeCancel
@@ -1074,7 +1069,7 @@ function Storage:handleDroneInsert(address, _, droneInvIndex, ticket)
   local slot = 1
   while item do
     if next(item) == nil then
-      setDroneItemsSlot(self.droneItems, droneInvIndex, slot, 0)
+      self:setDroneItemsSlot(droneInvIndex, slot, 0)
     else
       local itemName = getItemFullName(item)
       
@@ -1089,10 +1084,10 @@ function Storage:handleDroneInsert(address, _, droneInvIndex, ticket)
       if ticket then
         -- Reserve the items that were added to storage.
         self.activeCraftRequests[ticket].reserved[itemName] = (self.activeCraftRequests[ticket].reserved[itemName] or 0) + amountTransferred
-        changeReservedItemAmount(self.reservedItems, itemName, amountTransferred)
+        self:changeReservedItemAmount(itemName, amountTransferred)
       end
       
-      setDroneItemsSlot(self.droneItems, droneInvIndex, slot, math.floor(item.size) - amountTransferred, math.floor(item.maxSize), itemName)
+      self:setDroneItemsSlot(droneInvIndex, slot, math.floor(item.size) - amountTransferred, math.floor(item.maxSize), itemName)
     end
     item = itemIter()
     slot = slot + 1
@@ -1107,7 +1102,7 @@ function Storage:handleDroneInsert(address, _, droneInvIndex, ticket)
   self.droneItems[droneInvIndex].dirty = nil
   droneItemsDiff[droneInvIndex] = self.droneItems[droneInvIndex]
   
-  sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+  self:sendAvailableItemsDiff(self.craftInterServerAddresses)
   wnet.send(modem, address, COMMS_PORT, packer.pack.stor_drone_item_diff("insert", result, droneItemsDiff))
 end
 packer.callbacks.stor_drone_insert = Storage.handleDroneInsert
@@ -1137,8 +1132,8 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
           local transferAmount = math.min(amount, itemDetails.size)
           local maxSize = itemDetails.maxSize
           xassert(self:routeItems("drone", supplyIndex, slot, "drone", droneInvIndex, destSlot, transferAmount) == transferAmount, "Failed to transfer items between drone inventories.")
-          setDroneItemsSlot(self.droneItems, supplyIndex, slot, itemDetails.size - transferAmount)
-          setDroneItemsSlot(self.droneItems, droneInvIndex, destSlot, (self.droneItems[droneInvIndex][destSlot] and self.droneItems[droneInvIndex][destSlot].size or 0) + transferAmount, maxSize, extractItemName)
+          self:setDroneItemsSlot(supplyIndex, slot, itemDetails.size - transferAmount)
+          self:setDroneItemsSlot(droneInvIndex, destSlot, (self.droneItems[droneInvIndex][destSlot] and self.droneItems[droneInvIndex][destSlot].size or 0) + transferAmount, maxSize, extractItemName)
           return true, transferAmount, maxSize
         end
       end
@@ -1157,9 +1152,9 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
       local slot = 1
       while item do
         if next(item) == nil then
-          setDroneItemsSlot(self.droneItems, supplyIndex, slot, 0)
+          self:setDroneItemsSlot(supplyIndex, slot, 0)
         else
-          setDroneItemsSlot(self.droneItems, supplyIndex, slot, math.floor(item.size), math.floor(item.maxSize), getItemFullName(item))
+          self:setDroneItemsSlot(supplyIndex, slot, math.floor(item.size), math.floor(item.maxSize), getItemFullName(item))
         end
         
         item = itemIter()
@@ -1203,7 +1198,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
           end
           -- Remove reservation of the items we need.
           self.activeCraftRequests[ticket].reserved[extractItemName] = self.activeCraftRequests[ticket].reserved[extractItemName] - slotAmountRemaining
-          changeReservedItemAmount(self.reservedItems, extractItemName, -slotAmountRemaining)
+          self:changeReservedItemAmount(extractItemName, -slotAmountRemaining)
         end
         
         -- Attempt to grab the items.
@@ -1211,7 +1206,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
         local maxSize = (self.storageItems[extractItemName] and self.storageItems[extractItemName].maxSize or 0)
         local success, amountTransferred = self:extractStorage("drone", droneInvIndex, slot, extractItemName, slotAmountRemaining, self.reservedItems)
         dlog.out("hDroneExtract", "extractStorage() returned ", success, ", ", amountTransferred)
-        setDroneItemsSlot(self.droneItems, droneInvIndex, slot, previousSlotTotal + amountTransferred, maxSize, extractItemName)
+        self:setDroneItemsSlot(droneInvIndex, slot, previousSlotTotal + amountTransferred, maxSize, extractItemName)
         if not success then
           dlog.out("hDroneExtract", "OH NO, what da fuq? extractStorage() failed... guess we move on to next item")  -- FIXME ########################################################################
           result = "missing"
@@ -1223,7 +1218,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
         -- Re-reserve items we didn't take out.
         if ticket then
           self.activeCraftRequests[ticket].reserved[extractItemName] = self.activeCraftRequests[ticket].reserved[extractItemName] + slotAmountRemaining - amountTransferred
-          changeReservedItemAmount(self.reservedItems, extractItemName, slotAmountRemaining - amountTransferred)
+          self:changeReservedItemAmount(extractItemName, slotAmountRemaining - amountTransferred)
         end
       end
       
@@ -1273,7 +1268,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
       droneItemsDiff[i] = inventoryDetails
     end
   end
-  sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+  self:sendAvailableItemsDiff(self.craftInterServerAddresses)
   wnet.send(modem, address, COMMS_PORT, packer.pack.stor_drone_item_diff("extract", result, droneItemsDiff))
   
 end
@@ -1284,10 +1279,10 @@ packer.callbacks.stor_drone_extract = Storage.handleDroneExtract
 function Storage:handleCraftRecipeFinished(_, _, ticket)
   xassert(self.activeCraftRequests[ticket], "Attempt to finish crafting operation for invalid ticket ", ticket, ".")
   for itemName, amount in pairs(self.activeCraftRequests[ticket].reserved) do
-    changeReservedItemAmount(self.reservedItems, itemName, -amount)
+    self:changeReservedItemAmount(itemName, -amount)
   end
   self.activeCraftRequests[ticket] = nil
-  sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+  self:sendAvailableItemsDiff(self.craftInterServerAddresses)
 end
 packer.callbacks.craft_recipe_finished = Storage.handleCraftRecipeFinished
 
@@ -1393,7 +1388,7 @@ function Storage:inputSensorThreadFunc(mainContext)
         if next(item) ~= nil then
           local success, amountTransferred = self:insertStorage("input", 1, slot)
           dlog.out("inputSensor", "insertStorage() result = ", success, " ", amountTransferred)
-          sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+          self:sendAvailableItemsDiff(self.craftInterServerAddresses)
           os.sleep(0)    -- Yield to let other threads do I/O with storage if they need to.
         end
         item = itemIter()
