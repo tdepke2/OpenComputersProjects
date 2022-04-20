@@ -487,7 +487,8 @@ end
 -- Returns a string status ("ok", "missing", "error"), two table arrays
 -- containing the sequence of recipe indices and the amount of each recipe to
 -- craft, and two more tables that match item inputs to their amounts and item
--- outputs to their amounts.
+-- outputs to their amounts. In the case of an error, only "error" and a string
+-- message are returned.
 -- Currently this algorithm is not perfect, auto-crafting has been proven to be
 -- NP-hard so there is no perfect solution that exists (see
 -- https://squiddev.github.io/ae-sat/). Recipes that are recursive (an item is

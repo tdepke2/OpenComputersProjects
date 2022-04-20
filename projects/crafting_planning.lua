@@ -25,15 +25,14 @@ crafting process:
 Interface
   User selects item and amount and sends a "craft_check_recipe" packet to crafting.
 Crafting
-  Runs the dependency graph solver. Finds status (ok, missing, error, etc), recipeIndices, recipeBatches, and requiredItems (maps item name to net amount).
-  FIXME we really should be using something like netInputs and netOutputs instead of requiredItems. ########################
+  Runs the dependency graph solver. Finds status (ok, missing, error, etc), recipeIndices, recipeBatches, itemInputs, and itemOutputs.
   Remove dead tickets and create new ticket for this operation.
   Compute the craftProgress (one-time table sent to interface as confirmation).
   FIXME name craftProgress should change to craftRequirements, use craftProgress for persistent data saved in request that we send to interfaces on diff. ############################
-  If we good, send "craft_recipe_confirm" with ticket and craftProgress to interface, and send "stor_recipe_reserve" with ticket and requiredItems.
+  If we good, send "craft_recipe_confirm" with ticket and craftProgress to interface, and send "stor_recipe_reserve" with ticket and itemInputs.
   If we not good, send "craft_recipe_confirm" with "missing" ticket if missing items, or send "craft_recipe_error" with error message if failed.
 Storage
-  Does some fucking magic to reserve the items from requiredItems. This should probably be changed to only reserve the inputs.
+  Does some fucking magic to reserve the items from itemInputs.
 Interface
   Display results of craftProgress to user. If submitted before request times out, send "craft_recipe_start" with ticket to crafting.
 Crafting

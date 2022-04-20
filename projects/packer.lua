@@ -131,13 +131,13 @@ function packer.unpack.stor_extract(data)
 end
 
 -- Request storage to reserve items in network for crafting operation.
-function packer.pack.stor_recipe_reserve(ticket, requiredItems)
-  return "stor_recipe_reserve," .. ticket .. ";" .. serialization.serialize(requiredItems)
+function packer.pack.stor_recipe_reserve(ticket, itemInputs)
+  return "stor_recipe_reserve," .. ticket .. ";" .. serialization.serialize(itemInputs)
 end
 function packer.unpack.stor_recipe_reserve(data)
   local ticket = string.match(data, "[^;]*")
-  local requiredItems = serialization.unserialize(string.sub(data, #ticket + 2))
-  return ticket, requiredItems
+  local itemInputs = serialization.unserialize(string.sub(data, #ticket + 2))
+  return ticket, itemInputs
 end
 
 -- Request storage to start crafting operation.
@@ -310,6 +310,14 @@ function packer.unpack.craft_recipe_error(data)
   local ticket = string.match(data, "[^;]*")
   local errMessage = string.sub(data, #ticket + 2)
   return ticket, errMessage
+end
+
+-- Crafting is reporting completion of a running crafting operation.
+function packer.pack.craft_recipe_finished(ticket)
+  return "craft_recipe_finished," .. ticket
+end
+function packer.unpack.craft_recipe_finished(data)
+  return data
 end
 
 

@@ -1243,6 +1243,7 @@ function Interface:setupThreadFunc(mainContext)
   dlog.out("main", "Setup thread starts.")
   modem.open(COMMS_PORT)
   screen.setPrecise(false)
+  dlog.setStdOut(false)    -- FIXME
   
   -- Contact the storage server.
   local attemptNumber = 1

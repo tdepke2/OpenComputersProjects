@@ -357,8 +357,12 @@ pendingCraftRequests: {
       2: <batchSize>
       ...
     }
-    requiredItems: {    -- All items used in recipes and the total amount required. Negative values mean a net amount of the item is generated.
-      <item name>: <amount>    -- FIXME is above really true? see note in solveDependencyGraph() about this. may want to update some other places (like storedItems) that assume requiredItems does NOT have all used items. #############################################
+    itemInputs: {    -- Item types and total amount required for the request.
+      <item name>: <amount>
+      ...
+    }
+    itemOutputs: {    -- Item types and total amount generated. Reusable items can show up here and in itemInputs.
+      <item name>: <amount>
       ...
     }
   }
@@ -370,9 +374,9 @@ activeCraftRequests: {
     <all of the same stuff from pendingCraftRequests>
     
     startTime: <time>
-    storedItems: {    -- Initialized with requiredItems and all items used in recipe.
+    storedItems: {    -- Initialized with all items used in recipe.
       <item name>: {
-        total: <total count>
+        total: <total count>    -- The net amount stored, negative if we expect to generate this item.
         lastTime: <time>    -- Last time the item was crafted.
         dependents: {    -- All recipes in the request that require this item as an input.
           1: <index of recipeIndices>
@@ -564,9 +568,6 @@ function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
     dlog.out("craftCheckRecipe", "itemInputs/itemOutputs:", itemInputs, itemOutputs)
   end
   
-  status = "error"    -- FIXME ################################
-  recipeIndices = "cum in my tight bussy"
-  
   -- Check for expired tickets and remove them.
   for ticket, request in pairs(self.pendingCraftRequests) do
     if computer.uptime() > request.creationTime + 10 then
@@ -585,11 +586,13 @@ function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
       end
     end
     dlog.out("craftCheckRecipe", "Creating ticket ", ticket)
-    self.pendingCraftRequests[ticket] = {}
-    self.pendingCraftRequests[ticket].creationTime = computer.uptime()
-    self.pendingCraftRequests[ticket].recipeIndices = recipeIndices
-    self.pendingCraftRequests[ticket].recipeBatches = recipeBatches
-    self.pendingCraftRequests[ticket].requiredItems = requiredItems
+    self.pendingCraftRequests[ticket] = {
+      creationTime = computer.uptime(),
+      recipeIndices = recipeIndices,
+      recipeBatches = recipeBatches,
+      itemInputs = itemInputs,
+      itemOutputs = itemOutputs
+    }
   end
   
   -- Compute the craftProgress table if possible and send to interface/crafting servers. Otherwise we report the error.
@@ -624,7 +627,7 @@ function Crafting:handleCraftCheckRecipe(address, _, itemName, amount)
       -- Confirm we will not have problems with a crafting recipe that needs robots when we have none (same for drones).
       if (not requiresRobots or self.workers.totalRobots > 0) and (not requiresDrones or self.workers.totalDrones > 0) then
         wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_confirm(ticket, craftProgress))
-        wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_reserve(ticket, requiredItems))
+        wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.stor_recipe_reserve(ticket, itemInputs))
       else
         local errorMessage = "Recipe requires "
         if requiresRobots then
@@ -667,10 +670,11 @@ function Crafting:handleCraftRecipeStart(_, _, ticket)
   -- as an input.
   local function initializeStoredItem(storedItems, itemName, dependentIndex)
     if not storedItems[itemName] then
-      storedItems[itemName] = {}
-      storedItems[itemName].total = 0
-      storedItems[itemName].lastTime = computer.uptime()
-      storedItems[itemName].dependents = {}
+      storedItems[itemName] = {
+        total = 0,
+        lastTime = computer.uptime(),
+        dependents = {}
+      }
     end
     storedItems[itemName].dependents[#storedItems[itemName].dependents + 1] = dependentIndex
   end
@@ -691,15 +695,21 @@ function Crafting:handleCraftRecipeStart(_, _, ticket)
     for output, amount in pairs(self.recipes[recipeIndex].out) do
       initializeStoredItem(self.activeCraftRequests[ticket].storedItems, output, nil)
     end
-    self.activeCraftRequests[ticket].recipeStatus[i] = {}
-    self.activeCraftRequests[ticket].recipeStatus[i].dirty = true
-    self.activeCraftRequests[ticket].recipeStatus[i].available = 0
-    self.activeCraftRequests[ticket].recipeStatus[i].maxLastTime = 0
+    self.activeCraftRequests[ticket].recipeStatus[i] = {
+      dirty = true,
+      available = 0,
+      maxLastTime = 0
+    }
   end
   
-  -- Update the totals for storedItems from the requiredItems (these have been reserved already in storage).
-  for itemName, amount in pairs(self.activeCraftRequests[ticket].requiredItems) do
-    self.activeCraftRequests[ticket].storedItems[itemName].total = amount
+  -- Update the totals for storedItems with (itemInputs - itemOutputs). These have been reserved already in storage.
+  for itemName, amount in pairs(self.activeCraftRequests[ticket].itemInputs) do
+    local storedItem = self.activeCraftRequests[ticket].storedItems[itemName]
+    storedItem.total = storedItem.total + amount
+  end
+  for itemName, amount in pairs(self.activeCraftRequests[ticket].itemOutputs) do
+    local storedItem = self.activeCraftRequests[ticket].storedItems[itemName]
+    storedItem.total = storedItem.total - amount
   end
   
   dlog.out("d", "end of craft_recipe_start, storedItems is:", self.activeCraftRequests[ticket].storedItems)
@@ -820,23 +830,6 @@ function Crafting:setupThreadFunc(mainContext)
     end
   end
   io.write("\nSuccess.\n")
-  
-  --local status, recipeIndices, recipeBatches, requiredItems = craft_solver.solveDependencyGraph(self.recipes, self.storageItems, "minecraft:torch/0", 16)
-  
-  --self.storageItems["stuff:impossible/0"] = {}
-  --self.storageItems["stuff:impossible/0"].maxSize = 64
-  --self.storageItems["stuff:impossible/0"].label = "impossible"
-  --self.storageItems["stuff:impossible/0"].total = 1
-  --local status, recipeIndices, recipeBatches, requiredItems = craft_solver.solveDependencyGraph(self.recipes, self.storageItems, "stuff:nou/0", 100)
-  
-  --dlog.out("info", "status = ", status)
-  --if status == "ok" or status == "missing" then
-    --dlog.out("info", "recipeIndices/recipeBatches:")
-    --for i = 1, #recipeIndices do
-      --dlog.out("info", recipeIndices[i], " (", next(self.recipes[recipeIndices[i]].out), ") -> ", recipeBatches[i])
-    --end
-    --dlog.out("info", "requiredItems:", requiredItems)
-  --end
   
   -- Report system started to other listening devices (so they can re-discover the crafting server).
   wnet.send(modem, nil, COMMS_PORT, packer.pack.craft_started())
@@ -1236,7 +1229,8 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
         xassert(inv.ticket ~= ticket, "Ticket ", ticket, " has finished but drone inventory ", i, " still bound to ticket.")
       end
       
-      -- FIXME signal that request completed and ticket can be removed. ######################################
+      wnet.send(modem, self.storageServerAddress, COMMS_PORT, packer.pack.craft_recipe_finished(ticket))
+      --sendToAddresses(self.interfaceServerAddresses, packer.pack.craft_recipe_finished(ticket))
       
       dlog.out("updateCraftRequest", "Removing completed request ", ticket)
       self.activeCraftRequests[ticket] = nil

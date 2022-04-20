@@ -976,7 +976,7 @@ packer.callbacks.stor_extract = Storage.handleStorExtract
 
 
 -- Reserve items for crafting operation.
-function Storage:handleStorRecipeReserve(address, _, ticket, requiredItems)
+function Storage:handleStorRecipeReserve(address, _, ticket, itemInputs)
   -- Check for expired tickets and remove them.
   for ticket2, request in pairs(self.pendingCraftRequests) do
     if computer.uptime() > request.creationTime + 10 then
@@ -989,10 +989,10 @@ function Storage:handleStorRecipeReserve(address, _, ticket, requiredItems)
     end
   end
   
-  -- Add all required items for crafting directly to the reserved list.
-  -- This includes the negative ones (recipe outputs), a negative reservation means the item can be reserved later once inserted into network but will show up anyways.
+  -- Add all input items for crafting directly to the reserved list.
+  -- The reserved amounts should always be positive.
   local reserveFailed = false
-  for itemName, amount in pairs(requiredItems) do
+  for itemName, amount in pairs(itemInputs) do
     changeReservedItemAmount(self.reservedItems, itemName, amount)
     if (self.reservedItems[itemName] or 0) > (self.storageItems[itemName] and self.storageItems[itemName].total or 0) then
       reserveFailed = true
@@ -1003,9 +1003,9 @@ function Storage:handleStorRecipeReserve(address, _, ticket, requiredItems)
   if not reserveFailed then
     self.pendingCraftRequests[ticket] = {}
     self.pendingCraftRequests[ticket].creationTime = computer.uptime()
-    self.pendingCraftRequests[ticket].reserved = requiredItems
+    self.pendingCraftRequests[ticket].reserved = itemInputs
   else
-    for itemName, amount in pairs(requiredItems) do
+    for itemName, amount in pairs(itemInputs) do
       changeReservedItemAmount(self.reservedItems, itemName, -amount)
     end
     wnet.send(modem, address, COMMS_PORT, packer.pack.craft_recipe_cancel(ticket))
@@ -1213,7 +1213,7 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
         dlog.out("hDroneExtract", "extractStorage() returned ", success, ", ", amountTransferred)
         setDroneItemsSlot(self.droneItems, droneInvIndex, slot, previousSlotTotal + amountTransferred, maxSize, extractItemName)
         if not success then
-          dlog.out("hDroneExtract", "OH NO, what da fuq? extractStorage() failed... guess we move on to next item")  -- ########################################################################
+          dlog.out("hDroneExtract", "OH NO, what da fuq? extractStorage() failed... guess we move on to next item")  -- FIXME ########################################################################
           result = "missing"
           extractItemAmount = 0
         else
@@ -1278,6 +1278,18 @@ function Storage:handleDroneExtract(address, _, droneInvIndex, ticket, extractLi
   
 end
 packer.callbacks.stor_drone_extract = Storage.handleDroneExtract
+
+
+-- Finish a crafting operation. We need to clear out any items left in the reserved list.
+function Storage:handleCraftRecipeFinished(_, _, ticket)
+  xassert(self.activeCraftRequests[ticket], "Attempt to finish crafting operation for invalid ticket ", ticket, ".")
+  for itemName, amount in pairs(self.activeCraftRequests[ticket].reserved) do
+    changeReservedItemAmount(self.reservedItems, itemName, -amount)
+  end
+  self.activeCraftRequests[ticket] = nil
+  sendAvailableItemsDiff(self.craftInterServerAddresses, self.storageItems, self.reservedItems)
+end
+packer.callbacks.craft_recipe_finished = Storage.handleCraftRecipeFinished
 
 
 -- Performs setup and initialization tasks.
