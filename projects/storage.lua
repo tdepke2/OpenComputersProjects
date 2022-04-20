@@ -846,11 +846,11 @@ end
 function Storage:sendAvailableItems(addresses)
   local items = {}
   for itemName, itemDetails in pairs(self.storageItems) do
-    if itemName ~= "data" and itemDetails.total > (self.reservedItems[itemName] or 0) then
+    if itemName ~= "data" and itemDetails.total > self.reservedItems[itemName] then
       items[itemName] = {}
       items[itemName].maxSize = itemDetails.maxSize
       items[itemName].label = itemDetails.label
-      items[itemName].total = itemDetails.total - math.max(self.reservedItems[itemName] or 0, 0)
+      items[itemName].total = itemDetails.total - math.max(self.reservedItems[itemName], 0)
     end
   end
   sendToAddresses(addresses, packer.pack.stor_item_list(items))
@@ -876,8 +876,8 @@ function Storage:sendAvailableItemsDiff(addresses)
     -- Find previous and current amount available.
     -- We clamp to non-negative values to discard negative reserved amounts and account for reservations greater than what is stored.
     local currentTotal = (self.storageItems[itemName] and self.storageItems[itemName].total or 0)
-    local previousAvailable = math.max((self.storageItems.data.changes[itemName] or currentTotal) - math.max(self.reservedItems.data.changes[itemName] or self.reservedItems[itemName] or 0, 0), 0)
-    local currentAvailable = math.max(currentTotal - math.max(self.reservedItems[itemName] or 0, 0), 0)
+    local previousAvailable = math.max((self.storageItems.data.changes[itemName] or currentTotal) - math.max(self.reservedItems.data.changes[itemName] or self.reservedItems[itemName], 0), 0)
+    local currentAvailable = math.max(currentTotal - math.max(self.reservedItems[itemName], 0), 0)
     
     if currentAvailable ~= 0 then
       if previousAvailable ~= currentAvailable then
@@ -902,7 +902,7 @@ end
 -- Change the amount for a reserved item by adding deltaAmount. Adds a new entry
 -- to changes to keep track of previous amount.
 function Storage:changeReservedItemAmount(itemName, deltaAmount)
-  local amount = (self.reservedItems[itemName] or 0)
+  local amount = self.reservedItems[itemName]
   if not self.reservedItems.data.changes[itemName] then
     self.reservedItems.data.changes[itemName] = amount
   end
@@ -989,7 +989,7 @@ function Storage:handleStorRecipeReserve(address, _, ticket, itemInputs)
   local reserveFailed = false
   for itemName, amount in pairs(itemInputs) do
     self:changeReservedItemAmount(itemName, amount)
-    if (self.reservedItems[itemName] or 0) > (self.storageItems[itemName] and self.storageItems[itemName].total or 0) then
+    if self.reservedItems[itemName] > (self.storageItems[itemName] and self.storageItems[itemName].total or 0) then
       reserveFailed = true
     end
   end
@@ -1333,7 +1333,7 @@ function Storage:setupThreadFunc(mainContext)
   self.storageItems.data.changes = {}    -- Add changes table now to track changes in item totals.
   
   -- Reserved items start empty, these are items that will appear invisible in storage system. Crafting jobs use this to hide away intermediate crafting ingredients.
-  self.reservedItems = {}
+  self.reservedItems = setmetatable({}, {__index = function() return 0 end})
   self.reservedItems.data = {}
   self.reservedItems.data.changes = {}
   
@@ -1618,6 +1618,17 @@ storageItems = {
     firstEmptyIndex = <storage index>    -- First empty slot of highest-priority storage container.
     firstEmptySlot = <slot number>
     changes: {    -- This table is left nonexistent until we need it (after first storage scan).
+      <item full name>: <previous total>    -- List of changes made to items that will need to be communicated over network.
+      ...
+    }
+  }
+}
+
+reservedItems = {
+  <item full name>: <total>    -- Total amount of the item in storage that is reserved. The total counts all active/pending craft requests.
+  ...
+  data: {
+    changes: {
       <item full name>: <previous total>    -- List of changes made to items that will need to be communicated over network.
       ...
     }
