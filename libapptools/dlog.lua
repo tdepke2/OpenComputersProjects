@@ -29,6 +29,10 @@ dlog.defineGlobalXassert = true
 -- In some cases it is helpful to disable to avoid getting multiple stack traces
 -- in an error message.
 dlog.verboseErrorTraceback = true
+-- Sets a maximum string length on the output from dlog.out(). A message that
+-- exceeds this size will be trimmed to fit. Set this value to nil for unlimited
+-- size messages.
+dlog.maxMessageLength = 100
 
 -- Private data members, no touchy:
 dlog.fileOutput = nil
@@ -98,14 +102,14 @@ end
 -- Example: dlog.checkArgs(my_first_arg, "number", my_second_arg, "table,nil")
 local checkArgsHelper
 function dlog.checkArgs(val, typ, ...)
-  if not string.find(typ, type(val), 1, true) then
+  if not string.find(typ, type(val), 1, true) and typ ~= "any" then
     dlog.verboseError("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 3)
   end
   return checkArgsHelper(3, ...)
 end
 checkArgsHelper = function(i, val, typ, ...)
   if typ then
-    if not string.find(typ, type(val), 1, true) then
+    if not string.find(typ, type(val), 1, true) and typ ~= "any" then
       dlog.verboseError("bad argument at index #" .. i .. " (" .. typ .. " expected, got " .. type(val) .. ")", 3)
     end
     return checkArgsHelper(i + 2, ...)
@@ -294,12 +298,15 @@ function dlog.out(subsystem, ...)
         arg[i] = tostring(arg[i])
       end
     end
-    local str = table.concat(arg)
+    local message = "dlog:" .. subsystem .. " " .. table.concat(arg)
+    if dlog.maxMessageLength and #message > dlog.maxMessageLength then
+      message = string.sub(message, 1, dlog.maxMessageLength - 3) .. "..."
+    end
     if dlog.fileOutput then
-      dlog.fileOutput:write(os.date(), " dlog:", subsystem, " ", str, "\n")
+      dlog.fileOutput:write(os.date(), " ", message, "\n")
     end
     if dlog.stdOutput then
-      io.write("dlog:", subsystem, " ", str, "\n")
+      io.write(message, "\n")
     end
   end
 end
