@@ -90,38 +90,54 @@ modem.open(COMMS_PORT)
 
 print("Ready! Listening on port " .. COMMS_PORT .. ".")
 
-while true do
+local function sendError(address, errType, libName, err)
+  print("Error in file " .. libName .. ": " .. err)
+  wnet.send(modem, address, COMMS_PORT, "robot_error{\"" .. errType .. "\",\"In file " .. libName .. ": " .. string.format("%q", err):gsub("\\\n","\\n") .. "\",n=2}")
+end
+
+local function mainLoop()
   local ev = {computer.pullSignal()}
-  local address, port, data = wnet.receive(ev)
-  
-  if port == COMMS_PORT then
-    local header = string.match(data, "[^,]*")
-    data = string.sub(data, #header + 2)
-    
-    if header == "robot_upload" then
-      local libName = string.match(data, "[^,]*")
-      local fn, ret = load(string.sub(data, #libName + 2))
-      if fn then
-        if libName == "" then
-          print("Running...")
-          wnet.send(modem, address, COMMS_PORT, "robot_started,")
-        else
-          print("Loading lib " .. libName .. ".")
-        end
-        local status, ret = pcall(fn)
-        if status then
-          libs[libName] = ret
-        else
-          print("Error in file " .. libName .. ": " .. ret)
-          wnet.send(modem, address, COMMS_PORT, "robot_error,runtime,In file " .. libName .. ": " .. ret)
-        end
-      else
-        print("Error in file " .. libName .. ": " .. ret)
-        wnet.send(modem, address, COMMS_PORT, "robot_error,compile,In file " .. libName .. ": " .. ret)
-      end
-      if libName == "" then
-        print("Done.")
-      end
-    end
+  local address, port, message = wnet.receive(ev)
+  local header = string.match(message or "", "[^{]*")
+  if port ~= COMMS_PORT or header ~= "robot_upload" then
+    return
   end
+  
+  local fn, ret, status
+  fn, ret = load("return " .. string.sub(message, #header + 1), "=data", nil, {math={huge=math.huge}})
+  if not fn then
+    sendError(address, "deserialize", "", ret)
+    return
+  end
+  status, ret = pcall(fn)
+  if not status then
+    sendError(address, "deserialize", "", ret)
+    return
+  end
+  
+  local libName = ret[1]
+  fn, ret = load(ret[2])
+  if not fn then
+    sendError(address, "compile", libName, ret)
+    return
+  end
+  if libName == "" then
+    print("Running...")
+    wnet.send(modem, address, COMMS_PORT, "robot_started{n=0}")
+  else
+    print("Loading lib " .. libName .. ".")
+  end
+  status, ret = pcall(fn)
+  if not status then
+    sendError(address, "runtime", libName, ret)
+    return
+  end
+  libs[libName] = ret
+  if libName == "" then
+    print("Done.")
+  end
+end
+
+while true do
+  mainLoop()
 end

@@ -64,7 +64,7 @@ function wnet.send(modem, address, port, message)
 end
 
 
--- wnet.receive([timeout: number]): string, number, string
+-- wnet.receive([timeout: number]): string|nil, number|nil, string|nil
 -- 
 -- Get a message sent over the network (waits until one arrives). If the timeout
 -- is specified, this function only waits for that many seconds before
@@ -140,26 +140,26 @@ end
 
 
 -- wnet.waitReceive(targetAddress: string|nil, targetPort: number|nil,
---   header: string|nil, timeout: number): string, number, string, string
+--   targetStr: string|nil, timeout: number): string|nil, number|nil,
+--   string|nil, string|nil
 -- 
 -- Similar to wnet.receive(), but blocks until a message that meets the criteria
 -- is found or timeout is reached. Any of the targetAddress, targetPort, or
--- header arguments can be nil to ignore matching of this type. Returns nil if
--- timeout reached, or address, port, header, and data if received (the returned
--- data value has the header stripped off).
-function wnet.waitReceive(targetAddress, targetPort, header, timeout)
-  dlog.checkArgs(targetAddress, "string,nil", targetPort, "number,nil", header, "string,nil", timeout, "number")
+-- targetStr arguments can be nil to ignore matching of this type. Returns nil
+-- if timeout reached, or address, port, matchedString, and message if received.
+function wnet.waitReceive(targetAddress, targetPort, targetStr, timeout)
+  dlog.checkArgs(targetAddress, "string,nil", targetPort, "number,nil", targetStr, "string,nil", timeout, "number")
   local stopTime = computer.uptime() + timeout
   repeat
     dlog.out("wnet:d", "Waiting for next packet to match.")
     local address, port, message = wnet.receive(math.min(timeout, 1))
     if address and (not targetAddress or address == targetAddress) and (not targetPort or port == targetPort) then
-      local foundHeader = ""
-      if header then
-        foundHeader = string.match(message, "^" .. header)
+      local matchedString = ""
+      if targetStr then
+        matchedString = string.match(message, targetStr)
       end
-      if foundHeader then
-        return address, port, foundHeader, string.sub(message, #foundHeader + 1)
+      if matchedString then
+        return address, port, matchedString, message
       end
     end
   until computer.uptime() >= stopTime

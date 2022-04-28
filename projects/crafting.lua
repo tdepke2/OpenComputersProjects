@@ -823,9 +823,9 @@ function Crafting:setupThreadFunc(mainContext)
       wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_discover())
       attemptNumber = attemptNumber + 1
     end
-    local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
+    local address, port, header, message = packer.extractHeader(wnet.receive(0.1))
     if port == COMMS_PORT and header == "stor_item_list" then
-      self.storageItems = packer.unpack.stor_item_list(data)
+      self.storageItems = packer.unpack.stor_item_list(message)
       self.storageServerAddress = address
     end
   end
@@ -851,7 +851,7 @@ function Crafting:setupThreadFunc(mainContext)
   self.workers.totalRobots = 0
   self.workers.robots = {}
   while true do
-    local address, port, _, data = wnet.waitReceive(nil, COMMS_PORT, "robot_started,", 2)
+    local address, port, _, message = wnet.waitReceive(nil, COMMS_PORT, "^robot_started{", 2)
     if address then
       self.workers.totalRobots = self.workers.totalRobots + (self.workers.robots[address] and 0 or 1)
       self.workers.robots[address] = "free"

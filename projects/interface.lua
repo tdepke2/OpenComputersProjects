@@ -1257,9 +1257,9 @@ function Interface:setupThreadFunc(mainContext)
       wnet.send(modem, nil, COMMS_PORT, packer.pack.stor_discover())
       attemptNumber = attemptNumber + 1
     end
-    local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
+    local address, port, header, message = packer.extractHeader(wnet.receive(0.1))
     if port == COMMS_PORT and header == "stor_item_list" then
-      self.storageItems = packer.unpack.stor_item_list(data)
+      self.storageItems = packer.unpack.stor_item_list(message)
       self.storageServerAddress = address
     end
   end
@@ -1277,9 +1277,9 @@ function Interface:setupThreadFunc(mainContext)
       wnet.send(modem, nil, COMMS_PORT, packer.pack.craft_discover())
       attemptNumber = attemptNumber + 1
     end
-    local address, port, header, data = packer.extractPacket(wnet.receive(0.1))
+    local address, port, header, message = packer.extractHeader(wnet.receive(0.1))
     if port == COMMS_PORT and header == "craft_recipe_list" then
-      self.recipeItems = packer.unpack.craft_recipe_list(data)
+      self.recipeItems = packer.unpack.craft_recipe_list(message)
       self.craftingServerAddress = address
     end
   end
