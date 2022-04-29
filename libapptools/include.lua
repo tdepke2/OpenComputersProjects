@@ -9,13 +9,14 @@ loaded should use include() instead of require() for this to work properly
 not necessary and may not always work. Take a look at the package.loaded
 warnings here: https://ocdoc.cil.li/api:non-standard-lua-libs
 
+In order for include() to work properly, a module must meet these requirements:
+  1. It must return a table.
+  2. The module must not make any reference back to itself.
+
 Also "included" here is a source tree dependency solver. It's useful for
 uploading code to a device via network or other medium. This allows the user to
 send software with multiple dependencies to robots/drones/microcontrollers that
 only have a small EEPROM storage.
-
-Right now this has been only tested with individual modules, but should work
-with a complete library too if include is used properly.
 
 Example usage:
 -- OS libraries (just use require() for these).
@@ -40,7 +41,48 @@ setmetatable(include, {
   end
 })
 
+-- Tracks file modified timestamps for each module that is loaded.
 include.loaded = {}
+
+
+-- Performs a move (copy) operation from table src into table dest, this allows
+-- changing the memory address of the original table. If the dest table has a
+-- metatable with the __metatable field defined, an error is raised. If the src
+-- table has a reference back to itself, and error is raised as this would imply
+-- that the reference was not fully moved.
+local function moveTableReference(src, dest)
+  -- Clear contents of dest.
+  setmetatable(dest, nil)
+  for k, _ in next, dest do
+    dest[k] = nil
+  end
+  assert(next(dest) == nil and getmetatable(dest) == nil)
+  
+  -- Shallow copy contents over.
+  for k, v in next, src do
+    dest[k] = v
+  end
+  setmetatable(dest, getmetatable(src))
+  
+  -- Verify no cyclic references back to src (not perfect, does not check metatables).
+  local searched = {}
+  local function recursiveSearch(t)
+    if searched[t] then
+      return
+    end
+    searched[t] = true
+    assert(not rawequal(t, src), "Found a reference back to source table, this is not allowed when using include() to load a module.")
+    for k, v in next, t do
+      if type(k) == "table" then
+        recursiveSearch(k)
+      end
+      if type(v) == "table" then
+        recursiveSearch(v)
+      end
+    end
+  end
+  recursiveSearch(dest)
+end
 
 
 -- include.load(libraryName: string): table
@@ -61,14 +103,34 @@ function include.load(libraryName)
   
   -- Attempt to reload library if it doesn't appear in package, we don't know the modification time, or modification time changed.
   if not package.loaded[libraryName] or (include.loaded[libraryName] or -1) ~= modifiedTime then
-    --print("Reloading library " .. libraryName)
+    if libraryName == "dlog" then
+      io.write("Include is reloading lib dlog, was found in package = " .. tostring(package.loaded[libraryName]) .. "\n")
+    end
+    
+    print("Reloading library " .. libraryName)
+    local oldModule = package.loaded[libraryName]
     package.loaded[libraryName] = nil
     lib = require(libraryName)
     include.loaded[libraryName] = modifiedTime
+    
+    -- If this is not the first time the module loaded, we need to purge the newly created one and swap the contents into the previous module.
+    if oldModule then
+      moveTableReference(lib, oldModule)
+      package.loaded[libraryName] = oldModule
+    end
   else
-    --print("Keeping library " .. libraryName)
+    if libraryName == "dlog" then
+      io.write("Include found lib dlog already\n")
+    end
+    
+    print("Keeping library " .. libraryName)
     lib = package.loaded[libraryName]
   end
+  
+  if libraryName == "dlog" then
+    io.write("dlog lib = " .. tostring(lib) .. "\n")
+  end
+  
   return lib
 end
 

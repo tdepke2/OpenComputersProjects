@@ -16,6 +16,8 @@ TODO
 * May want to adjust checkRecipe() in crafting to send tickets with fake status ("missing" for missing materials).
     * This allows user to queue up an item that can't currently be crafted in order to purge expired pending requests.
     * Implies that stor_recipe_reserve just needs to handle special case "missing", and crafting sends this on missing items (I think).
+* The packer lib could be improved by using a memoize function for string deserialization. See https://www.lua.org/pil/17.1.html for ideas.
+    * May want to disable this feature for low memory systems.
 
 DONE
 * Using os.sleep() may be evil, same thing for event.pull() with filter.
