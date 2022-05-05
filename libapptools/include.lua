@@ -2,16 +2,26 @@
 Module loader (improved version of require() function).
 
 Extends the functionality of require() to solve an issue with modules getting
-cached and not reloading. The include() function will reload a module if it
-detects that the file has been modified. Any user modules that need to be loaded
-should use include() instead of require() for this to work properly (except for
-the include module itself). Using include() for system libraries is not
-necessary and may not always work. Take a look at the package.loaded warnings
-here: https://ocdoc.cil.li/api:non-standard-lua-libs
+cached and not reloading. The include() function will reload a module (and all
+modules that depend on it) if it detects that the file has been modified. Any
+user modules that need to be loaded should use include() instead of require()
+for this to work properly (except for the include module itself). Using
+include() for system libraries is not necessary and may not always work. Take a
+look at the package.loaded warnings here:
+https://ocdoc.cil.li/api:non-standard-lua-libs
 
 In order for include() to work properly, a module must meet these requirements:
-  1. It must return a table.
-  2. The module must not make any reference back to itself.
+  1. It must return no more than one value.
+  2. Any dependencies that the module needs should also use include(), and
+     loading should not be intentionally delayed. Using a lazy-loading system
+     can cause incorrect results during dependency calculation.
+
+Note that the tracking of dependencies and reloading parent modules is done in
+order to avoid stale references. If a module is simply removed from the cache
+and loaded again, other bits of code that use it could still reference the old
+version of the module. It's possible to swap the new module contents into the
+old location in memory with a bit of magic, but this also adds more restrictions
+on the modules that can be loaded.
 
 Also "included" here is a source tree dependency solver. It's useful for
 uploading code to a device via network or other medium. This allows the user to
@@ -41,8 +51,15 @@ setmetatable(include, {
   end
 })
 
--- Tracks file modified timestamps for each module that is loaded.
+-- Private data members:
+-- Tracks loaded modules, each entry is a null-character separated list. Format is: requiresReload, modulePath, modifiedTime, and dependencies.
 include.loaded = {}
+-- Current depth in the dependency traversal. Starts at 1 for a top-level module and increments for each level down.
+include.moduleDepth = 0
+-- Table of unique dependencies for each level of include.moduleDepth. Each entry is a null-character separated list.
+include.moduleDependencies = nil
+-- Table of unique modules that have been checked for a file change since the last top-level module.
+include.scannedModules = nil
 
 
 -- Performs a move (copy) operation from table src into table dest, this allows
@@ -85,50 +102,160 @@ local function moveTableReference(src, dest)
 end
 
 
+--[[
+  app
+   |-------------,---------,---------,
+  packer        wnet     vector     dlog
+   |-----,       |        |
+  dlog  wnet    dlog     dlog
+--]]
+
+
+--[[
+Dependency tree:
+
+  app
+  |-- first
+  |   |-- x
+  |   '-- y
+  |-- second
+  |-- third
+  |   |-- x
+  |   '-- first
+  |       |-- x
+  |       '-- y
+  |-- fourth
+  |   |-- first
+  |   |   |-- x
+  |   |   '-- y
+  |   '-- x
+  |-- first
+  |   |-- x
+  |   '-- y
+  '-- fifth
+      |-- fourth
+      |   |-- first
+      |   |   |-- x
+      |   |   '-- y
+      |   '-- x
+      |-- second
+      '-- third
+          |-- x
+          '-- first
+              |-- x
+              '-- y
+--]]
+
+-- Recursively searches the moduleName and all dependencies for files that
+-- changed. Any that changed are unloaded and the same goes for their parents
+-- that are descendants of moduleName (other parents are just marked as needing
+-- to reload). Modules that have already been checked since the last top-level
+-- call to include.load are ignored.
+local function unloadChangedModules(moduleName)
+  print("unloadChangedModules for \"" .. moduleName .. "\"")
+  if not include.loaded[moduleName] or include.scannedModules[moduleName] then
+    print("Module notLoaded = " .. tostring(not include.loaded[moduleName]) .. ", scanned = " .. tostring(include.scannedModules[moduleName]))
+    return
+  end
+  include.scannedModules[moduleName] = true
+  
+  -- Step through each field in include.loaded for this module. Check if the module needs to reload, then do recursive calls for children.
+  local modulePath
+  local i = 1
+  for x in string.gmatch(include.loaded[moduleName], "[^\0]+") do
+    if i == 1 then
+    elseif i == 2 then
+      modulePath = x
+    elseif i == 3 then
+      if tostring(filesystem.lastModified(modulePath)) ~= x then
+        include.unload(moduleName)
+      end
+    else
+      unloadChangedModules(x)
+    end
+    i = i + 1
+  end
+  
+  -- After recursion finished, a child may have marked parent as requiring a reload.
+  if include.loaded[moduleName] and string.sub(include.loaded[moduleName], 1, 1) == "1" then
+    print("The parent \"" .. moduleName .. "\" still needs to unload")
+    include.unload(moduleName)
+  end
+end
+
+
 -- include.load(moduleName: string): table
 -- 
 -- Loads a module just like require() does. The difference is that the module
--- will be removed from the internal cache and loaded again if the file modified
--- time changes. This helps resolve the annoying problem where a change is made
--- in a module, the module is included with require() in a source file, and the
--- changes made do not show up during testing (because the module has been
--- cached). Normally you would have to either reboot the machine to force the
--- module to reload, or remove the entry in package.loaded manually. The
--- include.load() function fixes this problem.
+-- will be removed from the internal cache and loaded again if the file
+-- modification timestamp changes. This helps resolve the annoying problem where
+-- a change is made in a module, the module is included with require() in a
+-- source file, and the changes made do not show up during testing (because the
+-- module has been cached). Normally you would have to either reboot the machine
+-- to force the module to reload, or remove the entry in package.loaded
+-- manually. The include.load() function fixes this problem.
 function include.load(moduleName)
-  local modulePath = package.searchpath(moduleName, package.path)
-  assert(modulePath and filesystem.exists(modulePath), "Cannot find module \"" .. moduleName .. "\" in search path.")
-  local modifiedTime = filesystem.lastModified(modulePath)
-  local mod
+  local atTopLevel = (include.moduleDepth == 0)
+  if atTopLevel then
+    include.moduleDependencies = {}
+    include.scannedModules = {}
+  end
+  unloadChangedModules(moduleName)
   
-  -- Attempt to reload module if it doesn't appear in package, we don't know the modification time, or modification time changed.
-  if not package.loaded[moduleName] or (include.loaded[moduleName] or -1) ~= modifiedTime then
-    if moduleName == "dlog" then
-      io.write("Include is reloading mod dlog, was found in package = " .. tostring(package.loaded[moduleName]) .. "\n")
+  -- Find file path to the module using a cached value or by using package.searchpath().
+  local modulePath
+  if include.loaded[moduleName] then
+    modulePath = string.match(include.loaded[moduleName], ".\0([^\0]+)")
+    print("Found cached path \"" .. modulePath .. "\"")
+  end
+  if not modulePath or not filesystem.exists(modulePath) then
+    modulePath = package.searchpath(moduleName, package.path)
+    assert(modulePath and filesystem.exists(modulePath), "Cannot find module \"" .. moduleName .. "\" in search path.")
+    print("Looked up path \"" .. modulePath .. "\"")
+  end
+  
+  include.moduleDepth = include.moduleDepth + 1
+  include.moduleDependencies[include.moduleDepth] = ""
+  
+  -- Attempt to load module if it doesn't appear in package.
+  local mod
+  if not package.loaded[moduleName] then
+    print("Loading module \"" .. moduleName .. "\"")
+    local modifiedTime = filesystem.lastModified(modulePath)
+    -- Catch errors from require() at the top-level only. This lets us reset the state of traversal before application receives the error.
+    if atTopLevel then
+      local status
+      status, mod = pcall(require, moduleName)
+      if not status then
+        include.moduleDepth = 0
+        include.moduleDependencies = nil
+        include.scannedModules = nil
+        error(mod)
+      end
+    else
+      mod = require(moduleName)
     end
-    
-    print("Reloading module " .. moduleName)
-    local oldModule = package.loaded[moduleName]
-    package.loaded[moduleName] = nil
-    mod = require(moduleName)
-    include.loaded[moduleName] = modifiedTime
-    
-    -- If this is not the first time the module loaded, we need to purge the newly created one and swap the contents into the previous module.
-    if oldModule then
-      moveTableReference(mod, oldModule)
-      package.loaded[moduleName] = oldModule
-    end
+    include.loaded[moduleName] = "0\0" .. modulePath .. "\0" .. tostring(modifiedTime) .. include.moduleDependencies[include.moduleDepth]
+    print("Added include.loaded entry \"" .. include.loaded[moduleName] .. "\"")
   else
-    if moduleName == "dlog" then
-      io.write("Include found mod dlog already\n")
-    end
-    
-    print("Keeping module " .. moduleName)
+    print("Keeping module \"" .. moduleName .. "\" at " .. tostring(package.loaded[moduleName]))
     mod = package.loaded[moduleName]
   end
   
-  if moduleName == "dlog" then
-    io.write("dlog mod = " .. tostring(mod) .. "\n")
+  include.moduleDependencies[include.moduleDepth] = nil
+  include.moduleDepth = include.moduleDepth - 1
+  
+  if atTopLevel then
+    -- Make sure state has been reset to expected values, and delete unnecessary tables to save some memory.
+    assert(include.moduleDepth == 0, "Unexpected stack size while finding dependencies for module \"" .. moduleName .. "\".")
+    assert(next(include.moduleDependencies) == nil, "Unexpected remaining dependencies while loading module \"" .. moduleName .. "\".")
+    include.moduleDependencies = nil
+    include.scannedModules = nil
+  else
+    -- Confirm the module is not listed in the dependencies already before adding it.
+    if not string.find(include.moduleDependencies[include.moduleDepth] .. "\0", "\0" .. moduleName .. "\0", 1, true) then
+      include.moduleDependencies[include.moduleDepth] = include.moduleDependencies[include.moduleDepth] .. "\0" .. moduleName
+    end
   end
   
   return mod
@@ -145,10 +272,10 @@ end
 
 -- include.reload(moduleName: string): table
 -- 
--- Forces a module to load/reload, regardless of the file modification time. Be
--- careful not to use this with system libraries!
+-- Forces a module to load/reload, regardless of the file modification
+-- timestamp. Be careful not to use this with system libraries!
 function include.reload(moduleName)
-  package.loaded[moduleName] = nil
+  include.unload(moduleName)
   return include.load(moduleName)
 end
 
@@ -158,7 +285,18 @@ end
 -- Unloads the given module (removes it from the internal cache). Be careful not
 -- to use this with system libraries!
 function include.unload(moduleName)
+  print("Unloading module \"" .. moduleName .. "\"")
+  if include.loaded[moduleName] then
+    -- Set all immediate dependents as requiring a reload.
+    for k, v in pairs(include.loaded) do
+      if string.find(v .. "\0", "\0" .. moduleName .. "\0", 1, true) then
+        print("  Marking \"" .. k .. "\" as requiring reload")
+        include.loaded[k] = "1" .. string.sub(include.loaded[k], 2)
+      end
+    end
+  end
   package.loaded[moduleName] = nil
+  include.loaded[moduleName] = nil
 end
 
 
