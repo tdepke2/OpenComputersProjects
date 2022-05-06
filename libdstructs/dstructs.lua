@@ -1,5 +1,5 @@
 --[[
-Data structures.
+Data structures and data helpers.
 
 
 --]]
@@ -39,6 +39,49 @@ function dstructs.rawObjectsEqual(obj1, obj2)
   
   return n1 == n2
 end
+
+-- dstructs.moveTableReference(src: table, dest: table)
+-- 
+-- Performs a move (copy) operation from table src into table dest, this allows
+-- changing the memory address of the original table. If the dest table has a
+-- metatable with the __metatable field defined, an error is raised. If the src
+-- table has a reference back to itself, an error is raised as this would imply
+-- that the reference was not fully moved.
+function dstructs.moveTableReference(src, dest)
+  -- Clear contents of dest.
+  setmetatable(dest, nil)
+  for k, _ in next, dest do
+    dest[k] = nil
+  end
+  assert(next(dest) == nil and getmetatable(dest) == nil)
+  
+  -- Shallow copy contents over.
+  for k, v in next, src do
+    dest[k] = v
+  end
+  setmetatable(dest, getmetatable(src))
+  
+  -- Verify no cyclic references back to src (not perfect, does not check metatables).
+  local searched = {}
+  local function recursiveSearch(t)
+    if searched[t] then
+      return
+    end
+    searched[t] = true
+    assert(not rawequal(t, src), "Found a reference back to source table.")
+    for k, v in next, t do
+      if type(k) == "table" then
+        recursiveSearch(k)
+      end
+      if type(v) == "table" then
+        recursiveSearch(v)
+      end
+    end
+  end
+  recursiveSearch(dest)
+end
+
+
 
 -- Array of characters with a fixed size. Similar to a string, but the
 -- individual characters can be modified (without much performance loss for

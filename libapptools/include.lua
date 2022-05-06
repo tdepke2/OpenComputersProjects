@@ -62,99 +62,15 @@ include.moduleDependencies = nil
 include.scannedModules = nil
 
 
--- Performs a move (copy) operation from table src into table dest, this allows
--- changing the memory address of the original table. If the dest table has a
--- metatable with the __metatable field defined, an error is raised. If the src
--- table has a reference back to itself, an error is raised as this would imply
--- that the reference was not fully moved.
-local function moveTableReference(src, dest)
-  -- Clear contents of dest.
-  setmetatable(dest, nil)
-  for k, _ in next, dest do
-    dest[k] = nil
-  end
-  assert(next(dest) == nil and getmetatable(dest) == nil)
-  
-  -- Shallow copy contents over.
-  for k, v in next, src do
-    dest[k] = v
-  end
-  setmetatable(dest, getmetatable(src))
-  
-  -- Verify no cyclic references back to src (not perfect, does not check metatables).
-  local searched = {}
-  local function recursiveSearch(t)
-    if searched[t] then
-      return
-    end
-    searched[t] = true
-    assert(not rawequal(t, src), "Found a reference back to source table, this is not allowed when using include() to load a module.")
-    for k, v in next, t do
-      if type(k) == "table" then
-        recursiveSearch(k)
-      end
-      if type(v) == "table" then
-        recursiveSearch(v)
-      end
-    end
-  end
-  recursiveSearch(dest)
-end
-
-
---[[
-  app
-   |-------------,---------,---------,
-  packer        wnet     vector     dlog
-   |-----,       |        |
-  dlog  wnet    dlog     dlog
---]]
-
-
---[[
-Dependency tree:
-
-  app
-  |-- first
-  |   |-- x
-  |   '-- y
-  |-- second
-  |-- third
-  |   |-- x
-  |   '-- first
-  |       |-- x
-  |       '-- y
-  |-- fourth
-  |   |-- first
-  |   |   |-- x
-  |   |   '-- y
-  |   '-- x
-  |-- first
-  |   |-- x
-  |   '-- y
-  '-- fifth
-      |-- fourth
-      |   |-- first
-      |   |   |-- x
-      |   |   '-- y
-      |   '-- x
-      |-- second
-      '-- third
-          |-- x
-          '-- first
-              |-- x
-              '-- y
---]]
-
 -- Recursively searches the moduleName and all dependencies for files that
 -- changed. Any that changed are unloaded and the same goes for their parents
 -- that are descendants of moduleName (other parents are just marked as needing
 -- to reload). Modules that have already been checked since the last top-level
 -- call to include.load are ignored.
 local function unloadChangedModules(moduleName)
-  print("unloadChangedModules for \"" .. moduleName .. "\"")
+  --print("unloadChangedModules for \"" .. moduleName .. "\"")
   if not include.loaded[moduleName] or include.scannedModules[moduleName] then
-    print("Module notLoaded = " .. tostring(not include.loaded[moduleName]) .. ", scanned = " .. tostring(include.scannedModules[moduleName]))
+    --print("Module notLoaded = " .. tostring(not include.loaded[moduleName]) .. ", scanned = " .. tostring(include.scannedModules[moduleName]))
     return
   end
   include.scannedModules[moduleName] = true
@@ -178,7 +94,7 @@ local function unloadChangedModules(moduleName)
   
   -- After recursion finished, a child may have marked parent as requiring a reload.
   if include.loaded[moduleName] and string.sub(include.loaded[moduleName], 1, 1) == "1" then
-    print("The parent \"" .. moduleName .. "\" still needs to unload")
+    --print("The parent \"" .. moduleName .. "\" still needs to unload")
     include.unload(moduleName)
   end
 end
@@ -206,12 +122,12 @@ function include.load(moduleName)
   local modulePath
   if include.loaded[moduleName] then
     modulePath = string.match(include.loaded[moduleName], ".\0([^\0]+)")
-    print("Found cached path \"" .. modulePath .. "\"")
+    --print("Found cached path \"" .. modulePath .. "\"")
   end
   if not modulePath or not filesystem.exists(modulePath) then
     modulePath = package.searchpath(moduleName, package.path)
     assert(modulePath and filesystem.exists(modulePath), "Cannot find module \"" .. moduleName .. "\" in search path.")
-    print("Looked up path \"" .. modulePath .. "\"")
+    --print("Looked up path \"" .. modulePath .. "\"")
   end
   
   include.moduleDepth = include.moduleDepth + 1
@@ -236,9 +152,9 @@ function include.load(moduleName)
       mod = require(moduleName)
     end
     include.loaded[moduleName] = "0\0" .. modulePath .. "\0" .. tostring(modifiedTime) .. include.moduleDependencies[include.moduleDepth]
-    print("Added include.loaded entry \"" .. include.loaded[moduleName] .. "\"")
+    --print("Added include.loaded entry \"" .. include.loaded[moduleName] .. "\"")
   else
-    print("Keeping module \"" .. moduleName .. "\" at " .. tostring(package.loaded[moduleName]))
+    --print("Keeping module \"" .. moduleName .. "\" at " .. tostring(package.loaded[moduleName]))
     mod = package.loaded[moduleName]
   end
   
@@ -290,7 +206,7 @@ function include.unload(moduleName)
     -- Set all immediate dependents as requiring a reload.
     for k, v in pairs(include.loaded) do
       if string.find(v .. "\0", "\0" .. moduleName .. "\0", 1, true) then
-        print("  Marking \"" .. k .. "\" as requiring reload")
+        --print("  Marking \"" .. k .. "\" as requiring reload")
         include.loaded[k] = "1" .. string.sub(include.loaded[k], 2)
       end
     end
