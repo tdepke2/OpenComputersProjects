@@ -32,7 +32,7 @@ dlog.verboseErrorTraceback = true
 -- Sets a maximum string length on the output from dlog.out(). A message that
 -- exceeds this size will be trimmed to fit. Set this value to nil for unlimited
 -- size messages.
-dlog.maxMessageLength = 310
+dlog.maxMessageLength = nil
 
 -- Private data members, no touchy:
 dlog.fileOutput = nil

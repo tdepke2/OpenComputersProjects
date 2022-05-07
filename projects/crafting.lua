@@ -201,6 +201,9 @@ local function loadRobotsConfig(filename)
   
   -- Open file and for each line trim whitespace, skip empty lines, and lines beginning with comment symbol '#'. Parse the rest.
   local file = io.open(filename, "r")
+  if not file then
+    return nil
+  end
   local lineNum = 1
   
   local status, msg = pcall(function()
@@ -496,15 +499,17 @@ function Crafting:handleStorDroneItemList(_, _, droneItems)
   self.droneItems = droneItems
   
   -- Set the droneInventories for each drone inventory we have, and initialize to free (not in use).
-  self.droneInventories = {}
-  self.droneInventories.inv = {}
+  self.droneInventories = {
+    firstFree = -1,
+    firstFreeWithRobot = -1,
+    inv = {}
+  }
   for i, inventoryDetails in ipairs(self.droneItems) do
-    self.droneInventories.inv[i] = {}
-    self.droneInventories.inv[i].status = "free"
-    self.droneInventories.inv[i].ticket = nil
+    self.droneInventories.inv[i] = {
+      status = "free",
+      ticket = nil
+    }
   end
-  self.droneInventories.firstFree = -1
-  self.droneInventories.firstFreeWithRobot = -1
 end
 packer.callbacks.stor_drone_item_list = Crafting.handleStorDroneItemList
 
@@ -808,6 +813,12 @@ function Crafting:setupThreadFunc(mainContext)
   
   io.write("Loading configuration...\n")
   self.workers.robotConnections = loadRobotsConfig(ROBOTS_CONFIG_FILENAME)
+  if not self.workers.robotConnections then
+    io.stderr:write("Failed to open robots config file \"" .. ROBOTS_CONFIG_FILENAME .. "\".\n")
+    io.stderr:write("Please run the setup_robots utility to create this file.\n")
+    mainContext.killProgram = true
+    os.exit()
+  end
   
   --dlog.out("setup", "robotConnections:", self.workers.robotConnections)
   
@@ -861,6 +872,23 @@ function Crafting:setupThreadFunc(mainContext)
   end
   
   io.write("Found " .. self.workers.totalRobots .. " active robots.\n")
+  
+  -- Verify all robots have at least one corresponding connection in self.workers.robotConnections.
+  for address, _ in pairs(self.workers.robots) do
+    local foundConnection = false
+    for _, invConnections in ipairs(self.workers.robotConnections) do
+      if invConnections[address] then
+        foundConnection = true
+        break
+      end
+    end
+    if not foundConnection then
+      io.stderr:write("Robot at address " .. address .. " has no connections to drone inventories.\n")
+      io.stderr:write("The robots config may be outdated, please run the setup_robots utility.\n")
+      mainContext.killProgram = true
+      os.exit()
+    end
+  end
   
   self.workers.totalDrones = 0
   self.workers.drones = {}
@@ -931,6 +959,7 @@ function Crafting:allocateDroneInventory(ticket, usage, needRobots)
   dlog.checkArgs(ticket, "string,nil", usage, "string", needRobots, "boolean,nil")
   xassert(usage == "input" or usage == "output", "Provided usage is not valid.")
   needRobots = needRobots or false
+  dlog.out("allocateDroneInventory", "Attempt to allocate (", ticket, ", ", usage, ", ", needRobots, ")")
   
   local droneInvIndex
   if not needRobots then
@@ -1083,6 +1112,7 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
       
       -- Re-calculate the max amount of batches we can craft and time of most recently crafted item if recipe inputs changed.
       if recipeStatus.dirty then
+        dlog.out("updateCraftRequest", "craftRequest.recipeStatus[", i, "] marked dirty.")
         local maxLastTime = 0
         local maxBatch = math.huge
         
@@ -1105,6 +1135,7 @@ function Crafting:updateCraftRequest(ticket, craftRequest)
       -- FIXME: For now we assume all recipes are crafting here ############################################################
       
       -- Check if we can make some batches now, and that some robots/drones are available to work.
+      dlog.out("d", "craftRequest.recipeStatus[", i, "].available = ", recipeStatus.available)
       if recipeStatus.available > 0 then
         -- Verify criteria is met before attempting to allocate an inventory (for processing recipe, we must have some drones ready).
         local nextReadyDrone

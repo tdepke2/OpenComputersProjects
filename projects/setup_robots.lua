@@ -204,9 +204,12 @@ local function main()
   if next(remainingRobotAddresses) then
     local numRemaining = 0
     for address, _ in pairs(remainingRobotAddresses) do
+      io.stderr:write("No connections registered for robot at " .. address .. ".\n")
       numRemaining = numRemaining + 1
     end
-    io.stderr:write("\nWarning: Detected " .. numRemaining .. " robot(s) that do not have access to drone inventories.\n")
+    io.stderr:write("\nError: Detected " .. numRemaining .. " robot(s) that do not have access to drone inventories.\n")
+    io.stderr:write("Please check connections and placement of robots, then try again.\n")
+    os.exit(1)
   end
   
   dlog.out("main", "Done, robotConnections:", robotConnections)

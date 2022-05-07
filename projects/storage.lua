@@ -1297,7 +1297,7 @@ function Storage:setupThreadFunc(mainContext)
   
   self.transposers, self.routing = loadRoutingConfig(ROUTING_CONFIG_FILENAME)
   if not self.transposers then
-    io.stderr:write("Routing config file \"" .. ROUTING_CONFIG_FILENAME .. "\" not found.\n")
+    io.stderr:write("Failed to open routing config file \"" .. ROUTING_CONFIG_FILENAME .. "\".\n")
     io.stderr:write("Please run the setup utility to create this file.\n")
     mainContext.killProgram = true
     os.exit()
