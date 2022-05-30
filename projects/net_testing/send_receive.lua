@@ -1,5 +1,6 @@
 local component = require("component")
 local event = require("event")
+local keyboard = require("keyboard")
 local modem = component.modem
 local thread = require("thread")
 
@@ -27,11 +28,11 @@ local function listenerThreadFunc()
     local host, port, message = mnet.receive(0.1)
     if host then
       dlog.out("receive", host, " ", port, " ", message)
-      if type(message) == "string" then
+      --if type(message) == "string" then
         receivedData[#receivedData + 1] = message
-      else
-        totalReceivedAck = totalReceivedAck + 1
-      end
+      --else
+        --totalReceivedAck = totalReceivedAck + 1
+      --end
     end
   end
 end
@@ -42,6 +43,7 @@ local function sendPacket(host, port, message)
 end
 
 local function main()
+  dlog.setFileOut("/tmp/messages", "w")
   modem.open(PORT)
   modem.setStrength(12)
   dlog.out("init", "Hello, I am ", mnet.hostname)
@@ -59,16 +61,28 @@ local function main()
       for k, v in pairs(receivedData) do
         dlog.out("    ", "[", v, "]")
       end
-      dlog.out("done", "received acks: ", totalReceivedAck)
+      
+      local function numKeys(t)
+        local n = 0
+        for k, _ in pairs(t) do
+          n = n + 1
+        end
+        return n
+      end
+      dlog.out("done", "table sizes: routingTable=", numKeys(mnet.routingTable), ", foundPackets=", numKeys(mnet.foundPackets), ", sentPackets=", numKeys(mnet.sentPackets), ", receivedPackets=", numKeys(mnet.receivedPackets), ", lastSent=", numKeys(mnet.lastSent), ", lastReceived=", numKeys(mnet.lastReceived))
       break
     elseif event[1] == "key_down" then
-      if event[3] == string.byte("s") then
-        --dlog.out("send", modem.broadcast(PORT, "ping"))
-        
-        sendPacket("131", 456, "succ")
-        sendPacket("131", 456, "my")
-        sendPacket("131", 456, "nutt")
-        
+      if not keyboard.isControl(event[3]) then
+        if event[3] == string.byte("s") then
+          --dlog.out("send", modem.broadcast(PORT, "ping"))
+          
+          sendPacket("131", 456, "succ")
+          sendPacket("131", 456, "my")
+          sendPacket("131", 456, "nutt")
+          
+        end
+      elseif event[4] == keyboard.keys.enter then
+        dlog.out("d", "")
       end
     end
     

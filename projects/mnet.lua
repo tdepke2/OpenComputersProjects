@@ -16,9 +16,6 @@ local mnet = {}
 mnet.hostname = string.sub(computer.address(), 1, 3)
 mnet.port = 123
 
--- Maximum lifetime of a buffered packet (in seconds). Note that packets are only dropped when a new one is received.
-mnet.maxPacketLife = 5
-
 -- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
 mnet.maxLength = 1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
 
@@ -29,7 +26,7 @@ mnet.routingTable = {}
 mnet.foundPackets = {}
 -- Pending sent packets waiting for acknowledgment, and recently sent packets. Stores uptime, id, flags, port, and message (or nil if acknowledged) where the key is a host-sequence pair.
 mnet.sentPackets = {}
--- Pending packets of a message that have been received. Stores uptime, flags, and message where the key is a host-sequence pair.
+-- Pending packets of a message that have been received. Stores uptime, flags, port, and message where the key is a host-sequence pair.
 mnet.receivedPackets = {}
 -- Most recent sequence number used for sent packets. Stores sequence number for each host.
 mnet.lastSent = {}
@@ -76,14 +73,14 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   if not sequence then
     sequence = mnet.lastSent[host]
     if not sequence then
-      sequence = math.random(1, maxSequence)
+      sequence = math.floor(math.random(1, maxSequence))
       flags = "s1" .. flags
     end
     sequence = sequence % maxSequence + 1
     mnet.lastSent[host] = sequence
   end
   
-  dlog.out("mnet", "Sending packet ", mnet.hostname, " -> ", host, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", fragment)
+  dlog.out("mnet", "\27[32mSending packet ", mnet.hostname, " -> ", host, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", fragment, "\27[0m")
   for _, modem in pairs(modems) do
     modem.broadcast(mnet.port, id, sequence, flags, host, mnet.hostname, port, fragment)
   end
@@ -92,6 +89,7 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   if requireAck then
     mnet.sentPackets[host .. "," .. sequence] = {t, id, flags, port, fragment}
   end
+  return id
 end
 
 -- mnet.send(host: string, port: number, message: string[, waitForAck: boolean]): string
@@ -131,7 +129,7 @@ end
 
 -- Breaks a comma-separated host and sequence string into their values.
 local function splitHostSequencePair(hostSeq)
-  local host, sequence = string.match(hostSeq, "(.*),(%d+)$")
+  local host, sequence = string.match(hostSeq, "(.*),([^,]+)$")
   return host, tonumber(sequence)
 end
 
@@ -145,13 +143,15 @@ function mnet.receive(timeout)
   if mnet.receiveReadyHost then
     local hostSeq = mnet.receiveReadyHost .. "," .. mnet.receiveReadySeq
     local packet = mnet.receivedPackets[hostSeq]
+    dlog.out("mnet", "Buffered data ready to return, hostSeq=", hostSeq, ", type(packet)=", type(packet))
     if packet then
       mnet.receivedPackets[hostSeq] = nil
       mnet.receiveReadySeq = mnet.receiveReadySeq % maxSequence + 1
       dlog.out("mnet", "Returning buffered packet ", hostSeq, ", dat=", packet)
-      return packet[3]
+      return mnet.receiveReadyHost, packet[3], packet[4]
     else
       mnet.receiveReadyHost = nil
+      mnet.receiveReadySeq = nil
     end
   end
   
@@ -162,7 +162,7 @@ function mnet.receive(timeout)
   for hostSeq, packet in pairs(mnet.sentPackets) do
     if t > packet[1] + dropTime then
       if packet[5] then
-        dlog.out("mnet", "Packet ", hostSeq, " timed out, dat=", packet)
+        dlog.out("mnet", "\27[33mPacket ", hostSeq, " timed out, dat=", packet, "\27[0m")
       end
       mnet.sentPackets[hostSeq] = nil
     elseif packet[5] and t > mnet.foundPackets[packet[2]] + retransmitTime then
@@ -175,6 +175,7 @@ function mnet.receive(timeout)
   
   for k, v in pairs(mnet.foundPackets) do
     if t > v + dropTime then
+      --dlog.out("mnet", "\27[33mDropping foundPacket ", k, "\27[0m")
       mnet.foundPackets[k] = nil
     end
   end
@@ -194,11 +195,12 @@ function mnet.receive(timeout)
   end--]]
   for k, v in pairs(mnet.receivedPackets) do
     if t > v[1] + dropTime then  --(type(v) == "number" and v or v[1]) + dropTime then
+      dlog.out("mnet", "\27[33mDropping receivedPacket ", k, "\27[0m")
       mnet.receivedPackets[k] = nil
     end
   end
   
-  dlog.out("mnet", "Got packet ", src, " -> ", dest, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", message)
+  dlog.out("mnet", "\27[36mGot packet ", src, " -> ", dest, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", message, "\27[0m")
   mnet.foundPackets[id] = t
   
   if dest == mnet.hostname then
@@ -242,32 +244,18 @@ function mnet.receive(timeout)
         end
       else
         -- An ack was received for a sequence number that was not sent, we may need to synchronize the receiver. Set hostSeq to the first instance we find for this host (first pending sent packet).
-        
-        
-        --[[local firstSequence = math.huge
-        for hostSeq, packet in pairs(mnet.sentPackets) do
-          local h, s = splitHostSequencePair(hostSeq)
-          if h == src and s < firstSequence and packet[5] then
-            firstSequence = s
-          end
-        end
-        
-        
-        above not gonna work cuz number wrap-around
-        --]]
-        
-        
-        sequence = mnet.lastSent[src] or 0
-        do
-          sequence = (sequence - 2) % maxSequence + 1
-          hostSeq = src .. "," .. sequence
+        local beforeFirstSequence = mnet.lastSent[src] or 0
+        repeat
+          beforeFirstSequence = (beforeFirstSequence - 2) % maxSequence + 1
+          hostSeq = src .. "," .. beforeFirstSequence
         until not (mnet.sentPackets[hostSeq] and mnet.sentPackets[hostSeq][5])
-        hostSeq = src .. "," .. (sequence % maxSequence + 1)
+        hostSeq = src .. "," .. (beforeFirstSequence % maxSequence + 1)
         
-        -- If we found the first pending sent packet, force it to have the syn flag set.
-        dlog.out("mnet", "Found unexpected ack, first hostSeq is ", hostSeq)
+        -- If the ack does not correspond to before the first pending sent packet and we found the first pending one, force it to have the syn flag set.
+        dlog.out("mnet", "Found unexpected ack, beforeFirstSequence is ", beforeFirstSequence, ", first hostSeq is ", hostSeq)
         local firstSentPacket = mnet.sentPackets[hostSeq]
-        if firstSentPacket and not string.find(firstSentPacket[3], "s1") then
+        if beforeFirstSequence ~= sequence and firstSentPacket and not string.find(firstSentPacket[3], "s1") then
+          dlog.out("mnet", "Setting syn flag for hostSeq.")
           firstSentPacket[3] = firstSentPacket[3] .. "s1"
         end
       end
@@ -296,24 +284,31 @@ function mnet.receive(timeout)
       if sequence ~= (firstLastSequence and firstLastSequence[1]) then
         dlog.out("mnet", "Begin new connection to ", src)
         mnet.receivedPackets = {}
-        mnet.lastReceived[src] = {sequence, sequence}
+        firstLastSequence = {sequence, sequence}
+        mnet.lastReceived[src] = firstLastSequence
+        
+        --just changed this, time to test ^^^
+        
         --sendFragment(sequence, "a1", src, port)
         result = message
       end
       
     elseif firstLastSequence and firstLastSequence[2] % maxSequence + 1 == sequence then
       -- No syn flag set and the sequence corresponds to the next one we expect. Push the last received sequence value ahead while there are in-order buffered packets.
+      dlog.out("mnet", "Packet arrived in expected order.")
       firstLastSequence[2] = sequence
       while mnet.receivedPackets[src .. "," .. (firstLastSequence[2] % maxSequence + 1)] do
         firstLastSequence[2] = firstLastSequence[2] % maxSequence + 1
-        mnet.receiveReadyHost = mnet.receiveReadyHost or src
+        dlog.out("mnet", "Buffered packet ready, bumped last sequence to ", firstLastSequence[2])
+        mnet.receiveReadyHost = src
         mnet.receiveReadySeq = mnet.receiveReadySeq or firstLastSequence[2]
       end
       result = message
       
     else
       -- Sequence does not correspond to the expected one, cache the packet for later.
-      mnet.receivedPackets[hostSeq] = {t, flags, message}
+      dlog.out("mnet", "Packet arrived in unexpected order (last sequence was ", firstLastSequence and firstLastSequence[2], ")")
+      mnet.receivedPackets[hostSeq] = {t, flags, port, message}
       --sendFragment(0, "a1", src, port)
       
     end
@@ -322,10 +317,12 @@ function mnet.receive(timeout)
       sendFragment(firstLastSequence and firstLastSequence[2] or 0, "a1", src, port)
     end
     
-    return result
+    if result then
+      return src, port, result
+    end
   else
     -- Packet is intended for a different recipient, forward it.
-    dlog.out("mnet", "Routing packet ", id)
+    dlog.out("mnet", "\27[32mRouting packet ", id, "\27[0m")
     for _, modem in pairs(modems) do
       modem.broadcast(mnet.port, id, sequence, flags, dest, src, port, message)
     end
