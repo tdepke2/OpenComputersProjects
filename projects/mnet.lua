@@ -17,7 +17,7 @@ mnet.hostname = string.sub(computer.address(), 1, 3)
 mnet.port = 123
 
 -- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
-mnet.maxLength = 1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
+mnet.maxLength = 10  --1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
 
 
 -- Used to determine routes for packets. Stores uptime, receiverAddress, and senderAddress for each host.
@@ -92,29 +92,26 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   return id
 end
 
--- mnet.send(host: string, port: number, message: string[, waitForAck: boolean]): string
+-- mnet.send(host: string, port: number, message: string, reliable: boolean[, waitForAck: boolean]): string
 -- 
 -- 
-function mnet.send(host, port, message, waitForAck)
-  dlog.checkArgs(host, "string", port, "number", message, "string", waitForAck, "boolean,nil")
-  --local id
+function mnet.send(host, port, message, reliable, waitForAck)
+  dlog.checkArgs(host, "string", port, "number", message, "string", reliable, "boolean", waitForAck, "boolean,nil")
   
+  local flags = reliable and "r1" or ""
   if #message <= mnet.maxLength then
     -- Message fits into one packet, send it without fragmenting.
-    sendFragment(nil, "r1", host, port, message, true)
+    sendFragment(nil, flags, host, port, message, reliable)
   else
-    -- FIXME NYI ######################################
-    assert(false)
-    
     -- Substring message into multiple pieces and send each.
     local fragmentCount = math.ceil(#message / mnet.maxLength)
     for i = 1, fragmentCount do
-      sendFragment(nil, "r1t" .. fragmentCount .. "f" .. (fragmentCount - i + 1), host, port, string.sub(message, (i - 1) * mnet.maxLength + 1, i * mnet.maxLength), true)
+      sendFragment(nil, flags .. (i ~= fragmentCount and "f0" or "f" .. fragmentCount), host, port, string.sub(message, (i - 1) * mnet.maxLength + 1, i * mnet.maxLength), reliable)
     end
   end
   
   local lastHostSeq = host .. "," .. mnet.lastSent[host]
-  if waitForAck then
+  if reliable and waitForAck then
     -- Busy-wait until the last packet receives an ack or it times out.
     while mnet.sentPackets[lastHostSeq] do
       if not mnet.sentPackets[lastHostSeq][5] then
@@ -204,33 +201,6 @@ function mnet.receive(timeout)
   mnet.foundPackets[id] = t
   
   if dest == mnet.hostname then
-    --[[
-    if type(flags) == "string" then
-      if flags == "a1" then
-        mnet.sentPackets[message] = nil
-      elseif string.find(flags, "r1") then
-        sendFragment("a1", src, port, id)
-        if string.find(flags, "f") then
-          mnet.receivedPackets[id] = {t, flags, message}
-          return
-        end
-      end
-      return src, port, message
-    elseif mnet.receivedPackets[flags] then
-      local received = mnet.receivedPackets[flags]
-      mnet.receivedPackets[flags] = nil
-      received[#received + 1] = message
-      if string.find(received[2], "r1") then
-        sendFragment("a1", src, port, id)
-      end
-      if tonumber(string.match(received[2], "f(%d+)")) + 2 >= #received then
-        return src, port, table.concat(received, "", 3)
-      else
-        mnet.receivedPackets[id] = received
-      end
-    end
-    --]]
-    
     -- Packet arrived at destination, consume it. First check if it is an ack to a previously sent packet.
     local hostSeq = src .. "," .. sequence
     if flags == "a1" then
@@ -273,12 +243,41 @@ function mnet.receive(timeout)
     --]]
     
     
-    --if receivedPackets[hostSeq] then
-      --return nil
-    --end
+    local fragmentCount = tonumber(string.match(flags, "f(%d+)"))
+    
+    -- Filters the message in the current packet to prevent returning a fragment
+    -- of a jumbo frame. Non-fragment messages simply pass through. If a
+    -- sentinel fragment is found, all of the fragments are concatenated (if
+    -- possible) and returned.
+    local function nextMessage()
+      if not fragmentCount then
+        return message
+      end
+      mnet.receivedPackets[hostSeq] = {t, flags, port, message}
+      if fragmentCount > 0 then
+        -- Iterate mnet.receivedPackets in reverse to collect the fragments. Quit early if any are missing.
+        local fragments = {}
+        for i = fragmentCount, 1, -1 do
+          local packet = mnet.receivedPackets[src .. "," .. sequence]
+          dlog.out("mnet", "Collecting fragment ", src .. "," .. sequence)
+          if not packet then
+            return
+          end
+          fragments[i] = packet[4]
+          sequence = (sequence - 2) % maxSequence + 1
+        end
+        -- Found all fragments, clear the corresponding mnet.receivedPackets entries.
+        for i = 1, fragmentCount do
+          sequence = sequence % maxSequence + 1
+          dlog.out("mnet", "Removing ", src .. "," .. sequence, " from cache.")
+          mnet.receivedPackets[src .. "," .. sequence] = nil
+        end
+        return table.concat(fragments)
+      end
+    end
+    
     local firstLastSequence = mnet.lastReceived[src]
     local result
-    
     if string.find(flags, "s1") then
       -- Packet has syn flag set. If we have not seen it already then this marks a new connection and any buffered packets are invalid.
       if sequence ~= (firstLastSequence and firstLastSequence[1]) then
@@ -286,13 +285,8 @@ function mnet.receive(timeout)
         mnet.receivedPackets = {}
         firstLastSequence = {sequence, sequence}
         mnet.lastReceived[src] = firstLastSequence
-        
-        --just changed this, time to test ^^^
-        
-        --sendFragment(sequence, "a1", src, port)
-        result = message
+        result = nextMessage()
       end
-      
     elseif firstLastSequence and firstLastSequence[2] % maxSequence + 1 == sequence then
       -- No syn flag set and the sequence corresponds to the next one we expect. Push the last received sequence value ahead while there are in-order buffered packets.
       dlog.out("mnet", "Packet arrived in expected order.")
@@ -303,14 +297,15 @@ function mnet.receive(timeout)
         mnet.receiveReadyHost = src
         mnet.receiveReadySeq = mnet.receiveReadySeq or firstLastSequence[2]
       end
-      result = message
-      
-    else
-      -- Sequence does not correspond to the expected one, cache the packet for later.
+      result = nextMessage()
+    elseif not string.find(flags, "r1") then
+      -- Packet is unreliable.
+      dlog.out("mnet", "Ignored ordering, passing packet through. fragmentCount=", fragmentCount)
+      result = nextMessage()
+    elseif not fragmentCount then
+      -- Sequence does not correspond to the expected one and not a jumbo frame, cache the packet for later.
       dlog.out("mnet", "Packet arrived in unexpected order (last sequence was ", firstLastSequence and firstLastSequence[2], ")")
       mnet.receivedPackets[hostSeq] = {t, flags, port, message}
-      --sendFragment(0, "a1", src, port)
-      
     end
     
     if string.find(flags, "r1") then
@@ -332,69 +327,12 @@ end
 return mnet
 
 --[[
-test case 1:
-a - b - c
-a sends to c
-
-a -> broad (id 364, flags f2, dest c, src a, port, frag 1)
-a.transmitted[id 364] = {time, flags f2, dest c, src a, port, message fragment 1}
-a -> broad (id 464, flags 364, dest c, src a, port, frag 2)
-a.transmitted[id 464] = {time, flags 364, dest c, src a, port, message fragment 2}
-
-b receives id 364 (forward)
-src does not match hostname, and id 364 not in cache
-b.routing[src a] is nil so b.routing[src a] = {time, receiverAddress, senderAddress}
-b.cache[id 364] = time
-b -> broad (id 364)
-
-b receives id 464 (forward)
-...
-
-a receives id 364 (ignore)
-src does match hostname, ignore
-
-a receives id 464 (ignore)
-...
-
-c receives id 364 (consume)
-src does not match hostname, id 364 not in cache, dest matches hostname
-c.routing[src a] is nil so c.routing[src a] = {time, receiverAddress, senderAddress}
-c.cache[id 364] = time
-flags has frags set, so c.received[id 364] = {time, total frags 2, message fragment 1}
-c -> b (id 521, flags a364, src c, dest a)
-
-c receives id 464 (consume)
-src does not match hostname, id 464 not in cache, dest matches hostname
-c.routing[src a] is not nil
-c.cache[id 464] = time
-flags has parent set, so c.received[id 364] = nil, c.received[id 464] = {time, total frags 2, message fragment 1, message fragment 2}
-return the full message with table.concat()
-c.received[id 464] = nil
-c -> b (id 621, flags a464, src c, dest a)
-
-b receives id 521 (forward)
-src does not match hostname, and id 521 not in cache
-b.routing[src c] = {time, receiverAddress, senderAddress}
-b.cache[id 521] = time
-b -> a (id 521)
-
-...
-
-a receives id 521 (consume)
-src does not match hostname, id 521 not in cache, dest matches hostname
-a.routing[src c] = {time, receiverAddress, senderAddress}
-a.transmitted[id 364] = nil
-
-...
-
---]]
-
---[[
 requirements:
   * hostnames are unique.
-  * support for unicast, routed, reliable, in-order, arbitrary-length messages.
-  * support for unicast/broadcast, routed, unreliable, arbitrary-length (???) messages.
-  * we do not support congestion control.
+  * support for unicast, routed, reliable, in-order, arbitrary-length messages (jumbo frames).
+  * support for unicast/broadcast, routed, unreliable, arbitrary-length messages.
+  * we do not support congestion control or ARP.
+  * jumbo frames are not buffered.
 
 packet fields:
 id (rand number), last/current sequence (number), flags (string), dest, src, port, message

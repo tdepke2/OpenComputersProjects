@@ -38,7 +38,7 @@ local function listenerThreadFunc()
 end
 
 local function sendPacket(host, port, message)
-  dlog.out("send", mnet.send(host, port, message))
+  dlog.out("send", mnet.send(host, port, message, true))
   sentData[#sentData + 1] = message
 end
 
@@ -76,9 +76,9 @@ local function main()
         if event[3] == string.byte("s") then
           --dlog.out("send", modem.broadcast(PORT, "ping"))
           
-          sendPacket("131", 456, "succ")
-          sendPacket("131", 456, "my")
-          sendPacket("131", 456, "nutt")
+          sendPacket("131", 456, "abcdefghijklmnopqrstuvwxyz")
+          --sendPacket("131", 456, "my")
+          --sendPacket("131", 456, "nutt")
           
         end
       elseif event[4] == keyboard.keys.enter then
