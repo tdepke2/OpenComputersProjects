@@ -13,7 +13,7 @@ local dlog = include("dlog")
 
 local mnet = {}
 
-mnet.hostname = string.sub(computer.address(), 1, 3)
+mnet.hostname = string.sub(computer.address(), 1, 4)
 mnet.port = 123
 
 -- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
@@ -51,6 +51,44 @@ for address in component.list("modem", true) do
   modems[address].open(mnet.port)
 end
 
+
+
+-- FIXME evil broadcast used for testing unreliable comms ###################################################
+function mnet.debugEnableLossy(lossy)
+  for _, modem in pairs(modems) do
+    if lossy and not modem.debugLossyActive then
+      modem.broadcastReal = modem.broadcast
+      modem.broadcast = function(...)
+        -- Attempt to drop the packet.
+        if math.random() < 0.2 then
+          dlog.out("modem", "\27[31mDropped.\27[0m")
+          return
+        end
+        -- Attempt to swap order with the next packet.
+        local bufferedPacket = modem.debugBufferedPacket
+        modem.debugBufferedPacket = nil
+        if math.random() < 0.2 and not bufferedPacket then
+          dlog.out("modem", "\27[31mSwapping packet order with next.\27[0m")
+          modem.debugBufferedPacket = {computer.uptime() + 20, table.pack(...)}
+        else
+          modem.broadcastReal(...)
+        end
+        if bufferedPacket and computer.uptime() < bufferedPacket[1] then
+          modem.broadcastReal(table.unpack(bufferedPacket[2], 1, bufferedPacket[2].n))
+        end
+      end
+      modem.debugLossyActive = true
+    elseif not lossy and modem.debugLossyActive then
+      modem.broadcast = modem.broadcastReal
+      modem.debugLossyActive = false
+    end
+  end
+end
+
+
+
+
+
 -- Forms a new packet with generated id to send over the network. If sequence is
 -- nil, the next value in the sequence is used (or a random value if none). If
 -- requireAck is true, the packet data is cached in mnet.sentPackets for
@@ -80,14 +118,14 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
     mnet.lastSent[host] = sequence
   end
   
-  dlog.out("mnet", "\27[32mSending packet ", mnet.hostname, " -> ", host, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", fragment, "\27[0m")
-  for _, modem in pairs(modems) do
-    modem.broadcast(mnet.port, id, sequence, flags, host, mnet.hostname, port, fragment)
-  end
-  
   mnet.foundPackets[id] = t
   if requireAck then
     mnet.sentPackets[host .. "," .. sequence] = {t, id, flags, port, fragment}
+  end
+  
+  dlog.out("mnet", "\27[32mSending packet ", mnet.hostname, " -> ", host, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", fragment, "\27[0m")
+  for _, modem in pairs(modems) do
+    modem.broadcast(mnet.port, id, sequence, flags, host, mnet.hostname, port, fragment)
   end
   return id
 end
@@ -97,6 +135,7 @@ end
 -- 
 function mnet.send(host, port, message, reliable, waitForAck)
   dlog.checkArgs(host, "string", port, "number", message, "string", reliable, "boolean", waitForAck, "boolean,nil")
+  assert(not reliable or host ~= "*", "Broadcast address not allowed for reliable packet transmission.")
   
   local flags = reliable and "r1" or ""
   if #message <= mnet.maxLength then
@@ -200,7 +239,7 @@ function mnet.receive(timeout)
   dlog.out("mnet", "\27[36mGot packet ", src, " -> ", dest, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", message, "\27[0m")
   mnet.foundPackets[id] = t
   
-  if dest == mnet.hostname then
+  if dest == mnet.hostname or dest == "*" then
     -- Packet arrived at destination, consume it. First check if it is an ack to a previously sent packet.
     local hostSeq = src .. "," .. sequence
     if flags == "a1" then
@@ -242,7 +281,6 @@ function mnet.receive(timeout)
       * syn packet arrives after we saw other sequences in order
     --]]
     
-    
     local fragmentCount = tonumber(string.match(flags, "f(%d+)"))
     
     -- Filters the message in the current packet to prevent returning a fragment
@@ -253,11 +291,19 @@ function mnet.receive(timeout)
       if not fragmentCount then
         return message
       end
-      mnet.receivedPackets[hostSeq] = {t, flags, port, message}
-      if fragmentCount > 0 then
+      
+      -- Add fragment to buffer, then search for the sentinel fragment.
+      local endPacket = {t, flags, port, message, fragmentCount}
+      mnet.receivedPackets[hostSeq] = endPacket
+      while endPacket and endPacket[5] == 0 do
+        sequence = sequence % maxSequence + 1
+        endPacket = mnet.receivedPackets[src .. "," .. sequence]
+      end
+      
+      if endPacket then
         -- Iterate mnet.receivedPackets in reverse to collect the fragments. Quit early if any are missing.
         local fragments = {}
-        for i = fragmentCount, 1, -1 do
+        for i = endPacket[5], 1, -1 do
           local packet = mnet.receivedPackets[src .. "," .. sequence]
           dlog.out("mnet", "Collecting fragment ", src .. "," .. sequence)
           if not packet then
@@ -267,7 +313,7 @@ function mnet.receive(timeout)
           sequence = (sequence - 2) % maxSequence + 1
         end
         -- Found all fragments, clear the corresponding mnet.receivedPackets entries.
-        for i = 1, fragmentCount do
+        for i = 1, endPacket[5] do
           sequence = sequence % maxSequence + 1
           dlog.out("mnet", "Removing ", src .. "," .. sequence, " from cache.")
           mnet.receivedPackets[src .. "," .. sequence] = nil
@@ -278,7 +324,11 @@ function mnet.receive(timeout)
     
     local firstLastSequence = mnet.lastReceived[src]
     local result
-    if string.find(flags, "s1") then
+    if not string.find(flags, "r1") then
+      -- Packet is unreliable.
+      dlog.out("mnet", "Ignored ordering, passing packet through.")
+      result = nextMessage()
+    elseif string.find(flags, "s1") then
       -- Packet has syn flag set. If we have not seen it already then this marks a new connection and any buffered packets are invalid.
       if sequence ~= (firstLastSequence and firstLastSequence[1]) then
         dlog.out("mnet", "Begin new connection to ", src)
@@ -297,10 +347,6 @@ function mnet.receive(timeout)
         mnet.receiveReadyHost = src
         mnet.receiveReadySeq = mnet.receiveReadySeq or firstLastSequence[2]
       end
-      result = nextMessage()
-    elseif not string.find(flags, "r1") then
-      -- Packet is unreliable.
-      dlog.out("mnet", "Ignored ordering, passing packet through. fragmentCount=", fragmentCount)
       result = nextMessage()
     elseif not fragmentCount then
       -- Sequence does not correspond to the expected one and not a jumbo frame, cache the packet for later.
@@ -332,7 +378,7 @@ requirements:
   * support for unicast, routed, reliable, in-order, arbitrary-length messages (jumbo frames).
   * support for unicast/broadcast, routed, unreliable, arbitrary-length messages.
   * we do not support congestion control or ARP.
-  * jumbo frames are not buffered.
+  * jumbo frames (for reliable messages) are not buffered.
 
 packet fields:
 id (rand number), last/current sequence (number), flags (string), dest, src, port, message

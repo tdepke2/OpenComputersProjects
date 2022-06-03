@@ -37,15 +37,17 @@ local function listenerThreadFunc()
   end
 end
 
-local function sendPacket(host, port, message)
-  dlog.out("send", mnet.send(host, port, message, true))
+local function sendPacket(host, port, message, reliable)
+  dlog.out("send", mnet.send(host, port, message, reliable))
   sentData[#sentData + 1] = message
 end
 
 local function main()
   dlog.setFileOut("/tmp/messages", "w")
-  modem.open(PORT)
-  modem.setStrength(12)
+  --modem.open(PORT)
+  --modem.setStrength(12)
+  mnet.debugEnableLossy(true)
+  
   dlog.out("init", "Hello, I am ", mnet.hostname)
   
   local listenerThread = thread.create(listenerThreadFunc)
@@ -76,9 +78,9 @@ local function main()
         if event[3] == string.byte("s") then
           --dlog.out("send", modem.broadcast(PORT, "ping"))
           
-          sendPacket("131", 456, "abcdefghijklmnopqrstuvwxyz")
-          --sendPacket("131", 456, "my")
-          --sendPacket("131", 456, "nutt")
+          sendPacket("*", 456, "abcdefghijklmnopqrstuvwxyz", false)
+          --sendPacket("1315", 456, "my")
+          --sendPacket("1315", 456, "nutt")
           
         end
       elseif event[4] == keyboard.keys.enter then
