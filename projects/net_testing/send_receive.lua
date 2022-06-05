@@ -82,6 +82,13 @@ local function main()
           --sendPacket("1315", 456, "my")
           --sendPacket("1315", 456, "nutt")
           
+          
+          
+          should probably test mixed UDP and TCP messages (ordering may break stuff) ###################
+          
+          
+          
+          
         end
       elseif event[4] == keyboard.keys.enter then
         dlog.out("d", "")

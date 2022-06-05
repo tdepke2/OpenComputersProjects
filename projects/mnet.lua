@@ -85,6 +85,14 @@ function mnet.debugEnableLossy(lossy)
   end
 end
 
+function mnet.debugSetSmallMTU(b)
+  if b then
+    mnet.maxLength = 10
+  else
+    mnet.maxLength = 1024
+  end
+end
+
 
 
 
