@@ -12,7 +12,7 @@ local mnet = include("mnet")
 
 local MODEM_RANGE_SHORT = 12
 local MODEM_RANGE_MAX = 400
-local TEST_TIME_SECONDS = 5
+local TEST_TIME_SECONDS = 10
 
 -- Creates a new enumeration from a given table (matches keys to values and vice
 -- versa). The given table is intended to use numeric keys and string values,
@@ -41,7 +41,57 @@ local stateTimer
 local remoteHosts = {}
 local sentData = {}
 local receivedData = {}
+local connectionResets = {}
+local reportedLost = {}
 local results = {}
+
+-- Class to wrap networking functions in a generic interface (to make it easier
+-- to test other networking protocols).
+local NetInterface = {}
+
+-- Hook up errors to throw on access to nil class members (usually a programming
+-- error or typo).
+setmetatable(NetInterface, {
+  __index = function(t, k)
+    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in NetInterface class.", 4)
+  end
+})
+
+function NetInterface:new()
+  self.__index = self
+  self = setmetatable({}, self)
+  
+  return self
+end
+
+function NetInterface:getHostname()
+  return mnet.hostname
+end
+
+function NetInterface:debugEnableLossy(b)
+  mnet.debugEnableLossy(b)
+end
+
+function NetInterface:debugSetSmallMTU(b)
+  mnet.debugSetSmallMTU(b)
+end
+
+--[[
+function NetInterface:clearConnectionCache()
+  mnet.lastSent = {}
+  mnet.lastReceived = {}
+end
+--]]
+
+function NetInterface:send(host, port, message, reliable)
+  return mnet.send(host, port, message, reliable)
+end
+
+function NetInterface:receive(timeout, connectionLostCallback)
+  return mnet.receive(timeout, connectionLostCallback)
+end
+
+local netInterface = NetInterface:new()
 
 --[[
 
@@ -54,9 +104,16 @@ each machine shows results.
 
 --]]
 
+-- Capture lost connection and add to counter for this host.
+local function connectionLostCallback(hostSeq, port, fragment)
+  dlog.out("receive", "Connection lost, hostSeq=", hostSeq, ", port=", port, ", fragment=", fragment)
+  local host, sequence = string.match(hostSeq, "(.*),([^,]+)$")
+  reportedLost[host] = reportedLost[host] + 1
+end
+
 local function listenerThreadFunc()
   while true do
-    local host, port, message = mnet.receive(0.1)
+    local host, port, message = netInterface:receive(0.1, connectionLostCallback)
     if host then
       dlog.out("receive", host, " ", port, " ", message)
       if string.find(message, "\0") then
@@ -65,9 +122,11 @@ local function listenerThreadFunc()
           remoteHosts[#remoteHosts + 1] = host
           sentData[host] = {}
           receivedData[host] = {}
+          connectionResets[host] = 0
+          reportedLost[host] = 0
           if testState == TestState.standby then
             dlog.out("state", "Got start request.")
-            mnet.send("*", 123, "hostname\0", false)
+            netInterface:send("*", 123, "hostname\0", false)
             testState = testState + 1
             stateTimer = computer.uptime() + 5
           end
@@ -77,13 +136,13 @@ local function listenerThreadFunc()
           
           -- Data measurements we collect now and report later.
           local numErrors = 0
-          local numConnectionResets = 0
+          local numConnectionResets = connectionResets[host]
+          local numReportedLost = reportedLost[host]
           local reliableMessages = {
             lastIndex = 1,
             sent = 0,
             lost = 0,
             wrongOrder = 0,
-            reportedLost = 0,
             latencyMin = math.huge,
             latencyMax = -math.huge,
             latencySum = 0
@@ -93,14 +152,13 @@ local function listenerThreadFunc()
             sent = 0,
             lost = 0,
             wrongOrder = 0,
-            reportedLost = 0,
             latencyMin = math.huge,
             latencyMax = -math.huge,
             latencySum = 0
           }
           
           -- Iterate through each message the sender sent to us.
-          for i, sent in ipairs(remoteSent[mnet.hostname]) do
+          for i, sent in ipairs(remoteSent[netInterface:getHostname()]) do
             local m = sent[3] and reliableMessages or unreliableMessages
             m.sent = m.sent + 1
             
@@ -139,7 +197,7 @@ local function listenerThreadFunc()
             numErrors = numErrors + 1
           end
           
-          results[host] = {numErrors, numConnectionResets, reliableMessages, unreliableMessages}
+          results[host] = {numErrors, numConnectionResets, numReportedLost, reliableMessages, unreliableMessages}
         end
       else
         receivedData[host][#receivedData[host] + 1] = {os.time(), message .. "\0" .. port}
@@ -158,16 +216,16 @@ local function randomString(n)
 end
 
 local function main()
-  --dlog.setFileOut("/tmp/messages", "w")
-  dlog.setSubsystem("mnet", false)
+  dlog.setFileOut("/tmp/messages", "w")
+  dlog.setSubsystem("mnet", true)
   
-  mnet.debugEnableLossy(false)
-  mnet.debugSetSmallMTU(false)
+  netInterface:debugEnableLossy(false)
+  netInterface:debugSetSmallMTU(false)
   for address in component.list("modem", true) do
     component.proxy(address).setStrength(MODEM_RANGE_MAX)
   end
   
-  dlog.out("init", "Mesh test ready, press \'s\' to start. I am ", mnet.hostname)
+  dlog.out("init", "Mesh test ready, press \'s\' to start. I am ", netInterface:getHostname())
   
   local listenerThread = thread.create(listenerThreadFunc)
   
@@ -178,11 +236,31 @@ local function main()
       local host = remoteHosts[math.random(1, #remoteHosts)]
       local port = math.floor(math.random(1, 65535))
       local message = randomString(math.random(1, 64))
-      local reliable = math.random() < 1.5
+      local reliable = math.random() < 0.5
+      if not reliable and math.random() < 0.2 then
+        host = "*"
+      end
       
-      sentData[host][#sentData[host] + 1] = {os.time(), message .. "\0" .. port, reliable}
-      mnet.send(host, port, message, reliable)
-      sendTimer = computer.uptime() + 2.0 * math.random()
+      --[[
+      -- Skip this, it doesn't simulate a "receiver reboot" very well.
+      if math.random() < 0.0 then
+        dlog.out("d", "\27[31mClearing connection cache (receiver reset).\27[0m")
+        netInterface:clearConnectionCache()
+        connectionResets[host] = connectionResets[host] + 1
+      end
+      --]]
+      
+      local sent = {os.time(), message .. "\0" .. port, reliable}
+      if host ~= "*" then
+        sentData[host][#sentData[host] + 1] = sent
+      else
+        for i, v in pairs(remoteHosts) do
+          sentData[v][#sentData[v] + 1] = sent
+        end
+      end
+      
+      netInterface:send(host, port, message, reliable)
+      sendTimer = computer.uptime() + 1.7 * math.random()
     end
     
     -- Check for state transition.
@@ -190,8 +268,8 @@ local function main()
       if testState == TestState.getHosts then
         dlog.out("state", "Running...")
         
-        mnet.debugEnableLossy(false)
-        mnet.debugSetSmallMTU(true)
+        netInterface:debugEnableLossy(false)
+        netInterface:debugSetSmallMTU(true)
         
         dlog.out("d", "hosts: ", remoteHosts)
         stateTimer = computer.uptime() + TEST_TIME_SECONDS
@@ -201,24 +279,24 @@ local function main()
       elseif testState == TestState.paused then
         dlog.out("state", "Sending transmitted data...")
         
-        mnet.debugEnableLossy(false)
-        mnet.debugSetSmallMTU(false)
+        netInterface:debugEnableLossy(false)
+        netInterface:debugSetSmallMTU(false)
         
         --dlog.out("d", "sentData: ", sentData)
         --dlog.out("d", "receivedData: ", receivedData)
-        mnet.send("*", 123, "sentData\0" .. serialization.serialize(sentData), false)
+        netInterface:send("*", 123, "sentData\0" .. serialization.serialize(sentData), false)
         stateTimer = computer.uptime() + 5
       elseif testState == TestState.getSentData then
         dlog.out("state", "Done.")
         --dlog.out("d", "results: ", results)
         
         local function displayResults(host, r)
-          local reliableLatencyAvg = r[3].latencySum / (r[3].sent - r[3].lost)
-          local unreliableLatencyAvg = r[4].latencySum / (r[4].sent - r[4].lost)
-          dlog.out("d", string.format("%s:\t %4d   %4d |   %4d %4d    %4d   %4d %5.2f %5.2f %5.2f  |   %4d %4d    %4d   %4d %5.2f %5.2f %5.2f",
-            host, r[1], r[2],
-            r[3].sent, r[3].lost, r[3].wrongOrder, r[3].reportedLost, r[3].latencyMin, r[3].latencyMax, reliableLatencyAvg == reliableLatencyAvg and reliableLatencyAvg or 0,
-            r[4].sent, r[4].lost, r[4].wrongOrder, r[4].reportedLost, r[4].latencyMin, r[4].latencyMax, unreliableLatencyAvg == unreliableLatencyAvg and unreliableLatencyAvg or 0
+          local reliableLatencyAvg = r[4].latencySum / (r[4].sent - r[4].lost)
+          local unreliableLatencyAvg = r[5].latencySum / (r[5].sent - r[5].lost)
+          dlog.out("d", string.format("%s:\t %4d   %4d   %4d |   %4d %4d    %4d %5.2f %5.2f %5.2f  |   %4d %4d    %4d %5.2f %5.2f %5.2f",
+            string.sub(host, 1, 5), r[1], r[2], r[3],
+            r[4].sent, r[4].lost, r[4].wrongOrder, r[4].latencyMin, r[4].latencyMax, reliableLatencyAvg == reliableLatencyAvg and reliableLatencyAvg or 0,
+            r[5].sent, r[5].lost, r[5].wrongOrder, r[5].latencyMin, r[5].latencyMax, unreliableLatencyAvg == unreliableLatencyAvg and unreliableLatencyAvg or 0
           ))
         end
         
@@ -226,20 +304,20 @@ local function main()
           total.sent = (total.sent or 0) + m.sent
           total.lost = (total.lost or 0) + m.lost
           total.wrongOrder = (total.wrongOrder or 0) + m.wrongOrder
-          total.reportedLost = (total.reportedLost or 0) + m.reportedLost
           total.latencyMin = math.min(total.latencyMin or math.huge, m.latencyMin)
           total.latencyMax = math.max(total.latencyMax or -math.huge, m.latencyMax)
           total.latencySum = (total.latencySum or 0) + m.latencySum
         end
         
-        dlog.out("d", "host    errors resets | r(sent lost w_order r_lost t_min t_max t_avg) | u(sent lost w_order r_lost t_min t_max t_avg)")
-        local totalResults = {0, 0, {}, {}}
+        dlog.out("d", "host    errors resets r_lost | r(sent lost w_order t_min t_max t_avg) | u(sent lost w_order t_min t_max t_avg)")
+        local totalResults = {0, 0, 0, {}, {}}
         for k, v in pairs(results) do
           displayResults(k, v)
           totalResults[1] = totalResults[1] + v[1]
           totalResults[2] = totalResults[2] + v[2]
-          addMessageResults(totalResults[3], v[3])
+          totalResults[3] = totalResults[3] + v[3]
           addMessageResults(totalResults[4], v[4])
+          addMessageResults(totalResults[5], v[5])
         end
         displayResults("total", totalResults)
         break
@@ -257,7 +335,7 @@ local function main()
         if event[3] == string.byte("s") and testState == TestState.standby then
           dlog.out("state", "Starting test...")
           
-          mnet.send("*", 123, "hostname\0", false)
+          netInterface:send("*", 123, "hostname\0", false)
           testState = testState + 1
           stateTimer = computer.uptime() + 5
         end

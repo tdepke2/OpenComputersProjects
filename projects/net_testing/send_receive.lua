@@ -1,3 +1,10 @@
+--[[
+Test basic communication between two systems.
+
+Run this program on each system and use the listed keys to send messages. See
+standard output or log file for debugging packet transfer.
+--]]
+
 local component = require("component")
 local event = require("event")
 local keyboard = require("keyboard")
@@ -9,7 +16,9 @@ local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
 local mnet = include("mnet")
 
-local PORT = 123
+--local PORT = 123
+local HOST1 = "1315"
+local HOST2 = "2f2c"
 
 local totalReceivedAck = 0
 local sentData = {}
@@ -28,11 +37,7 @@ local function listenerThreadFunc()
     local host, port, message = mnet.receive(0.1)
     if host then
       dlog.out("receive", host, " ", port, " ", message)
-      --if type(message) == "string" then
-        receivedData[#receivedData + 1] = message
-      --else
-        --totalReceivedAck = totalReceivedAck + 1
-      --end
+      receivedData[#receivedData + 1] = message
     end
   end
 end
@@ -46,9 +51,10 @@ local function main()
   dlog.setFileOut("/tmp/messages", "w")
   --modem.open(PORT)
   --modem.setStrength(12)
-  mnet.debugEnableLossy(true)
+  mnet.debugEnableLossy(false)
+  mnet.debugSetSmallMTU(true)
   
-  dlog.out("init", "Hello, I am ", mnet.hostname)
+  dlog.out("init", "Hello, I am ", mnet.hostname, ". Press \'s\' to send a message to ", HOST1, " or \'d\' to send a message to ", HOST2)
   
   local listenerThread = thread.create(listenerThreadFunc)
   
@@ -78,17 +84,19 @@ local function main()
         if event[3] == string.byte("s") then
           --dlog.out("send", modem.broadcast(PORT, "ping"))
           
-          sendPacket("*", 456, "abcdefghijklmnopqrstuvwxyz", false)
-          --sendPacket("1315", 456, "my")
-          --sendPacket("1315", 456, "nutt")
+          --sendPacket("*", 456, "abcdefghijklmnopqrstuvwxyz", false)
+          sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", true)
+          sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", false)
+          sendPacket(HOST1, 456, "beef", true)
+          
+          
+          --should probably test mixed UDP and TCP messages (ordering may break stuff) ###################
           
           
           
-          should probably test mixed UDP and TCP messages (ordering may break stuff) ###################
           
-          
-          
-          
+        elseif event[3] == string.byte("d") then
+          sendPacket(HOST2, 456, "sample text", true)
         end
       elseif event[4] == keyboard.keys.enter then
         dlog.out("d", "")

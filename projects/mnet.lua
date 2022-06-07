@@ -19,7 +19,6 @@ mnet.port = 123
 -- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
 mnet.maxLength = 10  --1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
 
-
 -- Used to determine routes for packets. Stores uptime, receiverAddress, and senderAddress for each host.
 mnet.routingTable = {}
 -- Cache of packets that we have seen. Stores uptime for each packet id.
@@ -30,6 +29,8 @@ mnet.sentPackets = {}
 mnet.receivedPackets = {}
 -- Most recent sequence number used for sent packets. Stores sequence number for each host.
 mnet.lastSent = {}
+
+mnet.lastSentUnreliable = {}
 -- First sequence number and most recent in-order sequence number found from received packets. Stores sequence number for each host.
 mnet.lastReceived = {}
 -- Set to a host string when data in mnet.receivedPackets is ready to return.
@@ -117,13 +118,14 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   -- [1, maxSequence] and wraps back around if the range would be exceeded. A
   -- sequence of 0 is not allowed and has special meaning in an ack.
   if not sequence then
-    sequence = mnet.lastSent[host]
+    local lastSent = requireAck and mnet.lastSent or mnet.lastSentUnreliable
+    sequence = lastSent[host]
     if not sequence then
       sequence = math.floor(math.random(1, maxSequence))
       flags = "s1" .. flags
     end
     sequence = sequence % maxSequence + 1
-    mnet.lastSent[host] = sequence
+    lastSent[host] = sequence
   end
   
   mnet.foundPackets[id] = t
@@ -157,17 +159,19 @@ function mnet.send(host, port, message, reliable, waitForAck)
     end
   end
   
-  local lastHostSeq = host .. "," .. mnet.lastSent[host]
-  if reliable and waitForAck then
-    -- Busy-wait until the last packet receives an ack or it times out.
-    while mnet.sentPackets[lastHostSeq] do
-      if not mnet.sentPackets[lastHostSeq][5] then
-        return lastHostSeq
+  if reliable then
+    local lastHostSeq = host .. "," .. mnet.lastSent[host]
+    if waitForAck then
+      -- Busy-wait until the last packet receives an ack or it times out.
+      while mnet.sentPackets[lastHostSeq] do
+        if not mnet.sentPackets[lastHostSeq][5] then
+          return lastHostSeq
+        end
+        os.sleep(0.05)
       end
-      os.sleep(0.05)
+    else
+      return lastHostSeq
     end
-  else
-    return lastHostSeq
   end
 end
 
@@ -180,8 +184,8 @@ end
 -- mnet.receive(timeout: number): nil | (string, number, string) | (string, number, number)
 -- 
 -- 
-function mnet.receive(timeout)
-  dlog.checkArgs(timeout, "number")
+function mnet.receive(timeout, connectionLostCallback)
+  dlog.checkArgs(timeout, "number", connectionLostCallback, "function,nil")
   
   -- Check if we have buffered packets that are ready to return immediately.
   if mnet.receiveReadyHost then
@@ -207,6 +211,9 @@ function mnet.receive(timeout)
     if t > packet[1] + dropTime then
       if packet[5] then
         dlog.out("mnet", "\27[33mPacket ", hostSeq, " timed out, dat=", packet, "\27[0m")
+        if connectionLostCallback then
+          connectionLostCallback(hostSeq, packet[4], packet[5])
+        end
       end
       mnet.sentPackets[hostSeq] = nil
     elseif packet[5] and t > mnet.foundPackets[packet[2]] + retransmitTime then
@@ -387,6 +394,7 @@ requirements:
   * support for unicast/broadcast, routed, unreliable, arbitrary-length messages.
   * we do not support congestion control or ARP.
   * jumbo frames (for reliable messages) are not buffered.
+  * there is no loopback interface (machine cannot send messages to itself).
 
 packet fields:
 id (rand number), last/current sequence (number), flags (string), dest, src, port, message
