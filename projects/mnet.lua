@@ -1,8 +1,83 @@
 --[[
-Mesh network.
+Mesh networking protocol with minimalistic API.
 
+The mnet protocol stack covers layers 3 and 4 of the OSI model and is designed
+for general purpose mesh networking using reliable or unreliable communication
+(much like TCP and UDP). The interface is kept as simple as possible for
+performance and to allow embedded devices with a small EEPROM to run it. Much of
+the inspiration for mnet came from minitel:
+https://github.com/ShadowKatStudios/OC-Minitel
 
+Key features:
+  * Supports unicast, routed, reliable, in-order, arbitrary-length messages.
+  * Supports unicast/broadcast, routed, unreliable, arbitrary-length messages.
+  * Automatic configuration of routes.
+  * No background service to handle packets keeps things simple and fast.
+  * Minified version runs on embedded hardware like drones and microcontrollers.
+
+Limitations:
+  * Hostnames are used as addresses, they must be unique (no DNS or DHCP).
+  * No congestion control, the network can get overloaded in extreme cases.
+  * For reliable transfer, fragmented messages are not buffered. If the packets
+    arrive out-of-order this will trigger retransmission.
+  * No loopback interface (machine cannot send messages to itself).
+
+Each message consists of a string sent to a target host (or broadcasted to all
+hosts in the network) and a virtual port. The virtual port is used to specify
+which process on the host the message is intended for. All messages are sent
+over the modem using a common port number (mnet.port). This hardware port number
+can be changed to separate networks with overlapping range. When sending a
+message, there is a choice between reliable transfer and unreliable transfer.
+With the reliable option, the sender expects the message to be acknowledged to
+confirm successful transmission. The sender will retransmit the message until an
+"ack" is received, or the message may time out (see mnet configuration options).
+When unreliable is used, the message will only be sent once and the receiver
+will not send an "ack" back to the sender. This can reduce latency, but the
+message may not be received or it might arrive in a different order than the
+order it was sent. One thing to note is that there is no interface to establish
+a connection for reliable messaging. Connections are managed internally by mnet
+and are allowed to persist forever (no "keepalive" like we have in TCP).
+
+For both reliable and unreliable transmission, if the message size is larger
+than the maximum transmission unit the modem supports (default is 8192) then it
+will be fragmented. A fragmented message gets split into multiple packets and
+sent one at a time, then they are recombined into the full message on the
+receiving end.
+
+Routing in mnet is very simple and in practice converges to shortest-path-first
+routing. When a packet needs to be sent to a receiver, the address of the modem
+to forward it to may be unknown (and we may need to broadcast the packet to
+everyone). However, the address it came from is known so we will remember which
+way to send the next one destined for that sender. When combined with reliable
+messaging, a single message and "ack" pair will populate the routing cache with
+the current best route between the two hosts.
+
+Example usage:
+-- Send a message.
+mnet.send("my_target_host", 123, "hello remote host on port 123!", true)
+
+-- Receive messages (preferably done within a thread to run in the background).
+local listenerThread = thread.create(function()
+  while true do
+    local host, port, message = mnet.receive(0.1)
+    if message then
+      -- Do something with the message, such as parsing the string data to check
+      -- for a specific command or pass it to RPC.
+    end
+  end
+end)
 --]]
+
+
+
+-- FIXME things left to do: #############################################################
+-- * test fixes to simultaneous connection start
+-- * move config options for reliable transmission to more permanent names
+-- * add support for linked cards
+-- * finish routing behavior
+
+
+
 
 local component = require("component")
 local computer = require("computer")
@@ -299,7 +374,7 @@ function mnet.receive(timeout, connectionLostCallback)
     local fragmentCount = tonumber(string.match(flags, "f(%d+)"))
     
     -- Filters the message in the current packet to prevent returning a fragment
-    -- of a jumbo frame. Non-fragment messages simply pass through. If a
+    -- of a larger message. Non-fragment messages simply pass through. If a
     -- sentinel fragment is found, all of the fragments are concatenated (if
     -- possible) and returned.
     local function nextMessage()
@@ -347,7 +422,6 @@ function mnet.receive(timeout, connectionLostCallback)
       -- Packet has syn flag set. If we have not seen it already then this marks a new connection and any buffered packets are invalid.
       if sequence ~= (firstLastSequence and firstLastSequence[1]) then
         dlog.out("mnet", "Begin new connection to ", src)
-        mnet.receivedPackets = {}
         firstLastSequence = {sequence, sequence}
         mnet.lastReceived[src] = firstLastSequence
         result = nextMessage()
@@ -364,7 +438,7 @@ function mnet.receive(timeout, connectionLostCallback)
       end
       result = nextMessage()
     elseif not fragmentCount then
-      -- Sequence does not correspond to the expected one and not a jumbo frame, cache the packet for later.
+      -- Sequence does not correspond to the expected one and not a fragmented message, cache the packet for later.
       dlog.out("mnet", "Packet arrived in unexpected order (last sequence was ", firstLastSequence and firstLastSequence[2], ")")
       mnet.receivedPackets[hostSeq] = {t, flags, port, message}
     end
@@ -390,10 +464,10 @@ return mnet
 --[[
 requirements:
   * hostnames are unique.
-  * support for unicast, routed, reliable, in-order, arbitrary-length messages (jumbo frames).
+  * support for unicast, routed, reliable, in-order, arbitrary-length messages.
   * support for unicast/broadcast, routed, unreliable, arbitrary-length messages.
   * we do not support congestion control or ARP.
-  * jumbo frames (for reliable messages) are not buffered.
+  * fragmented messages (for reliable option) are not buffered.
   * there is no loopback interface (machine cannot send messages to itself).
 
 packet fields:
