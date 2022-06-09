@@ -42,21 +42,24 @@ For both reliable and unreliable transmission, if the message size is larger
 than the maximum transmission unit the modem supports (default is 8192) then it
 will be fragmented. A fragmented message gets split into multiple packets and
 sent one at a time, then they are recombined into the full message on the
-receiving end.
+receiving end. This means there is no worry about sending a message with too
+much data.
 
-Routing in mnet is very simple and in practice converges to shortest-path-first
-routing. When a packet needs to be sent to a receiver, the address of the modem
-to forward it to may be unknown (and we may need to broadcast the packet to
-everyone). However, the address it came from is known so we will remember which
-way to send the next one destined for that sender. When combined with reliable
-messaging, a single message and "ack" pair will populate the routing cache with
-the current best route between the two hosts.
+Routing in mnet is very simple and in practice roughly mimics shortest path
+first algorithm. When a packet needs to be sent to a receiver, the address of
+the modem to forward it to may be unknown (and we may need to broadcast the
+packet to everyone). However, the address it came from is known so we will
+remember which way to send the next one destined for that sender. When combined
+with reliable messaging, a single message and "ack" pair will populate the
+routing cache with the current best route between the two hosts (assuming all
+routing hosts are processing packets at the same rate).
 
 Example usage:
 -- Send a message.
 mnet.send("my_target_host", 123, "hello remote host on port 123!", true)
 
 -- Receive messages (preferably done within a thread to run in the background).
+-- This should be run even if received messages will be ignored.
 local listenerThread = thread.create(function()
   while true do
     local host, port, message = mnet.receive(0.1)
@@ -75,6 +78,9 @@ end)
 -- * move config options for reliable transmission to more permanent names
 -- * add support for linked cards
 -- * finish routing behavior
+-- * functions to open/close mnet.port?
+-- * BUG: broadcasts need to be consumed and forwarded
+-- * potential bug: can modem.broadcast() trigger a thread sleep? could cause problems with return value from mnet.send() if two threads try to send a message
 
 
 
@@ -88,36 +94,41 @@ local dlog = include("dlog")
 
 local mnet = {}
 
+-- Unique address for the machine running this instance of mnet.
 mnet.hostname = string.sub(computer.address(), 1, 4)
+-- Common hardware port used by all hosts in this network.
 mnet.port = 123
 
+-- Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
+local routingExpiration = 30
+-- Time in seconds for reliable messages to be retransmitted while no "ack" is received.
+local retransmitTime = 3
+-- Time in seconds until packets in the cache are dropped or reliable messages time out.
+local dropTime = 12
+
 -- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
-mnet.maxLength = 10  --1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
+mnet.mtuAdjusted = 10  --1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
+
 
 -- Used to determine routes for packets. Stores uptime, receiverAddress, and senderAddress for each host.
 mnet.routingTable = {}
 -- Cache of packets that we have seen. Stores uptime for each packet id.
 mnet.foundPackets = {}
--- Pending sent packets waiting for acknowledgment, and recently sent packets. Stores uptime, id, flags, port, and message (or nil if acknowledged) where the key is a host-sequence pair.
+-- Pending reliable sent packets waiting for acknowledgment, and recently sent packets. Stores uptime, id, flags, port, and message (or nil if acknowledged) where the key is a host-sequence pair.
 mnet.sentPackets = {}
--- Pending packets of a message that have been received. Stores uptime, flags, port, and message where the key is a host-sequence pair.
+-- Pending packets of a message that have been received. Stores uptime, flags, port, message, and fragment number (or nil) where the key is a host-sequence pair.
 mnet.receivedPackets = {}
--- Most recent sequence number used for sent packets. Stores sequence number for each host.
+-- Most recent sequence number used for reliable sent packets. Stores sequence number for each host.
 mnet.lastSent = {}
-
+-- Same as mnet.lastSent for unreliable sent packets.
 mnet.lastSentUnreliable = {}
--- First sequence number and most recent in-order sequence number found from received packets. Stores sequence number for each host.
+-- First sequence number and most recent in-order sequence number found from reliable received packets. Stores sequence numbers for each host.
 mnet.lastReceived = {}
 -- Set to a host string when data in mnet.receivedPackets is ready to return.
 mnet.receiveReadyHost = nil
 -- Same as mnet.receiveReadyHost for the sequence.
 mnet.receiveReadySeq = nil
-
-
-local routingExpiration = 30
-local retransmitTime = 3
-local dropTime = 12
-
+-- Largest value allowed for sequence before wrapping back to 1.
 local maxSequence = 1000
 
 
@@ -163,9 +174,9 @@ end
 
 function mnet.debugSetSmallMTU(b)
   if b then
-    mnet.maxLength = 10
+    mnet.mtuAdjusted = 10
   else
-    mnet.maxLength = 1024
+    mnet.mtuAdjusted = 1024
   end
 end
 
@@ -182,8 +193,9 @@ end
 --     number represents the beginning sequence.
 --   Flag "r1" means the sender requires acknowledgment of the packet.
 --   Flag "a1" means the sequence corresponds to an acknowledged packet.
---   Flag "t<n>" means the message has been split into a total of n fragments.
---   Flag "f<n>" means the fragment number of the message (descending order).
+--   Flag "f<n>" means the message was fragmented and indicates the total number
+--     of fragments (if it's the last one) or that there are more fragments
+--     (when n is zero).
 local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   local id = math.random()
   local t = computer.uptime()
@@ -215,22 +227,31 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   return id
 end
 
--- mnet.send(host: string, port: number, message: string, reliable: boolean[, waitForAck: boolean]): string
+-- mnet.send(host: string, port: number, message: string, reliable: boolean[,
+--   waitForAck: boolean]): string|nil
 -- 
--- 
+-- Sends a message with a virtual port number to another host in the network.
+-- The string "*" can be used to broadcast the message to all other hosts
+-- (reliable must be set to false in this case). When reliable is true, this
+-- function returns a string concatenating the host and last used sequence
+-- number separated by a comma. The sent message is expected to be acknowledged
+-- in this case (think TCP). When reliable is false, nil is returned and no
+-- "ack" is expected (think UDP). If reliable and waitForAck are true, this
+-- function will block until the "ack" is received or the message times out
+-- (nil is returned if it timed out).
 function mnet.send(host, port, message, reliable, waitForAck)
   dlog.checkArgs(host, "string", port, "number", message, "string", reliable, "boolean", waitForAck, "boolean,nil")
   assert(not reliable or host ~= "*", "Broadcast address not allowed for reliable packet transmission.")
   
   local flags = reliable and "r1" or ""
-  if #message <= mnet.maxLength then
+  if #message <= mnet.mtuAdjusted then
     -- Message fits into one packet, send it without fragmenting.
     sendFragment(nil, flags, host, port, message, reliable)
   else
     -- Substring message into multiple pieces and send each.
-    local fragmentCount = math.ceil(#message / mnet.maxLength)
+    local fragmentCount = math.ceil(#message / mnet.mtuAdjusted)
     for i = 1, fragmentCount do
-      sendFragment(nil, flags .. (i ~= fragmentCount and "f0" or "f" .. fragmentCount), host, port, string.sub(message, (i - 1) * mnet.maxLength + 1, i * mnet.maxLength), reliable)
+      sendFragment(nil, flags .. (i ~= fragmentCount and "f0" or "f" .. fragmentCount), host, port, string.sub(message, (i - 1) * mnet.mtuAdjusted + 1, i * mnet.mtuAdjusted), reliable)
     end
   end
   
@@ -256,9 +277,16 @@ local function splitHostSequencePair(hostSeq)
   return host, tonumber(sequence)
 end
 
--- mnet.receive(timeout: number): nil | (string, number, string) | (string, number, number)
+-- mnet.receive(timeout: number[, connectionLostCallback: function]): nil |
+--   (string, number, string)
 -- 
--- 
+-- Pulls events up to the timeout duration and returns the sender host, virtual
+-- port, and message if any data destined for this host was received. The
+-- connectionLostCallback is used to catch reliable messages that failed to send
+-- from this host. If provided, the function is called with a string
+-- host-sequence pair, a virtual port number, and string fragment. The
+-- host-sequence pair corresponds to the return values from mnet.send(), except
+-- that fragments besides the last one in a message will not match up.
 function mnet.receive(timeout, connectionLostCallback)
   dlog.checkArgs(timeout, "number", connectionLostCallback, "function,nil")
   
@@ -308,7 +336,7 @@ function mnet.receive(timeout, connectionLostCallback)
   
   -- Return early if not a valid packet.
   if not eventType or senderPort ~= mnet.port or mnet.foundPackets[id] then
-    return nil
+    return
   end
   sequence = math.floor(sequence)
   port = math.floor(port)
@@ -320,7 +348,7 @@ function mnet.receive(timeout, connectionLostCallback)
     end
   end--]]
   for k, v in pairs(mnet.receivedPackets) do
-    if t > v[1] + dropTime then  --(type(v) == "number" and v or v[1]) + dropTime then
+    if t > v[1] + dropTime then
       dlog.out("mnet", "\27[33mDropping receivedPacket ", k, "\27[0m")
       mnet.receivedPackets[k] = nil
     end
@@ -358,7 +386,7 @@ function mnet.receive(timeout, connectionLostCallback)
           firstSentPacket[3] = firstSentPacket[3] .. "s1"
         end
       end
-      return nil
+      return
     end
     
     
@@ -419,7 +447,7 @@ function mnet.receive(timeout, connectionLostCallback)
       dlog.out("mnet", "Ignored ordering, passing packet through.")
       result = nextMessage()
     elseif string.find(flags, "s1") then
-      -- Packet has syn flag set. If we have not seen it already then this marks a new connection and any buffered packets are invalid.
+      -- Packet has syn flag set. If we have not seen it already then this marks a new connection.
       if sequence ~= (firstLastSequence and firstLastSequence[1]) then
         dlog.out("mnet", "Begin new connection to ", src)
         firstLastSequence = {sequence, sequence}
@@ -443,6 +471,7 @@ function mnet.receive(timeout, connectionLostCallback)
       mnet.receivedPackets[hostSeq] = {t, flags, port, message}
     end
     
+    -- If packet is reliable then ack the last in-order one we received.
     if string.find(flags, "r1") then
       sendFragment(firstLastSequence and firstLastSequence[2] or 0, "a1", src, port)
     end
@@ -460,136 +489,3 @@ function mnet.receive(timeout, connectionLostCallback)
 end
 
 return mnet
-
---[[
-requirements:
-  * hostnames are unique.
-  * support for unicast, routed, reliable, in-order, arbitrary-length messages.
-  * support for unicast/broadcast, routed, unreliable, arbitrary-length messages.
-  * we do not support congestion control or ARP.
-  * fragmented messages (for reliable option) are not buffered.
-  * there is no loopback interface (machine cannot send messages to itself).
-
-packet fields:
-id (rand number), last/current sequence (number), flags (string), dest, src, port, message
-or maybe:
-id (rand number), sequence (number), flags (string), dest, src, port, message
-
-flags:
-  * r1 indicates "requires ack"
-  * a1 indicates an ack
-  * s1 indicates "synchronize" to begin a new connection
-  * f<n> indicates fragment number if a message was split into fragments (sent in descending order)
-
-syn flag is set by sender if:
-  1. we have not yet talked to receiver (no entry in lastSent)
-  2. the receiver says it expects seq 0 (receiver has no entry in lastReceived) and no syn flags set in sentPackets
-  3. the receiver says it expects a seq that is not in sentPackets and no syn flags set in sentPackets
-
-case 1, no loss:
-a - b
-a sends message1 to b (id 1 seq 35 flags "r1s1")
-  foundPackets[id 1] = uptime
-  sentPackets[b seq 35] = {uptime, flags, port, message}
-  lastSent[b] = seq 35
-a sends message2 to b (id 6 seq 36 flags "r1")
-  foundPackets[id 6] = ...
-  sentPackets[b seq 36] = ...
-  lastSent[b] = seq 36
-a sends message3 to b (id 3 seq 37 flags "r1")
-  foundPackets[id 3] = ...
-  sentPackets[b seq 37] = ...
-  lastSent[b] = seq 37
-b gets id 1, sees no entry in lastReceived but syn flag is set
-  foundPackets[id 1] = uptime
-  receivedPackets[a seq 35] = uptime
-  lastReceived[a] = seq 35
-  b returns message1 and sends ack to a (id 15 seq 35 flags "a1")
-b gets id 6, updates entry for lastReceived
-  foundPackets[id 6] = uptime
-  receivedPackets[a seq 36] = uptime
-  lastReceived[a] = seq 36
-  b returns message2 and sends ack to a (id 5 seq 36 flags "a1")
-...
-a gets id 15, crosses seq 35 off of the sentPackets list and all previous ones in sequence
-a gets id 5, crosses seq 36 off of the sentPackets list and all previous ones in sequence
-...
-
-case 2, send 2 fragments:
-a - b
-a sends message1-f1 to b (id 1 seq 35 flags "r1s1f2")
-  foundPackets[id 1] = uptime
-  sentPackets[b seq 35] = {uptime, flags, port, message}
-  lastSent[b] = seq 35
-a sends message1-f2 to b (id 6 seq 36 flags "r1f1")
-  foundPackets[id 6] = ...
-  sentPackets[b seq 36] = ...
-  lastSent[b] = seq 36
-b gets id 1, sees no entry in lastReceived but syn flag is set
-  foundPackets[id 1] = uptime
-  receivedPackets[a seq 35] = {uptime, flags, message1}
-  lastReceived[a] = seq 35
-  b returns nil and sends ack to a (id 15 seq 35 flags "a1")
-b gets id 6, updates entry for lastReceived
-  foundPackets[id 6] = uptime
-  receivedPackets[a seq 36] = {uptime, flags, message1}
-  lastReceived[a] = seq 36
-  b returns message1 and sends ack to a (id 5 seq 36 flags "a1")
-...
-a gets id 15, crosses seq 35 off of the sentPackets list
-a gets id 5, crosses seq 36 off of the sentPackets list
-...
-
-case 3, loss of syn packet:
-a - b
-a sends message1 to b (id 1 seq 35 flags "r1s1")
-  sentPackets[b seq 35] = {uptime, flags, port, message}
-  lastSent[b] = seq 35
-a sends message2 to b (id 6 seq 36 flags "r1")
-  sentPackets[b seq 36] = ...
-  lastSent[b] = seq 36
-a sends message3 to b (id 3 seq 37 flags "r1")
-  sentPackets[b seq 37] = ...
-  lastSent[b] = seq 37
-id 1 is lost!
-b gets id 6, sees no entry in lastReceived
-  receivedPackets[a seq 36] = {uptime, flags, message2}
-  b returns nil and sends ack to a (id 15 seq 0 flags "a1")
-b gets id 3, sees no entry in lastReceived
-  receivedPackets[a seq 37] = {uptime, flags, message3}
-  b returns nil and sends ack to a (id 5 seq 0 flags "a1")
-...
-a gets id 15, sees an ack for seq 0 but also has a syn flag set in sentPackets
-a gets id 5, sees an ack for seq 0 but also has a syn flag set in sentPackets
-...
-id 1 was lost
-a sends message1 to b (id 56 seq 35 flags "r1s1")
-b gets id 56, sees no entry in lastReceived but syn flag is set
-  receivedPackets[a seq 35] = uptime
-  b returns message1 and sends ack to a (id 15 seq 35 flags "a1")
-  receivedPackets[a seq 36] = uptime
-  b returns message2 and sends ack to a (id 15 seq 36 flags "a1")
-  receivedPackets[a seq 37] = uptime
-  b returns message3 and sends ack to a (id 15 seq 37 flags "a1")
-
-
-case 4, loss of middle packet:
-
-case 5, a reboots:
-
-case 6, b reboots:
-
-
-a - b - c
-a sends message1 to c (seq 36)
-a sends message2 to c (seq 37)
-a sends message3 to c (seq 38)
-1 is lost
-a sends 1, 2, and 3 again
-
-a - b - c
-a sends (1, 2, 3) to c
-1 reaches c but 1-ack is lost
-a sends 1, 2, and 3 again
-
---]]
