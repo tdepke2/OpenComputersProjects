@@ -1,3 +1,23 @@
+--[[
+Test messaging/routing between multiple servers.
+
+Any server can start the test, then the test runs for a fixed amount of time on
+all listening servers. Randomized data is generated and sent to other machines,
+packets may be intentionally dropped or re-order depending on settings. Results
+are displayed at the end.
+
+The basic idea:
+  * Machine that starts the test sends broadcast about its hostname.
+  * Other machines get the message and broadcast their hostnames too, each one
+    makes a list of the other hosts.
+  * After a fixed period of time, we move to "running" where each machine
+    enables lossy transmission and picks a host at random and sends some data.
+  * After another period of time, move to "paused" where each machine disables
+    lossy transmission and sends a copy of the sent data to each corresponding
+    host.
+  * Each machine shows results.
+--]]
+
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
@@ -8,11 +28,11 @@ local thread = require("thread")
 local include = require("include")
 local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
-local mnet = include("mnet")
+local mnet = include.reload("mnet")
 
 local MODEM_RANGE_SHORT = 12
 local MODEM_RANGE_MAX = 400
-local TEST_TIME_SECONDS = 10
+local TEST_TIME_SECONDS = 20
 
 -- Creates a new enumeration from a given table (matches keys to values and vice
 -- versa). The given table is intended to use numeric keys and string values,
@@ -68,12 +88,14 @@ function NetInterface:getHostname()
   return mnet.hostname
 end
 
-function NetInterface:debugEnableLossy(b)
-  mnet.debugEnableLossy(b)
-end
-
-function NetInterface:debugSetSmallMTU(b)
-  mnet.debugSetSmallMTU(b)
+function NetInterface:setTestingMode(b)
+  if b then
+    mnet.debugEnableLossy(true)
+    mnet.debugSetSmallMTU(true)
+  else
+    mnet.debugEnableLossy(false)
+    mnet.debugSetSmallMTU(false)
+  end
 end
 
 --[[
@@ -92,17 +114,6 @@ function NetInterface:receive(timeout, connectionLostCallback)
 end
 
 local netInterface = NetInterface:new()
-
---[[
-
-the rough idea here:
-any one machine starts the test, sends broadcast about its hostname.
-other machines get the message and broadcast their hostnames too, each one makes a list of the other hosts.
-after a fixed period of time, we move to stage 2 where each machine picks a host at random and sends some data.
-after another period of time, move to stage 3 where each machine ups the modem strength to the max and sends a copy of the sent data to each corresponding host.
-each machine shows results.
-
---]]
 
 -- Capture lost connection and add to counter for this host.
 local function connectionLostCallback(hostSeq, port, fragment)
@@ -216,11 +227,10 @@ local function randomString(n)
 end
 
 local function main()
-  dlog.setFileOut("/tmp/messages", "w")
+  --dlog.setFileOut("/tmp/messages", "w")
   dlog.setSubsystem("mnet", true)
   
-  netInterface:debugEnableLossy(false)
-  netInterface:debugSetSmallMTU(false)
+  netInterface:setTestingMode(false)
   for address in component.list("modem", true) do
     component.proxy(address).setStrength(MODEM_RANGE_MAX)
   end
@@ -260,7 +270,7 @@ local function main()
       end
       
       netInterface:send(host, port, message, reliable)
-      sendTimer = computer.uptime() + 1.7 * math.random()
+      sendTimer = computer.uptime() + 2.0 * math.random()
     end
     
     -- Check for state transition.
@@ -268,8 +278,7 @@ local function main()
       if testState == TestState.getHosts then
         dlog.out("state", "Running...")
         
-        netInterface:debugEnableLossy(false)
-        netInterface:debugSetSmallMTU(true)
+        netInterface:setTestingMode(true)
         
         dlog.out("d", "hosts: ", remoteHosts)
         stateTimer = computer.uptime() + TEST_TIME_SECONDS
@@ -279,8 +288,7 @@ local function main()
       elseif testState == TestState.paused then
         dlog.out("state", "Sending transmitted data...")
         
-        netInterface:debugEnableLossy(false)
-        netInterface:debugSetSmallMTU(false)
+        netInterface:setTestingMode(false)
         
         --dlog.out("d", "sentData: ", sentData)
         --dlog.out("d", "receivedData: ", receivedData)
@@ -293,8 +301,8 @@ local function main()
         local function displayResults(host, r)
           local reliableLatencyAvg = r[4].latencySum / (r[4].sent - r[4].lost)
           local unreliableLatencyAvg = r[5].latencySum / (r[5].sent - r[5].lost)
-          dlog.out("d", string.format("%s:\t %4d   %4d   %4d |   %4d %4d    %4d %5.2f %5.2f %5.2f  |   %4d %4d    %4d %5.2f %5.2f %5.2f",
-            string.sub(host, 1, 5), r[1], r[2], r[3],
+          dlog.out("d", string.format("%-9s %4d   %4d   %4d |   %4d %4d    %4d %5.2f %5.2f %5.2f  |   %4d %4d    %4d %5.2f %5.2f %5.2f",
+            string.sub(host, 1, 5) .. ":", r[1], r[2], r[3],
             r[4].sent, r[4].lost, r[4].wrongOrder, r[4].latencyMin, r[4].latencyMax, reliableLatencyAvg == reliableLatencyAvg and reliableLatencyAvg or 0,
             r[5].sent, r[5].lost, r[5].wrongOrder, r[5].latencyMin, r[5].latencyMax, unreliableLatencyAvg == unreliableLatencyAvg and unreliableLatencyAvg or 0
           ))

@@ -90,14 +90,14 @@ local function doPack(...)
   end
 end
 
--- Unserializes the given string message (contains the header and table data)
+-- Deserializes the given string message (contains the header and table data)
 -- and returns the original data. An error is thrown if data in the message does
 -- not match the specified types defined for the header.
 local function doUnpack(message)
   local header = packer.unpackCache
   if type(packer.headers[header]) == "table" then
     local arg = serialization.unserialize(string.sub(message, #header + 1))
-    xassert(arg, "failed to unserialize the provided message.")
+    xassert(arg, "failed to deserialize the provided message.")
     if #packer.headers[header] ~= arg.n then
       xassert(false, "number of arguments passed for header \"", header, "\" is incorrect (", #packer.headers[header], " expected, got ", arg.n, ").")
     end

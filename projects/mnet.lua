@@ -116,7 +116,7 @@ mnet.routingTable = {}
 mnet.foundPackets = {}
 -- Pending reliable sent packets waiting for acknowledgment, and recently sent packets. Stores uptime, id, flags, port, and message (or nil if acknowledged) where the key is a host-sequence pair.
 mnet.sentPackets = {}
--- Pending packets of a message that have been received. Stores uptime, flags, port, message, and fragment number (or nil) where the key is a host-sequence pair.
+-- Pending packets of a message that have been received, and recently received packets. Stores uptime, flags, port, message (or nil if found previously), and fragment number (or nil) where the key is a host-sequence pair.
 mnet.receivedPackets = {}
 -- Most recent sequence number used for reliable sent packets. Stores sequence number for each host.
 mnet.lastSent = {}
@@ -139,29 +139,69 @@ for address in component.list("modem", true) do
 end
 
 
-
 -- FIXME evil broadcast used for testing unreliable comms ###################################################
+local dropSeq, swapSeq
+if mnet.hostname == "2f2c" then
+  dropSeq = {}
+  swapSeq = {2, 1}
+else
+  dropSeq = {0, 0, 1}
+  swapSeq = {1}
+end
 function mnet.debugEnableLossy(lossy)
   for _, modem in pairs(modems) do
     if lossy and not modem.debugLossyActive then
       modem.broadcastReal = modem.broadcast
       modem.broadcast = function(...)
         -- Attempt to drop the packet.
-        if math.random() < 0.2 then
+        local doDrop = (math.random() < 0.0)
+        if dropSeq[1] then
+          doDrop = (dropSeq[1] == 1)
+          table.remove(dropSeq, 1)
+        end
+        if doDrop then
           dlog.out("modem", "\27[31mDropped.\27[0m")
           return
         end
-        -- Attempt to swap order with the next packet.
-        local bufferedPacket = modem.debugBufferedPacket
-        modem.debugBufferedPacket = nil
-        if math.random() < 0.2 and not bufferedPacket then
-          dlog.out("modem", "\27[31mSwapping packet order with next.\27[0m")
-          modem.debugBufferedPacket = {computer.uptime() + 20, table.pack(...)}
+        
+        -- Attempt to swap order with the next N packets.
+        local swapAmount = (math.random() < 0.0 and 1 or 0)
+        if swapSeq[1] then
+          swapAmount = swapSeq[1]
+          table.remove(swapSeq, 1)
+        end
+        if not modem.debugBufferedPackets then
+          modem.debugBufferedPackets = {}
+        end
+        if swapAmount > 0 then
+          dlog.out("modem", "\27[31mSwapping packet order with next ", swapAmount, " packets\27[0m")
+          --if modem.debugBufferedPacket then
+            --modem.broadcastReal(...)
+          --else
+            modem.debugBufferedPackets[#modem.debugBufferedPackets + 1] = {computer.uptime() + 20, swapAmount, table.pack(...)}
+          --end
+          --return
         else
           modem.broadcastReal(...)
         end
-        if bufferedPacket and computer.uptime() < bufferedPacket[1] then
-          modem.broadcastReal(table.unpack(bufferedPacket[2], 1, bufferedPacket[2].n))
+        --[[if modem.debugBufferedPacket then
+          if computer.uptime() < modem.debugBufferedPacket[1] then
+            modem.broadcastReal(table.unpack(modem.debugBufferedPacket[2], 1, modem.debugBufferedPacket[2].n))
+          end
+          modem.debugBufferedPacket = nil
+        end--]]
+        local i = 1
+        while modem.debugBufferedPackets[i] do
+          local v = modem.debugBufferedPackets[i]
+          v[2] = v[2] - 1
+          if computer.uptime() > v[1] or v[2] < 0 then
+            if computer.uptime() < v[1] then
+              modem.broadcastReal(table.unpack(v[3], 1, v[3].n))
+            end
+            table.remove(modem.debugBufferedPackets, i)
+            i = i - 1
+          end
+          i = i + 1
         end
       end
       modem.debugLossyActive = true
@@ -296,10 +336,11 @@ function mnet.receive(timeout, connectionLostCallback)
     local packet = mnet.receivedPackets[hostSeq]
     dlog.out("mnet", "Buffered data ready to return, hostSeq=", hostSeq, ", type(packet)=", type(packet))
     if packet then
-      mnet.receivedPackets[hostSeq] = nil
+      local message = packet[4]
+      packet[4] = nil
       mnet.receiveReadySeq = mnet.receiveReadySeq % maxSequence + 1
       dlog.out("mnet", "Returning buffered packet ", hostSeq, ", dat=", packet)
-      return mnet.receiveReadyHost, packet[3], packet[4]
+      return mnet.receiveReadyHost, packet[3], message
     else
       mnet.receiveReadyHost = nil
       mnet.receiveReadySeq = nil
@@ -349,7 +390,9 @@ function mnet.receive(timeout, connectionLostCallback)
   end--]]
   for k, v in pairs(mnet.receivedPackets) do
     if t > v[1] + dropTime then
-      dlog.out("mnet", "\27[33mDropping receivedPacket ", k, "\27[0m")
+      if v[4] then
+        dlog.out("mnet", "\27[33mDropping receivedPacket ", k, "\27[0m")
+      end
       mnet.receivedPackets[k] = nil
     end
   end
@@ -399,76 +442,84 @@ function mnet.receive(timeout, connectionLostCallback)
       * syn packet arrives after we saw other sequences in order
     --]]
     
-    local fragmentCount = tonumber(string.match(flags, "f(%d+)"))
-    
-    -- Filters the message in the current packet to prevent returning a fragment
-    -- of a larger message. Non-fragment messages simply pass through. If a
-    -- sentinel fragment is found, all of the fragments are concatenated (if
-    -- possible) and returned.
-    local function nextMessage()
-      if not fragmentCount then
-        return message
-      end
-      
-      -- Add fragment to buffer, then search for the sentinel fragment.
-      local endPacket = {t, flags, port, message, fragmentCount}
-      mnet.receivedPackets[hostSeq] = endPacket
-      while endPacket and endPacket[5] == 0 do
-        sequence = sequence % maxSequence + 1
-        endPacket = mnet.receivedPackets[src .. "," .. sequence]
-      end
-      
-      if endPacket then
-        -- Iterate mnet.receivedPackets in reverse to collect the fragments. Quit early if any are missing.
-        local fragments = {}
-        for i = endPacket[5], 1, -1 do
-          local packet = mnet.receivedPackets[src .. "," .. sequence]
-          dlog.out("mnet", "Collecting fragment ", src .. "," .. sequence)
-          if not packet then
-            return
-          end
-          fragments[i] = packet[4]
-          sequence = (sequence - 2) % maxSequence + 1
-        end
-        -- Found all fragments, clear the corresponding mnet.receivedPackets entries.
-        for i = 1, endPacket[5] do
-          sequence = sequence % maxSequence + 1
-          dlog.out("mnet", "Removing ", src .. "," .. sequence, " from cache.")
-          mnet.receivedPackets[src .. "," .. sequence] = nil
-        end
-        return table.concat(fragments)
-      end
-    end
-    
     local firstLastSequence = mnet.lastReceived[src]
     local result
-    if not string.find(flags, "r1") then
-      -- Packet is unreliable.
-      dlog.out("mnet", "Ignored ordering, passing packet through.")
-      result = nextMessage()
-    elseif string.find(flags, "s1") then
-      -- Packet has syn flag set. If we have not seen it already then this marks a new connection.
-      if sequence ~= (firstLastSequence and firstLastSequence[1]) then
-        dlog.out("mnet", "Begin new connection to ", src)
-        firstLastSequence = {sequence, sequence}
-        mnet.lastReceived[src] = firstLastSequence
+    
+    -- Only process packet with this sequence number if it was not been processed before.
+    if not mnet.receivedPackets[hostSeq] or mnet.receivedPackets[hostSeq][4] then
+      local fragmentCount = tonumber(string.match(flags, "f(%d+)"))
+      local currentPacket = {t, flags, port, nil, fragmentCount}
+      mnet.receivedPackets[hostSeq] = currentPacket
+      
+      -- Filters the message in the current packet to prevent returning a fragment
+      -- of a larger message. Non-fragment messages simply pass through. If a
+      -- sentinel fragment is found, all of the fragments are concatenated (if
+      -- possible) and returned.
+      local function nextMessage()
+        if not fragmentCount then
+          return message
+        end
+        
+        -- Add fragment data to buffer, then search for the sentinel fragment.
+        currentPacket[4] = message
+        while currentPacket and currentPacket[5] == 0 do
+          sequence = sequence % maxSequence + 1
+          currentPacket = mnet.receivedPackets[src .. "," .. sequence]
+        end
+        
+        if currentPacket then
+          -- Iterate mnet.receivedPackets in reverse to collect the fragments. Quit early if any are missing.
+          local fragments = {}
+          for i = currentPacket[5], 1, -1 do
+            local packet = mnet.receivedPackets[src .. "," .. sequence]
+            dlog.out("mnet", "Collecting fragment ", src .. "," .. sequence)
+            if not packet then
+              return
+            end
+            fragments[i] = packet[4]
+            sequence = (sequence - 2) % maxSequence + 1
+          end
+          -- Found all fragments, clear the corresponding mnet.receivedPackets entries.
+          for i = 1, currentPacket[5] do
+            sequence = sequence % maxSequence + 1
+            dlog.out("mnet", "Removing ", src .. "," .. sequence, " from cache.")
+            mnet.receivedPackets[src .. "," .. sequence][4] = nil
+          end
+          return table.concat(fragments)
+        end
+      end
+      
+      local synFlag = string.find(flags, "s1")
+      if not string.find(flags, "r1") then
+        -- Packet is unreliable.
+        dlog.out("mnet", "Ignored ordering, passing packet through.")
         result = nextMessage()
+      elseif synFlag or firstLastSequence and firstLastSequence[2] % maxSequence + 1 == sequence then
+        if synFlag then
+          -- Packet has syn flag set, this marks a new connection.
+          dlog.out("mnet", "Begin new connection to ", src)
+          firstLastSequence = {sequence, sequence}
+          mnet.lastReceived[src] = firstLastSequence
+        else
+          -- No syn flag set and the sequence corresponds to the next one we expect.
+          dlog.out("mnet", "Packet arrived in expected order.")
+          firstLastSequence[2] = sequence
+        end
+        -- Push the last received sequence value ahead while there are in-order buffered packets.
+        while mnet.receivedPackets[src .. "," .. (firstLastSequence[2] % maxSequence + 1)] do
+          firstLastSequence[2] = firstLastSequence[2] % maxSequence + 1
+          dlog.out("mnet", "Buffered packet ready, bumped last sequence to ", firstLastSequence[2])
+          mnet.receiveReadyHost = src
+          mnet.receiveReadySeq = mnet.receiveReadySeq or firstLastSequence[2]
+        end
+        result = nextMessage()
+      elseif not fragmentCount then
+        -- Sequence does not correspond to the expected one and not a fragmented message, cache the packet for later.
+        dlog.out("mnet", "Packet arrived in unexpected order (last sequence was ", firstLastSequence and firstLastSequence[2], ")")
+        currentPacket[4] = message
       end
-    elseif firstLastSequence and firstLastSequence[2] % maxSequence + 1 == sequence then
-      -- No syn flag set and the sequence corresponds to the next one we expect. Push the last received sequence value ahead while there are in-order buffered packets.
-      dlog.out("mnet", "Packet arrived in expected order.")
-      firstLastSequence[2] = sequence
-      while mnet.receivedPackets[src .. "," .. (firstLastSequence[2] % maxSequence + 1)] do
-        firstLastSequence[2] = firstLastSequence[2] % maxSequence + 1
-        dlog.out("mnet", "Buffered packet ready, bumped last sequence to ", firstLastSequence[2])
-        mnet.receiveReadyHost = src
-        mnet.receiveReadySeq = mnet.receiveReadySeq or firstLastSequence[2]
-      end
-      result = nextMessage()
-    elseif not fragmentCount then
-      -- Sequence does not correspond to the expected one and not a fragmented message, cache the packet for later.
-      dlog.out("mnet", "Packet arrived in unexpected order (last sequence was ", firstLastSequence and firstLastSequence[2], ")")
-      mnet.receivedPackets[hostSeq] = {t, flags, port, message}
+    else
+      dlog.out("mnet", "Already processed this sequence, ignoring.")
     end
     
     -- If packet is reliable then ack the last in-order one we received.

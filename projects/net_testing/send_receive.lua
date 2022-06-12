@@ -14,7 +14,7 @@ local thread = require("thread")
 local include = require("include")
 local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
-local mnet = include("mnet")
+local mnet = include.reload("mnet")
 
 --local PORT = 123
 local HOST1 = "1315"
@@ -51,7 +51,7 @@ local function main()
   dlog.setFileOut("/tmp/messages", "w")
   --modem.open(PORT)
   --modem.setStrength(12)
-  mnet.debugEnableLossy(false)
+  mnet.debugEnableLossy(true)
   mnet.debugSetSmallMTU(true)
   
   dlog.out("init", "Hello, I am ", mnet.hostname, ". Press \'s\' to send a message to ", HOST1, " or \'d\' to send a message to ", HOST2)
@@ -61,15 +61,6 @@ local function main()
   while true do
     local event = {event.pull(0.1)}
     if event[1] == "interrupted" then
-      dlog.out("done", "sent:")
-      for k, v in pairs(sentData) do
-        dlog.out("    ", "[", v, "]")
-      end
-      dlog.out("done", "received:")
-      for k, v in pairs(receivedData) do
-        dlog.out("    ", "[", v, "]")
-      end
-      
       local function numKeys(t)
         local n = 0
         for k, _ in pairs(t) do
@@ -77,6 +68,17 @@ local function main()
         end
         return n
       end
+      
+      dlog.out("done", "sent " .. numKeys(sentData) .. ":")
+      for k, v in pairs(sentData) do
+        dlog.out("    ", "[", v, "]")
+      end
+      dlog.out("done", "received " .. numKeys(receivedData) .. ":")
+      for k, v in pairs(receivedData) do
+        dlog.out("    ", "[", v, "]")
+      end
+      
+      
       dlog.out("done", "table sizes: routingTable=", numKeys(mnet.routingTable), ", foundPackets=", numKeys(mnet.foundPackets), ", sentPackets=", numKeys(mnet.sentPackets), ", receivedPackets=", numKeys(mnet.receivedPackets), ", lastSent=", numKeys(mnet.lastSent), ", lastReceived=", numKeys(mnet.lastReceived))
       break
     elseif event[1] == "key_down" then
@@ -85,15 +87,21 @@ local function main()
           --dlog.out("send", modem.broadcast(PORT, "ping"))
           
           --sendPacket("*", 456, "abcdefghijklmnopqrstuvwxyz", false)
-          sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", true)
-          sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", false)
-          sendPacket(HOST1, 456, "beef", true)
+          --sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", true)
+          --sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", false)
+          --sendPacket(HOST1, 456, "first second third fourth fifth sixth " .. math.floor(math.random(1, 100)), false)
+          --sendPacket(HOST1, 456, "beef_" .. math.floor(math.random(1, 100)), false)
           
+          --modem.setStrength(1)
           
-          --should probably test mixed UDP and TCP messages (ordering may break stuff) ###################
+          sendPacket(HOST1, 456, "a_" .. math.floor(math.random(1, 100)), true)
+          sendPacket(HOST1, 456, "b_" .. math.floor(math.random(1, 100)), true)
+          sendPacket(HOST1, 456, "c_" .. math.floor(math.random(1, 100)), true)
           
+          --modem.setStrength(200)
           
-          
+          --sendPacket(HOST1, 456, "d_" .. math.floor(math.random(1, 100)), true)
+          --sendPacket(HOST1, 456, "e_" .. math.floor(math.random(1, 100)), true)
           
         elseif event[3] == string.byte("d") then
           sendPacket(HOST2, 456, "sample text", true)
@@ -111,5 +119,7 @@ local function main()
   listenerThread:kill()
 end
 main()
+mnet.debugEnableLossy(false)
+mnet.debugSetSmallMTU(false)
 --dlog.out("done", "mnet: ", mnet)
 dlog.osBlockNewGlobals(false)
