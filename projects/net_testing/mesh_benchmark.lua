@@ -32,7 +32,7 @@ local mnet = include.reload("mnet")
 
 local MODEM_RANGE_SHORT = 12
 local MODEM_RANGE_MAX = 400
-local TEST_TIME_SECONDS = 20
+local TEST_TIME_SECONDS = 60
 
 -- Creates a new enumeration from a given table (matches keys to values and vice
 -- versa). The given table is intended to use numeric keys and string values,
@@ -245,7 +245,7 @@ local function main()
     if testState == TestState.running and computer.uptime() >= sendTimer then
       local host = remoteHosts[math.random(1, #remoteHosts)]
       local port = math.floor(math.random(1, 65535))
-      local message = randomString(math.random(1, 64))
+      local message = randomString(math.random(1, 32))
       local reliable = math.random() < 0.5
       if not reliable and math.random() < 0.2 then
         host = "*"
