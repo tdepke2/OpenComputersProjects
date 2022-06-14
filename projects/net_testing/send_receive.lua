@@ -87,7 +87,7 @@ local function main()
           --dlog.out("send", modem.broadcast(PORT, "ping"))
           
           sendPacket("*", 456, "abcdefghijklmnopqrstuvwxyz", false)
-          sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", true)
+          sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz abcdefghijklmnopqrstuvwxyz", true)
           sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", false)
           --sendPacket(HOST1, 456, "first second third fourth fifth sixth " .. math.floor(math.random(1, 100)), false)
           --sendPacket(HOST1, 456, "beef_" .. math.floor(math.random(1, 100)), false)
