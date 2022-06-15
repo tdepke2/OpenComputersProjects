@@ -116,16 +116,14 @@ mnet.foundPackets = {}
 mnet.sentPackets = {}
 -- Pending packets of a message that have been received, and recently received packets. Stores uptime, flags, port, message (or nil if found previously), and fragment number (or nil) where the key is a host-sequence pair.
 mnet.receivedPackets = {}
--- Most recent sequence number used for reliable sent packets. Stores sequence number for each host.
+-- Most recent sequence number used for sent packets. Stores sequence number for each host.
 mnet.lastSent = {}
--- Same as mnet.lastSent for unreliable sent packets.
-mnet.lastSentUnreliable = {}
 -- First sequence number and most recent in-order sequence number found from reliable received packets. Stores sequence numbers for each host.
 mnet.lastReceived = {}
 -- Set to a host-sequence pair when data in mnet.receivedPackets is ready to return.
 mnet.receiveReadyHostSeq = nil
 -- Largest value allowed for sequence before wrapping back to 1.
-local maxSequence = 1000
+local maxSequence = 100
 
 
 local modems = {}
@@ -210,11 +208,12 @@ end
 
 
 
--- Forms a new packet with generated id to send over the network. If sequence is
--- nil, the next value in the sequence is used (or a random value if none). If
--- requireAck is true, the packet data is cached in mnet.sentPackets for
--- retransmission if a loss is detected. The flags can be a string of
--- letter-number pairs with the following options:
+-- Forms a new packet with generated id to send over the network. The host is
+-- expected to have a leading character representing reliability of the message.
+-- If sequence is nil, the next value in the sequence is used (or a random value
+-- if none). If requireAck is true, the packet data is cached in
+-- mnet.sentPackets for retransmission if a loss is detected. The flags can be a
+-- string of letter-number pairs with the following options:
 --   Flag "s1" means the sender is attempting to synchronize and the sequence
 --     number represents the beginning sequence.
 --   Flag "r1" means the sender requires acknowledgment of the packet.
@@ -231,14 +230,13 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   -- [1, maxSequence] and wraps back around if the range would be exceeded. A
   -- sequence of 0 is not allowed and has special meaning in an ack.
   if not sequence then
-    local lastSent = requireAck and mnet.lastSent or mnet.lastSentUnreliable
-    sequence = lastSent[host]
+    sequence = mnet.lastSent[host]
     if not sequence then
       sequence = math.floor(math.random(1, maxSequence))
       flags = "s1" .. flags
     end
     sequence = sequence % maxSequence + 1
-    lastSent[host] = sequence
+    mnet.lastSent[host] = sequence
   end
   
   mnet.foundPackets[id] = t
@@ -246,9 +244,9 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
     mnet.sentPackets[host .. "," .. sequence] = {t, id, flags, port, fragment}
   end
   
-  dlog.out("mnet", "\27[32mSending packet ", mnet.hostname, " -> ", host, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", fragment, "\27[0m")
+  dlog.out("mnet", "\27[32mSending packet ", mnet.hostname, " -> ", string.sub(host, 2), ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", fragment, "\27[0m")
   for _, modem in pairs(modems) do
-    modem.broadcast(mnet.port, id, sequence, flags, host, mnet.hostname, port, fragment)
+    modem.broadcast(mnet.port, id, sequence, flags, string.sub(host, 2), mnet.hostname, port, fragment)
   end
   return id
 end
@@ -260,14 +258,16 @@ end
 -- The string "*" can be used to broadcast the message to all other hosts
 -- (reliable must be set to false in this case). When reliable is true, this
 -- function returns a string concatenating the host and last used sequence
--- number separated by a comma. The sent message is expected to be acknowledged
--- in this case (think TCP). When reliable is false, nil is returned and no
--- "ack" is expected (think UDP). If reliable and waitForAck are true, this
--- function will block until the "ack" is received or the message times out
--- (nil is returned if it timed out).
+-- number separated by a comma (the host also begins with an 'r' character). The
+-- sent message is expected to be acknowledged in this case (think TCP). When
+-- reliable is false, nil is returned and no "ack" is expected (think UDP). If
+-- reliable and waitForAck are true, this function will block until the "ack" is
+-- received or the message times out (nil is returned if it timed out).
 function mnet.send(host, port, message, reliable, waitForAck)
   dlog.checkArgs(host, "string", port, "number", message, "string", reliable, "boolean", waitForAck, "boolean,nil")
   assert(not reliable or host ~= "*", "Broadcast address not allowed for reliable packet transmission.")
+  -- We prepend an extra character to the host to guarantee unique host-sequence pairs for reliable and unreliable packets.
+  host = (reliable and "r" or "u") .. host
   
   local flags = reliable and "r1" or ""
   if #message <= mnet.mtuAdjusted then
@@ -312,10 +312,10 @@ local function nextMessage(hostSeq, currentPacket)
   if currentPacket and not currentPacket[5] then
     local message = currentPacket[4]
     currentPacket[4] = nil
-    return host, currentPacket[3], message
+    return string.sub(host, 2), currentPacket[3], message
   end
   
-  -- Add fragment data to buffer, then search for the sentinel fragment.
+  -- Search for the sentinel fragment.
   while currentPacket and currentPacket[5] == 0 do
     sequence = sequence % maxSequence + 1
     currentPacket = mnet.receivedPackets[host .. "," .. sequence]
@@ -327,7 +327,7 @@ local function nextMessage(hostSeq, currentPacket)
     for i = currentPacket[5], 1, -1 do
       local packet = mnet.receivedPackets[host .. "," .. sequence]
       dlog.out("mnet", "Collecting fragment ", host .. "," .. sequence)
-      if not packet then
+      if not (packet and packet[4]) then
         return
       end
       fragments[i] = packet[4]
@@ -339,7 +339,7 @@ local function nextMessage(hostSeq, currentPacket)
       dlog.out("mnet", "Removing ", host .. "," .. sequence, " from cache.")
       mnet.receivedPackets[host .. "," .. sequence][4] = nil
     end
-    return host, currentPacket[3], table.concat(fragments)
+    return string.sub(host, 2), currentPacket[3], table.concat(fragments)
   end
 end
 
@@ -426,7 +426,17 @@ function mnet.receive(timeout, connectionLostCallback)
   dlog.out("mnet", "\27[36mGot packet ", src, " -> ", dest, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", message, "\27[0m")
   mnet.foundPackets[id] = t
   
-  if dest == mnet.hostname or dest == "*" then
+  if dest ~= mnet.hostname and dest ~= "*" then
+    -- Packet is intended for a different recipient, forward it.
+    dlog.out("mnet", "\27[32mRouting packet ", id, "\27[0m")
+    for _, modem in pairs(modems) do
+      modem.broadcast(mnet.port, id, sequence, flags, dest, src, port, message)
+    end
+  else
+    -- Prepend reliability character just like we do in mnet.send().
+    local reliable = string.find(flags, "[ra]1")
+    src = (reliable and "r" or "u") .. src
+    
     -- Packet arrived at destination, consume it. First check if it is an ack to a previously sent packet.
     local hostSeq = src .. "," .. sequence
     if flags == "a1" then
@@ -475,13 +485,13 @@ function mnet.receive(timeout, connectionLostCallback)
       currentPacket = {t, flags, port, message, tonumber(string.match(flags, "f(%d+)"))}
       mnet.receivedPackets[hostSeq] = currentPacket
       
-      if not string.find(flags, "r1") then
-        -- Packet is unreliable.
+      if not reliable then
+        -- Packet is unreliable, we don't care about ordering.
         dlog.out("mnet", "Ignored ordering, passing packet through.")
       elseif string.find(flags, "s1") or mnet.lastReceived[src] and mnet.lastReceived[src] % maxSequence + 1 == sequence then
         -- Packet has syn flag set (marks a new connection) or the sequence corresponds to the next one we expect.
         if string.find(flags, "s1") then
-          dlog.out("mnet", "Begin new connection to ", src)
+          dlog.out("mnet", "Begin new connection to ", string.sub(src, 2))
         else
           dlog.out("mnet", "Packet arrived in expected order.")
         end
@@ -501,30 +511,12 @@ function mnet.receive(timeout, connectionLostCallback)
       dlog.out("mnet", "Already processed this sequence, ignoring.")
     end
     
-    
-    
-    --[[
-    FIXME #################################################
-    what happens if a reliable fragmented message is partially dropped or arrives out of order?
-      answer: fragments show up in cache like processed messages do. then we get a bad return val when collecting the fragments.
-      possibly add else after "elseif not fragmentCount then" to remove the cache entry?
-    may need to check "if packet and message then" instead of "if packet then" in buffered packet check at top (fragments push the seq forward but then get consumed).
-    --]]
-    
-    
-    
     -- If packet is reliable then ack the last in-order one we received.
-    if string.find(flags, "r1") then
+    if reliable then
       sendFragment(mnet.lastReceived[src] or 0, "a1", src, port)
     end
     
     return nextMessage(hostSeq, currentPacket)
-  else
-    -- Packet is intended for a different recipient, forward it.
-    dlog.out("mnet", "\27[32mRouting packet ", id, "\27[0m")
-    for _, modem in pairs(modems) do
-      modem.broadcast(mnet.port, id, sequence, flags, dest, src, port, message)
-    end
   end
 end
 
