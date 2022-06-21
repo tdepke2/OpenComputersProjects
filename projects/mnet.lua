@@ -79,6 +79,7 @@ end)
 -- * functions to open/close mnet.port?
 -- * BUG: broadcasts need to be consumed and forwarded
 -- * potential bug: can modem.broadcast() trigger a thread sleep? could cause problems with return value from mnet.send() if two threads try to send a message
+-- * potential bug: what happens if two servers are reliably communicating and connection goes down for a long time, then comes back? (neither server reboots)
 
 
 
@@ -98,11 +99,11 @@ mnet.hostname = string.sub(computer.address(), 1, 4)
 mnet.port = 123
 
 -- Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
-local routingExpiration = 30
+mnet.routeExpiration = 30
 -- Time in seconds for reliable messages to be retransmitted while no "ack" is received.
-local retransmitTime = 3
+mnet.retransmitTime = 3
 -- Time in seconds until packets in the cache are dropped or reliable messages time out.
-local dropTime = 12
+mnet.dropTime = 12
 
 -- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
 mnet.mtuAdjusted = 10  --1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
@@ -265,7 +266,7 @@ end
 -- received or the message times out (nil is returned if it timed out).
 function mnet.send(host, port, message, reliable, waitForAck)
   dlog.checkArgs(host, "string", port, "number", message, "string", reliable, "boolean", waitForAck, "boolean,nil")
-  assert(not reliable or host ~= "*", "Broadcast address not allowed for reliable packet transmission.")
+  xassert(not reliable or host ~= "*", "broadcast address not allowed for reliable packet transmission.")
   -- We prepend an extra character to the host to guarantee unique host-sequence pairs for reliable and unreliable packets.
   host = (reliable and "r" or "u") .. host
   
@@ -378,7 +379,7 @@ function mnet.receive(timeout, connectionLostCallback)
   
   -- Check for packets that timed out, and any that were lost that need to be sent again.
   for hostSeq, packet in pairs(mnet.sentPackets) do
-    if t > packet[1] + dropTime then
+    if t > packet[1] + mnet.dropTime then
       if packet[5] then
         dlog.out("mnet", "\27[33mPacket ", hostSeq, " timed out, dat=", packet, "\27[0m")
         if connectionLostCallback then
@@ -386,7 +387,7 @@ function mnet.receive(timeout, connectionLostCallback)
         end
       end
       mnet.sentPackets[hostSeq] = nil
-    elseif packet[5] and t > mnet.foundPackets[packet[2]] + retransmitTime then
+    elseif packet[5] and t > mnet.foundPackets[packet[2]] + mnet.retransmitTime then
       -- Packet requires retransmission. The same data is sent again but with a new packet id.
       dlog.out("mnet", "Retransmitting packet with previous id ", packet[2])
       local sentHost, sentSequence = splitHostSequencePair(hostSeq)
@@ -395,7 +396,7 @@ function mnet.receive(timeout, connectionLostCallback)
   end
   
   for k, v in pairs(mnet.foundPackets) do
-    if t > v + dropTime then
+    if t > v + mnet.dropTime then
       --dlog.out("mnet", "\27[33mDropping foundPacket ", k, "\27[0m")
       mnet.foundPackets[k] = nil
     end
@@ -410,12 +411,12 @@ function mnet.receive(timeout, connectionLostCallback)
   
   --[[
   for k, v in pairs(mnet.routingTable) do
-    if t > v[1] + routingExpiration then
+    if t > v[1] + mnet.routeExpiration then
       mnet.routingTable[k] = nil
     end
   end--]]
   for k, v in pairs(mnet.receivedPackets) do
-    if t > v[1] + dropTime then
+    if t > v[1] + mnet.dropTime then
       if v[4] then
         dlog.out("mnet", "\27[33mDropping receivedPacket ", k, "\27[0m")
       end

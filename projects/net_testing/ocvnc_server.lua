@@ -13,9 +13,12 @@ local include = require("include")
 local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
 local mnet = include("mnet")
-local mrpc = include("mrpc").registerPort(123)
-mrpc.addDeclarations(include("net_testing/mrpc_ocvnc"))
+local mrpc_server = include("mrpc").newServer(123)
 
-mrpc.async.stor_discover("*")
+mrpc_server.addDeclarations(dofile("net_testing/mrpc_ocvnc.lua"))
 
-mrpc.functions.stor_extract = function() print("ok") end
+mrpc_server.async.stor_discover("*")
+
+mrpc_server.functions.stor_extract = function() print("ok") end
+
+dlog.osBlockNewGlobals(false)

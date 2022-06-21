@@ -1,26 +1,28 @@
 --[[
+Remote procedure call library for mnet.
+
 requirements:
   * one or more rpc servers can run on a machine (each one claims a single vport)
   * synchronous and asynchronous calls (chosen when client does call)
-  * able to get a return value (even from broadcast?)
+  * able to get a return value (except from broadcast)
   * function definitions
 
 the general purpose event handler at bottom of this page is good: https://ocdoc.cil.li/api:event
 
-instance = mrpc.registerPort(...)
+rpc_server = mrpc.newServer(port)
 
 client:
-<return vals> mrpc.sync.<function name>(host, ...)
-    <hostseq> mrpc.async.<function name>(host, ...)
+<return vals> rpc_server.sync.<call name>(host, ...)
+    <hostseq> rpc_server.async.<call name>(host, ...)
 
 server:
-mrpc.functions.<function name> = function
-mrpc.handleMessage(obj, host, port, message)
-<function name> called with (obj, host, ...)
+rpc_server.functions.<call name> = function
+rpc_server.handleMessage(obj, host, port, message)
+<call name> called with (obj, host, ...)
 
 both:
-mrpc.declareFunction(name[, {args}[, {returns}] ])
-mrpc.addDeclarations({decl})
+rpc_server.declareFunction(name[, {args}[, {returns}] ])
+rpc_server.addDeclarations({decl})
 
 decl = {}
 decl[1] = {name, {args}, {returns}}
@@ -29,163 +31,161 @@ decl[1] = {name, {args}, {returns}}
 
 
 
+Note: do not try to save a reference to the functions called with rpc_server:sync.<call name>(), and same for rpc_server:async and rpc_server:unpack.
 
 
 --]]
 
+local computer = require("computer")
 local serialization = require("serialization")
 
--- Check for optional dependency dlog.
-local dlog, xassert
-do
-  local status, ret = pcall(require, "dlog")
-  if status then
-    dlog = ret
-    xassert = dlog.xassert
-  else
-    -- Fallback option for xassert if dlog not found.
-    xassert = function(v, ...)
-      assert(v, string.rep("%s", select("#", ...)):format(...))
-    end
-  end
-end
+local include = require("include")
+local dlog = include("dlog")
+local mnet = include("mnet")
 
 local mrpc = {}
-local mrpcInterface = {}
-local cachedPort
+local MrpcClass = {}
 
-mrpc.ports = {}
+local cachedObj, cachedCallName
 
-local portMetatable = {
-  __index = function(t, k)
-    cachedPort = t.port
-    return mrpcInterface[k]
-  end
-}
-
-function mrpc.registerPort(port)
-  mrpc.ports[port] = mrpc.ports[port] or setmetatable({port = port}, portMetatable)
-  return mrpc.ports[port]
+MrpcClass.__index = function(t, k)
+  cachedObj = t
+  return MrpcClass[k]
 end
 
-
-
-
-
-
-
-
-
-
-local cachedCallName
-
--- Function callbacks registered by the server and executed when a matching
--- remote call is received.
-mrpcInterface.functions = {}
-
--- Sets the action to take when no callback is registered for a given remote
--- call. Normally this should do nothing, but it is possible to override the
--- metatable to log the event here or even throw an error.
-setmetatable(mrpcInterface.functions, {
-  __index = function(t, k)
-    if dlog then
+function mrpc.newServer(port)
+  local self = setmetatable({}, MrpcClass)
+  
+  dlog.checkArgs(port, "number")
+  self.port = port
+  
+  -- Function callbacks registered by the server and executed when a matching
+  -- remote call is received.
+  self.functions = {}
+  
+  -- Sets the action to take when no callback is registered for a given remote
+  -- call. Normally this should do nothing, but it is possible to override the
+  -- metatable to log the event here or even throw an error.
+  setmetatable(self.functions, {
+    __index = function(t, k)
       dlog.out("mrpc", "No function registered for call to \"", k, "\".")
     end
-    return nil
+  })
+  
+  -- Declarations for remote calls and expected data types. Each call name has a
+  -- table of strings for these expected types, or a value of "true" if there are
+  -- none for that header.
+  self.callTypes = {}
+  
+  setmetatable(self.callTypes, {
+    __index = function(t, k)
+      xassert(false, "attempt to index self.callTypes for \"", string.sub(k, 1, -3), "\" failed (call name not declared).")
+    end
+  })
+  
+  self.syncSendMutex = false
+  self.returnedCallName = nil
+  self.returnedMessage = nil
+  
+  return self
+end
+
+-- Confirms that the given values in the packed table packedVals match the
+-- specified types in typesList.
+local function verifyCallTypes(callName, typesList, packedVals, valName, valOffset)
+  if type(typesList) == "table" then
+    if #typesList < packedVals.n then
+      xassert(false, "number of ", valName, "s for call to \"", callName, "\" is incorrect (", #typesList + valOffset, " expected, got ", packedVals.n + valOffset, ").")
+    end
+    for i, validTypes in ipairs(typesList) do
+      if not string.find(validTypes, type(packedVals[i]), 1, true) and validTypes ~= "any" then
+        xassert(false, "bad ", valName, " for call to \"", callName, "\" at index #", i + valOffset, " (", validTypes, " expected, got ", type(packedVals[i]), ").")
+      end
+    end
   end
-})
-
--- Declarations for remote calls and expected data types. Each call name has a
--- table of strings for these expected types, or a value of "true" if there are
--- none for that header.
-mrpcInterface.callTypes = {}
-
-
-
-mrpcInterface.callTypes["name\0" .. port] = {} or true
--- optional return:
-mrpcInterface.callTypes["name\0" .. port .. "r"] = {}
-
-
-
-
-setmetatable(mrpcInterface.callTypes, {
-  __index = function(t, k)
-    xassert(false, "attempt to index mrpcInterface.callTypes for \"", k, "\" failed (call name not declared).")
-  end
-})
+end
 
 -- Serializes the given arguments into a table and returns a string containing
 -- the header and this table.
 local function syncSend(host, ...)
-  local arg = table.pack(...)
-  local namePortPair = cachedCallName .. "\0" .. cachedPort
+  xassert(host ~= "*", "broadcast address not allowed for synchronous call.")
+  local self, callName, arg = cachedObj, cachedCallName, table.pack(...)
+  verifyCallTypes(callName, self.callTypes[callName .. ",a"], arg, "argument", 1)
   
-  if type(mrpcInterface.callTypes[namePortPair]) == "table" then
-    if #mrpcInterface.callTypes[namePortPair] ~= arg.n then
-      xassert(false, "number of arguments passed for call to \"", cachedCallName, "\" is incorrect (", #mrpcInterface.callTypes[namePortPair], " expected, got ", arg.n, ").")
-    end
-    for i, validTypes in ipairs(mrpcInterface.callTypes[namePortPair]) do
-      if not string.find(validTypes, type(arg[i]), 1, true) and validTypes ~= "any" then
-        xassert(false, "bad argument for call to \"", cachedCallName, "\" at index #", i, " (", validTypes, " expected, got ", type(arg[i]), ").")
-      end
-    end
+  while self.syncSendMutex do
+    os.sleep(0.05)
+  end
+  self.syncSendMutex = true
+  
+  self.returnedCallName = nil
+  self.returnedMessage = nil
+  
+  local sendResult = mnet.send(host, self.port, "s," .. callName .. (arg.n == 0 and "{n=0}" or serialization.serialize(arg)), true, true)
+  if not sendResult then
+    self.syncSendMutex = false
+    xassert(false, "remote call to \"", callName, "\" for host \"", host, "\" timed out.")
   end
   
-  mnet.send(host, cachedPort, "s," .. cachedCallName .. (arg.n == 0 and "{n=0}" or serialization.serialize(arg)), host ~= "*", true)
+  local timeEnd = computer.uptime() + mnet.dropTime
+  while computer.uptime() < timeEnd and self.returnedCallName ~= callName do
+    os.sleep(0.05)
+  end
+  
+  local returnedCallName, returnedMessage = self.returnedCallName, self.returnedMessage
+  self.returnedCallName, self.returnedMessage = nil, nil
+  self.syncSendMutex = false
+  
+  if returnedCallName == callName then
+    return self.unpack[returnedCallName](returnedMessage)
+  else
+    xassert(false, "results from call to \"", callName, "\" for host \"", host, "\" timed out.")
+  end
 end
 
 local function asyncSend(host, ...)
-  local arg = table.pack(...)
-  local namePortPair = cachedCallName .. "\0" .. cachedPort
+  local self, callName, arg = cachedObj, cachedCallName, table.pack(...)
+  verifyCallTypes(callName, self.callTypes[callName .. ",a"], arg, "argument", 1)
   
-  if type(mrpcInterface.callTypes[namePortPair]) == "table" then
-    if #mrpcInterface.callTypes[namePortPair] ~= arg.n then
-      xassert(false, "number of arguments passed for call to \"", cachedCallName, "\" is incorrect (", #mrpcInterface.callTypes[namePortPair], " expected, got ", arg.n, ").")
-    end
-    for i, validTypes in ipairs(mrpcInterface.callTypes[namePortPair]) do
-      if not string.find(validTypes, type(arg[i]), 1, true) and validTypes ~= "any" then
-        xassert(false, "bad argument for call to \"", cachedCallName, "\" at index #", i, " (", validTypes, " expected, got ", type(arg[i]), ").")
-      end
-    end
-  end
-  
-  mnet.send(host, cachedPort, "a," .. cachedCallName .. (arg.n == 0 and "{n=0}" or serialization.serialize(arg)), host ~= "*")
+  return mnet.send(host, self.port, "a," .. callName .. (arg.n == 0 and "{n=0}" or serialization.serialize(arg)), host ~= "*")
 end
 
 -- Deserializes the given string message (contains the header and table data)
 -- and returns the original data. An error is thrown if data in the message does
 -- not match the specified types defined for the header.
 local function doUnpack(message)
-  if not string.find(message, "^.," .. cachedCallName .. "{n=0}") then
-  
-  
-    print("watch out im calling unserialize()")
-  
-  
-  
-  
-    local arg = serialization.unserialize(string.sub(message, #cachedCallName + 3))
+  local self, callName = cachedObj, cachedCallName
+  if not string.find(message, "^.," .. callName .. "{n=0}") then
+    
+    
+    dlog.out("mrpc", "watch out im calling unserialize()")
+    
+    
+    
+    
+    local arg = serialization.unserialize(string.sub(message, #callName + 3))
     xassert(arg, "failed to deserialize the provided message.")
     return table.unpack(arg, 1, arg.n)
   end
+  
+  
+  dlog.out("mrpc", "skipped call to unserialize()")
 end
 
-mrpcInterface.sync = setmetatable({}, {
+MrpcClass.sync = setmetatable({}, {
   __index = function(t, k)
     cachedCallName = k
     return syncSend
   end
 })
 
-mrpcInterface.async = setmetatable({}, {
+MrpcClass.async = setmetatable({}, {
   __index = function(t, k)
     cachedCallName = k
     return asyncSend
   end
 })
 
-mrpcInterface.unpack = setmetatable({}, {
+MrpcClass.unpack = setmetatable({}, {
   __index = function(t, k)
     cachedCallName = k
     return doUnpack
@@ -198,10 +198,9 @@ mrpcInterface.unpack = setmetatable({}, {
 -- a name (purely for making it clearer what the value represents in the code)
 -- and a comma-separated list of types. The string "any" can also be used for
 -- the types to allow any value.
-function mrpcInterface.declareFunction(port, callName, arguments, results)
-  if dlog then
-    dlog.checkArgs(port, "number", callName, "string", arguments, "table,nil", results, "table,nil")
-  end
+function MrpcClass.declareFunction(callName, arguments, results)
+  dlog.checkArgs(callName, "string", arguments, "table,nil", results, "table,nil")
+  local self = cachedObj
   
   local argTypes = {}
   if arguments then
@@ -218,13 +217,13 @@ function mrpcInterface.declareFunction(port, callName, arguments, results)
     end
   end
   
-  mrpcInterface.callTypes[callName .. "\0" .. port] = (next(argTypes) == nil and true or argTypes)
-  mrpcInterface.callTypes[callName .. "\0" .. port .. "r"] = (next(resultTypes) ~= nil and resultTypes or nil)
+  self.callTypes[callName .. ",a"] = (arguments and argTypes or true)
+  self.callTypes[callName .. ",r"] = (results and resultTypes)
 end
 
-function mrpcInterface.addDeclarations(port, tbl)
+function MrpcClass.addDeclarations(tbl)
   for callName, v in pairs(tbl) do
-    mrpcInterface.declareFunction(port, callName, v[1], v[2])
+    MrpcClass.declareFunction(callName, v[1], v[2])
   end
 end
 
@@ -239,36 +238,30 @@ end
 -- ignored. The address, port, and message arguments are the same as returned
 -- from wnet.receive (message contains the full packet with header and data
 -- segments).
-function mrpcInterface.handleMessage(obj, host, port, message)
-  if port ~= cachedPort then
-    return
+function MrpcClass.handleMessage(obj, host, port, message)
+  local self = cachedObj
+  if port ~= self.port then
+    return false
   end
-  local namePortPair = string.match(message, ".,([^{]*)") .. "\0" .. cachedPort
-  if mrpcInterface.functions[namePortPair] then
-    if string.byte(message) == string.byte("s") then
+  local messageType = string.byte(message)
+  local callName = string.match(message, ".,([^{]*)")
+  
+  if messageType == string.byte("r") then
+    if self.syncSendMutex then
+      self.returnedCallName = callName
+      self.returnedMessage = message
+    end
+  elseif self.functions[callName] then
+    if messageType == string.byte("s") then
+      local results = table.pack(self.functions[callName](obj, host, self.unpack[callName](message)))
+      verifyCallTypes(callName, self.callTypes[callName .. ",r"], results, "result", 0)
       
-      
-      
+      mnet.send(host, self.port, "r," .. callName .. (results.n == 0 and "{n=0}" or serialization.serialize(results)), true)
     else
-      mrpcInterface.functions[namePortPair](obj, host, mrpcInterface.unpack[namePortPair](message))
+      self.functions[callName](obj, host, self.unpack[callName](message))
     end
   end
+  return true
 end
-
---[[
--- packer.extractHeader([address: string, port: number, message: string]):
---     string|nil, number|nil, string|nil, string|nil
--- 
--- Convenience function to find the header attached to a packet. Returns the
--- address, port, header, and message (message is unmodified and still contains
--- the header). If message is not a string, returns nil.
-function mrpcInterface.extractHeader(address, port, message)
-  if type(message) ~= "string" then
-    return
-  end
-  local header = string.match(message, "[^{]*")
-  return address, port, header, message
-end
---]]
 
 return mrpc
