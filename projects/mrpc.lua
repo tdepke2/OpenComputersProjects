@@ -44,40 +44,50 @@ local dlog = include("dlog")
 local mnet = include("mnet")
 
 local mrpc = {}
-local MrpcClass = {}
+local MrpcServer = {}
 
+-- These values are set from metatable __index events to keep track of state in chained function calls.
 local cachedObj, cachedCallName
 
-MrpcClass.__index = function(t, k)
+MrpcServer.__index = function(t, k)
   cachedObj = t
-  return MrpcClass[k]
+  return MrpcServer[k]
 end
 
+-- mrpc.newServer(port: number): table
+-- 
+-- Creates a new instance of an RPC server with a given port number. This server
+-- is used for both requesting functions to run on a remote machine (and
+-- optionally get return values back), and handling function call requests from
+-- other machines. Once a server has been created on the sender and receiver
+-- (with same port number), a remote call defined on both sides, and a function
+-- bound on the receiving end, the sender can start sending requests to the
+-- receiver.
+-- Note that the object this function returns is an instance of MrpcServer, and
+-- unlike most class designs the methods are invoked with a dot instead of colon
+-- operator (this enables the syntax with the sync and async methods).
 function mrpc.newServer(port)
-  local self = setmetatable({}, MrpcClass)
+  local self = setmetatable({}, MrpcServer)
   
   dlog.checkArgs(port, "number")
   self.port = port
   
   -- Function callbacks registered by the server and executed when a matching
-  -- remote call is received.
-  self.functions = {}
-  
-  -- Sets the action to take when no callback is registered for a given remote
-  -- call. Normally this should do nothing, but it is possible to override the
-  -- metatable to log the event here or even throw an error.
-  setmetatable(self.functions, {
+  -- remote call is received. If no matching callback is found, a message is
+  -- logged. It is also an option to override this metatable to do nothing or
+  -- even throw an error.
+  self.functions = setmetatable({}, {
     __index = function(t, k)
       dlog.out("mrpc", "No function registered for call to \"", k, "\".")
     end
   })
   
   -- Declarations for remote calls and expected data types. Each call name has a
-  -- table of strings for these expected types, or a value of "true" if there are
-  -- none for that header.
-  self.callTypes = {}
-  
-  setmetatable(self.callTypes, {
+  -- sequence of strings for expected arguments, or a value of "true" if there
+  -- are none for that call (where the key is callName .. ",a"). If there are
+  -- expected return values, another sequence of strings is provided (with the
+  -- key callName .. ",r").
+  self.callTypes = setmetatable({}, {
     __index = function(t, k)
       xassert(false, "attempt to index self.callTypes for \"", string.sub(k, 1, -3), "\" failed (call name not declared).")
     end
@@ -105,27 +115,30 @@ local function verifyCallTypes(callName, typesList, packedVals, valName, valOffs
   end
 end
 
--- Serializes the given arguments into a table and returns a string containing
--- the header and this table.
+-- Helper function for MrpcServer.sync.
 local function syncSend(host, ...)
   xassert(host ~= "*", "broadcast address not allowed for synchronous call.")
   local self, callName, arg = cachedObj, cachedCallName, table.pack(...)
   verifyCallTypes(callName, self.callTypes[callName .. ",a"], arg, "argument", 1)
   
+  -- Attempt to grab the mutex, or wait for other threads to finish their syncSend() calls.
   while self.syncSendMutex do
     os.sleep(0.05)
   end
   self.syncSendMutex = true
   
+  -- Results from the remote call will go here, and are set by MrpcServer.handleMessage().
   self.returnedCallName = nil
   self.returnedMessage = nil
   
+  -- Serialize arguments into a message and send to host. Wait for it to be received.
   local sendResult = mnet.send(host, self.port, "s," .. callName .. (arg.n == 0 and "{n=0}" or serialization.serialize(arg)), true, true)
   if not sendResult then
     self.syncSendMutex = false
     xassert(false, "remote call to \"", callName, "\" for host \"", host, "\" timed out.")
   end
   
+  -- Continue waiting until results have arrived from receiving end.
   local timeEnd = computer.uptime() + mnet.dropTime
   while computer.uptime() < timeEnd and self.returnedCallName ~= callName do
     os.sleep(0.05)
@@ -142,18 +155,20 @@ local function syncSend(host, ...)
   end
 end
 
+-- Helper function for MrpcServer.async.
 local function asyncSend(host, ...)
   local self, callName, arg = cachedObj, cachedCallName, table.pack(...)
   verifyCallTypes(callName, self.callTypes[callName .. ",a"], arg, "argument", 1)
   
+  -- Serialize arguments into a message and send to host(s). No waiting for message to be received.
   return mnet.send(host, self.port, "a," .. callName .. (arg.n == 0 and "{n=0}" or serialization.serialize(arg)), host ~= "*")
 end
 
--- Deserializes the given string message (contains the header and table data)
--- and returns the original data. An error is thrown if data in the message does
--- not match the specified types defined for the header.
+-- Helper function for MrpcServer.unpack.
 local function doUnpack(message)
   local self, callName = cachedObj, cachedCallName
+  
+  -- Only run expensive call to serialization.unserialize() if non-empty table in message.
   if not string.find(message, "^.," .. callName .. "{n=0}") then
     
     
@@ -171,34 +186,65 @@ local function doUnpack(message)
   dlog.out("mrpc", "skipped call to unserialize()")
 end
 
-MrpcClass.sync = setmetatable({}, {
+-- MrpcServer.sync.<call name>(host: string, ...): ...
+-- 
+-- Requests the given host to run a function call with the given arguments. The
+-- host must not be the broadcast address. As this is the synchronous version,
+-- the function will block the current process until return values are received
+-- from the remote host or the request times out. Any other synchronous calls
+-- made to this MrpcServer instance in other threads will wait their turn to
+-- run. Returns the results from the remote function call, or throws an error if
+-- request timed out (or other error occurred).
+MrpcServer.sync = setmetatable({}, {
   __index = function(t, k)
     cachedCallName = k
     return syncSend
   end
 })
 
-MrpcClass.async = setmetatable({}, {
+-- MrpcServer.async.<call name>(host: string, ...): string
+-- 
+-- Similar to MrpcServer.sync, requests the given host(s) to run a function call
+-- with the given arguments. The host can be the broadcast address. This
+-- asynchronous version will not block the current process but also does not
+-- return the results of the remote call. This internally uses the reliable
+-- message protocol in mnet, so async calls are guaranteed to arrive in the same
+-- order they were sent (even alternating sync and async calls guarantees
+-- in-order delivery). Returns the host-sequence pair of the sent message (can
+-- be used to check for connection failure, see mnet for details).
+MrpcServer.async = setmetatable({}, {
   __index = function(t, k)
     cachedCallName = k
     return asyncSend
   end
 })
 
-MrpcClass.unpack = setmetatable({}, {
+-- MrpcServer.unpack.<call name>(message: string): ...
+-- 
+-- Helper function that deserializes the given RPC formatted message to extract
+-- the arguments. The message format is "<type>,<call name>{<packed table>}"
+-- where type is either 's', 'a', or 'r' (for sync, async, and results), call
+-- name is the name bound to the function call, and packed table is a serialized
+-- table of the arguments with key 'n' storing the total.
+MrpcServer.unpack = setmetatable({}, {
   __index = function(t, k)
     cachedCallName = k
     return doUnpack
   end
 })
 
--- packer.defineHeader(header: string[, name1: string, types1: string, ...])
+-- MrpcServer.declareFunction(callName: string, arguments: table|nil,
+--   results: table|nil)
 -- 
--- Define a packet header and the list of accepted values. For each value, give
--- a name (purely for making it clearer what the value represents in the code)
--- and a comma-separated list of types. The string "any" can also be used for
--- the types to allow any value.
-function MrpcClass.declareFunction(callName, arguments, results)
+-- Specifies a function declaration and optionally the expected data types for
+-- arguments and return values. A function needs to be declared the same way on
+-- two machines before one can call the function on the other. The callName
+-- specifies the name bound to the function. If the arguments and results are
+-- provided, they should each be a sequence with the format {name1: string,
+-- types1: string, ...} where name1 is the first parameter name (purely for
+-- making it clear what the value represents) and types1 is a comma-separated
+-- list of accepted types (or the string "any").
+function MrpcServer.declareFunction(callName, arguments, results)
   dlog.checkArgs(callName, "string", arguments, "table,nil", results, "table,nil")
   local self = cachedObj
   
@@ -221,24 +267,32 @@ function MrpcClass.declareFunction(callName, arguments, results)
   self.callTypes[callName .. ",r"] = (results and resultTypes)
 end
 
-function MrpcClass.addDeclarations(tbl)
-  for callName, v in pairs(tbl) do
-    MrpcClass.declareFunction(callName, v[1], v[2])
+-- MrpcServer.addDeclarations(declarationMap: table)
+-- 
+-- Iterates a table and calls MrpcServer.declareFunction() for each entry. Each
+-- key in declarationMap should be the call name of the function to declare and
+-- the value should be another table containing the same arguments and results
+-- tables that would be passed to MrpcServer.declareFunction(). The intended way
+-- to use this is create a Lua script that returns the declarationMap table,
+-- then use dofile() to pass it into this function.
+function MrpcServer.addDeclarations(declarationMap)
+  for callName, v in pairs(declarationMap) do
+    MrpcServer.declareFunction(callName, v[1], v[2])
   end
 end
 
--- packer.handlePacket(obj: table|nil[, address: string, port: number,
---   message: string])
+-- MrpcServer.handleMessage(obj: any[, host: string, port: number,
+--   message: string]): boolean
 -- 
--- Looks up the packet handler in packer.callbacks for the given packet, and
--- executes the action. If no callback is registered, behavior depends on the
--- metatable of packer.callbacks (nothing happens by default). The obj argument
--- should be used if the callbacks are set to class member functions. Otherwise,
--- nil can be passed for obj and the first argument in a callback can be
--- ignored. The address, port, and message arguments are the same as returned
--- from wnet.receive (message contains the full packet with header and data
--- segments).
-function MrpcClass.handleMessage(obj, host, port, message)
+-- When called with the results of mnet.receive(), checks if the port and
+-- message match an incoming request to run a function (or results from a sent
+-- request). If the message is requesting to run a function and the
+-- corresponding function has been assigned to MrpcServer.functions.<call name>,
+-- it is called with obj, host, and all of the sent arguments. The obj argument
+-- should be used if the bound function is a class member. Otherwise, nil can be
+-- passed for obj and the first argument in the function can be ignored. Returns
+-- true if the message was handled by this server, or false if not.
+function MrpcServer.handleMessage(obj, host, port, message)
   local self = cachedObj
   if port ~= self.port then
     return false
@@ -247,17 +301,20 @@ function MrpcClass.handleMessage(obj, host, port, message)
   local callName = string.match(message, ".,([^{]*)")
   
   if messageType == string.byte("r") then
+    -- Message is results from a previous syncSend() call, cache it for later.
     if self.syncSendMutex then
       self.returnedCallName = callName
       self.returnedMessage = message
     end
   elseif self.functions[callName] then
     if messageType == string.byte("s") then
+      -- Message is from a synchronous call, need to send the results back.
       local results = table.pack(self.functions[callName](obj, host, self.unpack[callName](message)))
       verifyCallTypes(callName, self.callTypes[callName .. ",r"], results, "result", 0)
       
       mnet.send(host, self.port, "r," .. callName .. (results.n == 0 and "{n=0}" or serialization.serialize(results)), true)
     else
+      -- Message is from an asynchronous call, just call the function.
       self.functions[callName](obj, host, self.unpack[callName](message))
     end
   end

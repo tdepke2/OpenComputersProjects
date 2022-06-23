@@ -93,7 +93,7 @@ local dlog = include("dlog")
 
 local mnet = {}
 
--- Unique address for the machine running this instance of mnet.
+-- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
 mnet.hostname = string.sub(computer.address(), 1, 4)
 -- Common hardware port used by all hosts in this network.
 mnet.port = 123
