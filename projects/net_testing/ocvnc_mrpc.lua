@@ -3,11 +3,11 @@ Function declarations for ocvnc remote procedure calls.
 --]]
 
 return {
-  -- Request storage server address.
-  stor_discover = {
+  -- Client request to start VNC session with a server.
+  connect = {
   },
-  -- Request storage to insert items into storage network.
-  stor_insert = {
+  -- 
+  gpu_set_foreground = {
   },
   -- Request storage to extract items from storage network.
   stor_extract = {
