@@ -1,39 +1,66 @@
 --[[
-Remote procedure call library for mnet.
+Remote procedure calls for mnet.
 
-requirements:
-  * one or more rpc servers can run on a machine (each one claims a single vport)
-  * synchronous and asynchronous calls (chosen when client does call)
-  * able to get a return value (except from broadcast)
-  * function definitions
+The mrpc module can be used to create RPC servers that manage incoming and
+outgoing requests to run functions on a remote system. Multiple server instances
+can run on one machine, as long as each one is using a unique port number (same
+as the virtual port in mnet). There is also support for synchronous and
+asynchronous calls. Synchronous calls will block the current process while
+waiting for the remote call to finish execution and return results (more like
+traditional RPC). Asynchronous calls do not block, and therefore have some
+performance benefits. The downside of using async is that the results of the
+remote function are not returned. However, this can be resolved by having the
+receiving side run an async call with the results back to the original sender.
 
-the general purpose event handler at bottom of this page is good: https://ocdoc.cil.li/api:event
+When setting up the RPC server, function declarations must be given before a
+remote call can be issued. It is required to specify the "call names" that can
+be used, and optional to specify the expected arguments and return values. This
+requirement is put in place to encourage the user to define a common interface
+of the remote calls that an RPC server accepts. It's best to put this interface
+in a separate Lua script and use MrpcServer.addDeclarations() to pull it in.
 
-rpc_server = mrpc.newServer(port)
+Note: it is not advised to save a reference to the functions returned by
+addressing a call name (such as from MrpcServer.sync.<call name>). The function
+context is only valid during indexing from the MrpcServer instance because of
+the way that metatables are used to cache state.
 
-client:
-<return vals> rpc_server.sync.<call name>(host, ...)
-    <hostseq> rpc_server.async.<call name>(host, ...)
+Another note: be careful when binding functions that take a long time to
+process. Running them in the same thread as mnet.receive() can block handling of
+other network messages. One option to prevent this is to run the slow functions
+in a separate thread and pass results from mnet.receive() over a queue.
 
-server:
-rpc_server.functions.<call name> = function
-rpc_server.handleMessage(obj, host, port, message)
-<call name> called with (obj, host, ...)
+Most of this code was adapted from the old packer.lua module. The packer module
+was an early RPC prototype and was independent from the underlying network
+protocol (wnet at the time). This was great for modularity, but packer also had
+functions registered in a global table and an ugly call syntax.
 
-both:
-rpc_server.declareFunction(name[, {args}[, {returns}] ])
-rpc_server.addDeclarations({decl})
+Example usage:
+-- Create server on port 1024.
+local mrpc_server = mrpc.newServer(1024)
 
-decl = {}
-decl[1] = {name, {args}, {returns}}
-...
+-- Declare function say_hello.
+mrpc_server.declareFunction("say_hello", {
+  "senderMessage", "string",
+  "extraData", "any",
+})
 
+-- Register function to run when we receive a say_hello request.
+mrpc_server.functions.say_hello = function(obj, host, senderMessage, extraData)
+  print("Hello from " .. host .. ": " .. senderMessage)
+  print(tostring(extraData))
+end
 
+-- Request other active servers to run say_hello.
+mrpc_server.async.say_hello("*", "anyone out there?", {"extra", "data"})
+print("Sent request to run say_hello on other servers.")
 
-
-Note: do not try to save a reference to the functions called with rpc_server:sync.<call name>(), and same for rpc_server:async and rpc_server:unpack.
-
-
+-- Respond to requests from other servers.
+local listenerThread = thread.create(function()
+  while true do
+    local host, port, message = mnet.receive(0.1)
+    mrpc_server.handleMessage(nil, host, port, message)
+  end
+end)
 --]]
 
 local computer = require("computer")
@@ -42,6 +69,9 @@ local serialization = require("serialization")
 local include = require("include")
 local dlog = include("dlog")
 local mnet = include("mnet")
+
+-- Maximum seconds for a synchronous call to block execution after the request has been acknowledged. Increase this value if there are long-running functions on the receiving side.
+local SYNC_RESULTS_TIMEOUT = mnet.dropTime + 1.0
 
 local mrpc = {}
 local MrpcServer = {}
@@ -53,6 +83,7 @@ MrpcServer.__index = function(t, k)
   cachedObj = t
   return MrpcServer[k]
 end
+
 
 -- mrpc.newServer(port: number): table
 -- 
@@ -100,6 +131,7 @@ function mrpc.newServer(port)
   return self
 end
 
+
 -- Confirms that the given values in the packed table packedVals match the
 -- specified types in typesList.
 local function verifyCallTypes(callName, typesList, packedVals, valName, valOffset)
@@ -114,6 +146,7 @@ local function verifyCallTypes(callName, typesList, packedVals, valName, valOffs
     end
   end
 end
+
 
 -- Helper function for MrpcServer.sync.
 local function syncSend(host, ...)
@@ -139,7 +172,7 @@ local function syncSend(host, ...)
   end
   
   -- Continue waiting until results have arrived from receiving end.
-  local timeEnd = computer.uptime() + mnet.dropTime
+  local timeEnd = computer.uptime() + SYNC_RESULTS_TIMEOUT
   while computer.uptime() < timeEnd and self.returnedCallName ~= callName do
     os.sleep(0.05)
   end
@@ -155,6 +188,7 @@ local function syncSend(host, ...)
   end
 end
 
+
 -- Helper function for MrpcServer.async.
 local function asyncSend(host, ...)
   local self, callName, arg = cachedObj, cachedCallName, table.pack(...)
@@ -164,27 +198,19 @@ local function asyncSend(host, ...)
   return mnet.send(host, self.port, "a," .. callName .. (arg.n == 0 and "{n=0}" or serialization.serialize(arg)), host ~= "*")
 end
 
+
 -- Helper function for MrpcServer.unpack.
 local function doUnpack(message)
   local self, callName = cachedObj, cachedCallName
   
   -- Only run expensive call to serialization.unserialize() if non-empty table in message.
   if not string.find(message, "^.," .. callName .. "{n=0}") then
-    
-    
-    dlog.out("mrpc", "watch out im calling unserialize()")
-    
-    
-    
-    
     local arg = serialization.unserialize(string.sub(message, #callName + 3))
     xassert(arg, "failed to deserialize the provided message.")
     return table.unpack(arg, 1, arg.n)
   end
-  
-  
-  dlog.out("mrpc", "skipped call to unserialize()")
 end
+
 
 -- MrpcServer.sync.<call name>(host: string, ...): ...
 -- 
@@ -201,6 +227,7 @@ MrpcServer.sync = setmetatable({}, {
     return syncSend
   end
 })
+
 
 -- MrpcServer.async.<call name>(host: string, ...): string
 -- 
@@ -219,6 +246,7 @@ MrpcServer.async = setmetatable({}, {
   end
 })
 
+
 -- MrpcServer.unpack.<call name>(message: string): ...
 -- 
 -- Helper function that deserializes the given RPC formatted message to extract
@@ -232,6 +260,7 @@ MrpcServer.unpack = setmetatable({}, {
     return doUnpack
   end
 })
+
 
 -- MrpcServer.declareFunction(callName: string, arguments: table|nil,
 --   results: table|nil)
@@ -267,6 +296,7 @@ function MrpcServer.declareFunction(callName, arguments, results)
   self.callTypes[callName .. ",r"] = (results and resultTypes)
 end
 
+
 -- MrpcServer.addDeclarations(declarationMap: table)
 -- 
 -- Iterates a table and calls MrpcServer.declareFunction() for each entry. Each
@@ -280,6 +310,7 @@ function MrpcServer.addDeclarations(declarationMap)
     MrpcServer.declareFunction(callName, v[1], v[2])
   end
 end
+
 
 -- MrpcServer.handleMessage(obj: any[, host: string, port: number,
 --   message: string]): boolean
@@ -310,7 +341,9 @@ function MrpcServer.handleMessage(obj, host, port, message)
     if messageType == string.byte("s") then
       -- Message is from a synchronous call, need to send the results back.
       local results = table.pack(self.functions[callName](obj, host, self.unpack[callName](message)))
-      verifyCallTypes(callName, self.callTypes[callName .. ",r"], results, "result", 0)
+      if rawget(self.callTypes, callName .. ",r") then
+        verifyCallTypes(callName, self.callTypes[callName .. ",r"], results, "result", 0)
+      end
       
       mnet.send(host, self.port, "r," .. callName .. (results.n == 0 and "{n=0}" or serialization.serialize(results)), true)
     else

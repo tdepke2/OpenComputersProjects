@@ -73,7 +73,6 @@ end)
 
 -- FIXME things left to do: #############################################################
 -- * test fixes to simultaneous connection start
--- * move config options for reliable transmission to more permanent names
 -- * add support for linked cards
 -- * finish routing behavior
 -- * functions to open/close mnet.port?
@@ -98,15 +97,17 @@ mnet.hostname = string.sub(computer.address(), 1, 4)
 -- Common hardware port used by all hosts in this network.
 mnet.port = 123
 
+-- FIXME NYI ##################################################################################################
+mnet.route = true
 -- Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
-mnet.routeExpiration = 30
+mnet.routeTime = 30
 -- Time in seconds for reliable messages to be retransmitted while no "ack" is received.
 mnet.retransmitTime = 3
 -- Time in seconds until packets in the cache are dropped or reliable messages time out.
 mnet.dropTime = 12
 
 -- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
-mnet.mtuAdjusted = 10  --1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
+mnet.mtuAdjusted = 1000  --1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
 
 
 -- Used to determine routes for packets. Stores uptime, receiverAddress, and senderAddress for each host.
@@ -144,7 +145,8 @@ else
   swapSeq = {}
 end
 function mnet.debugEnableLossy(lossy)
-  for _, modem in pairs(modems) do
+  for address in component.list("modem", true) do
+    local modem = component.proxy(address)
     if lossy and not modem.debugLossyActive then
       modem.broadcastReal = modem.broadcast
       modem.broadcast = function(...)
@@ -252,6 +254,7 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   return id
 end
 
+
 -- mnet.send(host: string, port: number, message: string, reliable: boolean[,
 --   waitForAck: boolean]): string|nil
 -- 
@@ -298,11 +301,13 @@ function mnet.send(host, port, message, reliable, waitForAck)
   end
 end
 
+
 -- Breaks a comma-separated host and sequence string into their values.
 local function splitHostSequencePair(hostSeq)
   local host, sequence = string.match(hostSeq, "(.*),([^,]+)$")
   return host, tonumber(sequence)
 end
+
 
 -- Filters the message in the current packet to prevent returning a fragment of
 -- a larger message. The currentPacket must be a packet that is in-order or nil.
@@ -343,6 +348,7 @@ local function nextMessage(hostSeq, currentPacket)
     return string.sub(host, 2), currentPacket[3], table.concat(fragments)
   end
 end
+
 
 -- mnet.receive(timeout: number[, connectionLostCallback: function]): nil |
 --   (string, number, string)
@@ -411,7 +417,7 @@ function mnet.receive(timeout, connectionLostCallback)
   
   --[[
   for k, v in pairs(mnet.routingTable) do
-    if t > v[1] + mnet.routeExpiration then
+    if t > v[1] + mnet.routeTime then
       mnet.routingTable[k] = nil
     end
   end--]]

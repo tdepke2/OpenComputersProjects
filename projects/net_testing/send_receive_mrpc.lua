@@ -16,7 +16,31 @@ local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
 local mnet = include.reload("mnet")
 local mrpc_server = include("mrpc").newServer(789)
-mrpc_server.addDeclarations(dofile("net_testing/ocvnc_mrpc.lua"))
+
+mrpc_server.addDeclarations({
+  -- Request storage server address.
+  stor_discover = {
+  },
+  -- Request storage to insert items into storage network.
+  stor_insert = {
+  },
+  -- Request storage to extract items from storage network.
+  stor_extract = {
+    {
+      "itemName", "string,nil",
+      "amount", "number",
+    }, {
+      "something", "string",
+    },
+  },
+  -- Request storage to reserve items in network for crafting operation.
+  stor_recipe_reserve = {
+    {
+      "ticket", "string",
+      "itemInputs", "table",
+    },
+  },
+})
 
 local HOST1 = "1315"
 local HOST2 = "2f2c"
@@ -27,6 +51,7 @@ local receivedData = {}
 mrpc_server.functions.stor_discover = function(...)
   dlog.out("stor_discover", "running func called with: ", {...})
   receivedData[#receivedData + 1] = "stor_discover called"
+  os.sleep(5)
 end
 
 mrpc_server.functions.stor_extract = function(...)
@@ -58,6 +83,15 @@ local function main()
   
   local listenerThread = thread.create(listenerThreadFunc)
   
+  local thread2 = thread.create(function()
+    os.sleep(2)
+    if mnet.hostname ~= HOST1 then
+      dlog.out("mrpc_server call from thread2", {mrpc_server.sync.stor_discover(HOST1, true, nil)})
+    else
+      --dlog.out("mrpc_server call from thread2", {mrpc_server.sync.stor_discover(HOST2, true, nil)})
+    end
+  end)
+  
   while true do
     local event = {event.pull(0.1)}
     if event[1] == "interrupted" then
@@ -86,7 +120,7 @@ local function main()
         if event[3] == string.byte("s") then
           --sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz abcdefghijklmnopqrstuvwxyz", true)
           
-          dlog.out("mrpc_server call", {mrpc_server.async.stor_discover(HOST1, true, "big nuts", {"xd", "123"})})
+          dlog.out("mrpc_server call", {mrpc_server.sync.stor_discover(HOST1, true, "big nuts", {"xd", "123"})})
           
           dlog.out("mrpc_server call", {mrpc_server.sync.stor_extract(HOST1, "ok", 10001)})
         elseif event[3] == string.byte("d") then
