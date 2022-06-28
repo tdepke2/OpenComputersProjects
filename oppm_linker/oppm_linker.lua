@@ -11,7 +11,7 @@ local serialization = require("serialization")
 local shell = require("shell")
 local text = require("text")
 
--- Time in seconds to pause OS if a warning shows up and not running in silent mode.
+-- Time in seconds to pause if a warning shows up and not running in silent mode.
 local WARNING_PAUSE_TIME = 2
 
 local numWarnings = 0
@@ -79,8 +79,12 @@ local function readPackageConfig(options, repoPath, installPath)
   file:close()
   assert(pkgTable, "failed to deserialize programs list \"" .. filename .. "\"")
   
-  -- The programs.cfg file just gives a table with package names, where each one defines files that pair file(s) in the repo with the install path.
+  -- The programs.cfg file just gives a table with package names, where each one defines files in the repo and their install path.
   for pkgName, pkgDat in pairs(pkgTable) do
+    -- Special case since the oppm_linker files need to be persistent on the system and we don't want to try to create symlinks to replace them.
+    if pkgName == "oppm_linker" then
+      pkgDat.files = nil
+    end
     for srcPath, destPath in pairs(pkgDat.files or {}) do
       -- A colon at start of srcPath means all of the contents in that directory. A question mark has another meaning at start of srcPath but we ignore it.
       local addContents = string.find(srcPath, "^:")
