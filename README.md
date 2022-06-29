@@ -1,4 +1,7 @@
 
+<!-- MARKDOWN-AUTO-DOCS:START (CODE:src=./programs.cfg) -->
+<!-- MARKDOWN-AUTO-DOCS:END -->
+
 Some projects for OpenComputers mod.
 TODO: Add description, setup instructions, screenshots, etc.
 
