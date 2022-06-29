@@ -1,0 +1,15 @@
+# GitHub action to embed code snippets in markdown files.
+name: markdown-autodocs
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  auto-update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Markdown autodocs
+        uses: dineshsonachalam/markdown-autodocs@v1.0.3
