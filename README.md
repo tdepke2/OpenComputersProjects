@@ -1,5 +1,130 @@
 
 <!-- MARKDOWN-AUTO-DOCS:START (CODE:src=./programs.cfg) -->
+<!-- The below code snippet is automatically added from ./programs.cfg -->
+```cfg
+{
+  ["libapptools"] = {
+    files = {
+      ["master/libapptools/dlog.lua"] = "/lib",
+      ["master/libapptools/include.lua"] = "/lib",
+    },
+    name = "Application Tools Library",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/libapptools",
+  },
+  ["libdstructs"] = {
+    files = {
+      ["master/libdstructs/dstructs.lua"] = "/lib",
+    },
+    name = "Data Structures Library",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/libdstructs",
+  },
+  ["libmatrix"] = {
+    files = {
+      ["master/libmatrix/vector.lua"] = "/lib",
+      ["master/libmatrix/matrix.lua"] = "/lib",
+    },
+    name = "Vector/Matrix Library",
+    description = "",
+    note = "The libapptools package is an optional dependency.",
+    authors = "tdepke2",
+    repo = "tree/master/libmatrix",
+  },
+  ["libmnet"] = {
+    files = {
+      ["master/libmnet/mnet.lua"] = "/lib",
+      ["master/libmnet/mrpc.lua"] = "/lib",
+    },
+    dependencies = {
+      ["libapptools"] = "/",
+    },
+    name = "Mesh Networking and RPC Library",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/libmnet",
+  },
+  ["libwnet"] = {
+    files = {
+      ["master/libwnet/packer.lua"] = "/lib",
+      ["master/libwnet/wnet.lua"] = "/lib",
+    },
+    dependencies = {
+      ["libapptools"] = "/",
+    },
+    name = "Prototype Networking Library (old version of libmnet)",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/libwnet",
+    hidden = true,
+  },
+  ["minibuilder"] = {
+    files = {
+      [":master/minibuilder"] = "//home/minibuilder",
+    },
+    name = "Automation for Compact Machines Crafting",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/minibuilder",
+  },
+  ["ocvnc"] = {
+    files = {
+      [":master/ocvnc"] = "//home/ocvnc",
+    },
+    name = "VNC Client/Server",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/ocvnc",
+  },
+  ["oppm_linker"] = {
+    files = {
+      ["master/oppm_linker/oppm_linker"] = "/man",
+      ["master/oppm_linker/oppm_linker.lua"] = "//etc/rc.d",
+    },
+    name = "OPPM Git Repo Symlink Generator",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/oppm_linker",
+  },
+  ["tdepke-tests"] = {
+    files = {
+      
+    },
+    name = "Unit Tests For tdepke Packages",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/tdepke-tests",
+    hidden = true,
+  },
+  ["tgol"] = {
+    files = {
+      ["master/tgol/tgol.lua"] = "/bin",
+    },
+    dependencies = {
+      ["libapptools"] = "/",
+      ["libdstructs"] = "/",
+    },
+    name = "Just Another Conways Game of Life",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/tgol",
+  },
+  ["tquarry"] = {
+    files = {
+      [":master/tquarry"] = "//home/tquarry",
+    },
+    dependencies = {
+      ["libapptools"] = "/",
+    },
+    name = "Quarry Bot",
+    description = "",
+    authors = "tdepke2",
+    repo = "tree/master/tquarry",
+  },
+}
+```
 <!-- MARKDOWN-AUTO-DOCS:END -->
 
 Some projects for OpenComputers mod.
