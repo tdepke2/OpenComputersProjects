@@ -12,4 +12,4 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Markdown autodocs
-        uses: dineshsonachalam/markdown-autodocs@v1.0.3
+        uses: dineshsonachalam/markdown-autodocs@v1.0.4
