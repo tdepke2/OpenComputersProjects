@@ -15,7 +15,7 @@ jobs:
         uses: actions/setup-node@v3.3.0
       - name: Downgrade node-fetch version
         run: |
-          npm uninstall node-fetch
-          npm install node-fetch@2.6.7
+          npm uninstall -g node-fetch
+          npm install -g node-fetch@2.6.7
       - name: Markdown autodocs
         uses: dineshsonachalam/markdown-autodocs@v1.0.4
