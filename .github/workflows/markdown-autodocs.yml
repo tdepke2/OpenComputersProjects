@@ -13,7 +13,9 @@ jobs:
       - uses: actions/checkout@v3
       - name: Setup Node.js environment
         uses: actions/setup-node@v3.3.0
-        with:
-          node-version: 16.x
+      - name: Downgrade node-fetch version
+        run: |
+          npm uninstall node-fetch
+          npm install node-fetch@2.6.7
       - name: Markdown autodocs
         uses: dineshsonachalam/markdown-autodocs@v1.0.4
