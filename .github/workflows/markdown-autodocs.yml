@@ -14,12 +14,8 @@ jobs:
       - name: Setup Node.js environment
         uses: actions/setup-node@v3.3.0
       - name: Downgrade doctoc version
+        # Latest version of doctoc uses ES Module format, and conflicts with some packages in markdown-autodocs.
         run: |
           npm install -g doctoc@2.1.0
       - name: Markdown autodocs
         uses: dineshsonachalam/markdown-autodocs@v1.0.4
-      - name: show node packages
-        run: |
-          echo '::echo::on'
-          npm list -g --depth=0
-          echo '::echo::off'
