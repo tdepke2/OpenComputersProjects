@@ -1,5 +1,4 @@
-
-<!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./oppm_linker.lua) -->
+<!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./oppm_linker) -->
 <!-- The below content is automatically added from ./oppm_linker.lua -->
 --[[
 Create symlinks from a Git repository to their install locations on the machine.
