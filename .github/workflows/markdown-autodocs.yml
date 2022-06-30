@@ -19,3 +19,12 @@ jobs:
           npm install -g doctoc@2.1.0
       - name: Markdown autodocs
         uses: dineshsonachalam/markdown-autodocs@v1.0.4
+        with:
+          # Optional, but recommended
+          # Defaults to "Apply automatic changes"
+          commit_message: 'markdown-autodocs: Update README.md files'
+          # Optional output file paths, defaults to '[./README.md]'.
+          output_file_paths: '[**/README.md]'
+          # Categories to automatically sync or transform its contents in the markdown files.
+          # Defaults to '[code-block,json-to-html-table,workflow-artifact-table]'
+          categories: '[code-block]'
