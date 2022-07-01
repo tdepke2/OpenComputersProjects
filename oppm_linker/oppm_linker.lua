@@ -1,8 +1,10 @@
---[[
-Create symlinks from a Git repository to their install locations on the machine.
-
-
---]]
+--------------------------------------------------------------------------------
+-- An rc daemon for automatically linking files in a Git repository to their
+-- install location. This is designed for easy development of code with the
+-- OpenPrograms Package Manager.
+-- 
+-- @author tdepke2
+--------------------------------------------------------------------------------
 
 local component = require("component")
 local computer = require("computer")
