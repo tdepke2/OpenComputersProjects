@@ -23,7 +23,7 @@ dlog.osBlockNewGlobals(true)
 local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
 
-mrpc_server.addDeclarations(dofile("net_testing/ocvnc_mrpc.lua"))
+mrpc_server.addDeclarations(dofile("ocvnc/ocvnc_mrpc.lua"))
 
 local DLOG_FILE_OUT = "/tmp/messages"
 
