@@ -2,7 +2,7 @@
 
 Mesh networking protocol with minimalistic API.
 
-The mnet protocol stack covers layers 3 and 4 of the OSI model and is designed for general purpose mesh networking using reliable or unreliable communication (much like TCP and UDP). The interface is kept as simple as possible for performance and to allow embedded devices with a small EEPROM to run it. Much of the inspiration for mnet came from minitel: [https://github.com/ShadowKatStudios/OC-Minitel]()
+The mnet protocol stack covers layers 3 and 4 of the OSI model and is designed for general purpose mesh networking using reliable or unreliable communication (much like TCP and UDP). The interface is kept as simple as possible for performance and to allow embedded devices with a small EEPROM to run it. Much of the inspiration for mnet came from minitel: https://github.com/ShadowKatStudios/OC-Minitel
 
 Key features:
 
@@ -52,9 +52,13 @@ The mrpc module can be used to create RPC servers that manage incoming and outgo
 
 When setting up the RPC server, function declarations must be given before a remote call can be issued. It is required to specify the "call names" that can be used, and optional to specify the expected arguments and return values. This requirement is put in place to encourage the user to define a common interface of the remote calls that an RPC server accepts. It's best to put this interface in a separate Lua script and use `MrpcServer.addDeclarations()` to pull it in.
 
-==Note: it is not advised to save a reference to the functions returned by addressing a call name (such as from `MrpcServer.sync.<call name>`). The function context is only valid during indexing from the `MrpcServer` instance because of the way that metatables are used to cache state.==
+> **Warning**
+> 
+> It is not advised to save a reference to the functions returned by addressing a call name (such as from `MrpcServer.sync.<call name>`). The function context is only valid during indexing from the `MrpcServer` instance because of the way that metatables are used to cache state.
 
-==Another note: be careful when binding functions that take a long time to process. Running them in the same thread as `mnet.receive()` can block handling of other network messages. One option to prevent this is to run the slow functions in a separate thread and pass results from `mnet.receive()` over a queue.==
+> **Note**
+> 
+> Be careful when binding functions that take a long time to process. Running them in the same thread as `mnet.receive()` can block handling of other network messages. One option to prevent this is to run the slow functions in a separate thread and pass results from `mnet.receive()` over a queue.
 
 Most of this code was adapted from the old packer.lua module. The packer module was an early RPC prototype and was independent from the underlying network protocol (wnet at the time). This was great for modularity, but packer also had functions registered in a global table and an ugly call syntax.
 

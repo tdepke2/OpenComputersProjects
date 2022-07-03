@@ -16,7 +16,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
 
 Module loader (improved version of `require()` function).
 
-Extends the functionality of `require()` to solve an issue with modules getting cached and not reloading. The `include()` function will reload a module (and all modules that depend on it) if it detects that the file has been modified. Any user modules that need to be loaded should use `include()` instead of `require()` for this to work properly (except for the include module itself). Using `include()` for system libraries is not necessary and may not always work. Take a look at the `package.loaded` warnings here: [https://ocdoc.cil.li/api:non-standard-lua-libs]()
+Extends the functionality of `require()` to solve an issue with modules getting cached and not reloading. The `include()` function will reload a module (and all modules that depend on it) if it detects that the file has been modified. Any user modules that need to be loaded should use `include()` instead of `require()` for this to work properly (except for the include module itself). Using `include()` for system libraries is not necessary and may not always work. Take a look at the `package.loaded` warnings here: https://ocdoc.cil.li/api:non-standard-lua-libs
 
 In order for `include()` to work properly, a module must meet these requirements:
 
