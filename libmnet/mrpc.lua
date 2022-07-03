@@ -1,67 +1,9 @@
---[[
-Remote procedure calls for mnet.
-
-The mrpc module can be used to create RPC servers that manage incoming and
-outgoing requests to run functions on a remote system. Multiple server instances
-can run on one machine, as long as each one is using a unique port number (same
-as the virtual port in mnet). There is also support for synchronous and
-asynchronous calls. Synchronous calls will block the current process while
-waiting for the remote call to finish execution and return results (more like
-traditional RPC). Asynchronous calls do not block, and therefore have some
-performance benefits. The downside of using async is that the results of the
-remote function are not returned. However, this can be resolved by having the
-receiving side run an async call with the results back to the original sender.
-
-When setting up the RPC server, function declarations must be given before a
-remote call can be issued. It is required to specify the "call names" that can
-be used, and optional to specify the expected arguments and return values. This
-requirement is put in place to encourage the user to define a common interface
-of the remote calls that an RPC server accepts. It's best to put this interface
-in a separate Lua script and use MrpcServer.addDeclarations() to pull it in.
-
-Note: it is not advised to save a reference to the functions returned by
-addressing a call name (such as from MrpcServer.sync.<call name>). The function
-context is only valid during indexing from the MrpcServer instance because of
-the way that metatables are used to cache state.
-
-Another note: be careful when binding functions that take a long time to
-process. Running them in the same thread as mnet.receive() can block handling of
-other network messages. One option to prevent this is to run the slow functions
-in a separate thread and pass results from mnet.receive() over a queue.
-
-Most of this code was adapted from the old packer.lua module. The packer module
-was an early RPC prototype and was independent from the underlying network
-protocol (wnet at the time). This was great for modularity, but packer also had
-functions registered in a global table and an ugly call syntax.
-
-Example usage:
--- Create server on port 1024.
-local mrpc_server = mrpc.newServer(1024)
-
--- Declare function say_hello.
-mrpc_server.declareFunction("say_hello", {
-  "senderMessage", "string",
-  "extraData", "any",
-})
-
--- Register function to run when we receive a say_hello request.
-mrpc_server.functions.say_hello = function(obj, host, senderMessage, extraData)
-  print("Hello from " .. host .. ": " .. senderMessage)
-  print(tostring(extraData))
-end
-
--- Request other active servers to run say_hello.
-mrpc_server.async.say_hello("*", "anyone out there?", {"extra", "data"})
-print("Sent request to run say_hello on other servers.")
-
--- Respond to requests from other servers.
-local listenerThread = thread.create(function()
-  while true do
-    local host, port, message = mnet.receive(0.1)
-    mrpc_server.handleMessage(nil, host, port, message)
-  end
-end)
---]]
+--------------------------------------------------------------------------------
+-- Remote procedure calls for mnet.
+-- 
+-- @see file://libmnet/README.md
+-- @author tdepke2
+--------------------------------------------------------------------------------
 
 
 local computer = require("computer")

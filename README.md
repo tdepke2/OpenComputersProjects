@@ -11,3 +11,7 @@ TODO: Add description, setup instructions, screenshots, etc.
 [libapptools](libapptools)
 
 > A few modules to help with multithreading, debugging to log files, automatic require() reloading, and more.
+
+[libmnet](libmnet)
+
+> Networking library with support for reliable/unreliable messaging (like TCP/UDP) and messages of any size. Automatic routing makes the network design very flexible, and the code has a small footprint for embedded devices (fits on EEPROM).
