@@ -27,7 +27,7 @@ See the man page below for details:
   
   3. Run `mkdir /repository` in-game, then copy the Git repo into here outside of the game or `git clone` one from GitHub. The root of the repo should be at `/repository/<your-repo-name>/.git`. You can add as many repos in `/repository` as you want and they will all get loaded by oppm_linker. Other options may be to use the OPPM package called `gitrepo` to clone a repo from within the game, or just download a zip archive from the internet with `wget`.
   
-  4. The Git repo should have a valid `programs.cfg` file to define the packages. See `https://ocdoc.cil.li/tutorial:program:oppm` for details.
+  4. The Git repo should have a valid `programs.cfg` file to define the packages. See https://ocdoc.cil.li/tutorial:program:oppm for details.
   
   5. Get oppm_linker installed with `oppm install oppm_linker`, then enable the daemon to run at boot with `rc oppm_linker enable`. It's important for oppm_linker to be the first daemon to run on the system since it sets up binaries, so it should appear as the first entry in `/etc/rc.cfg`. After a reboot (it's usually best to cold-reboot the system by pressing power button), the new symlinks should show up in the package install locations. Note that the symlinks will not show in the physical filesystem outside the game.
   
