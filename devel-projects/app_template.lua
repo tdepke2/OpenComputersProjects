@@ -1,14 +1,18 @@
---[[
-Template for lua application code used in various places.
-
-This is some sample code for an application design that seems to scale fairly
-well for larger programs. Note that this is not a minimal example, there is
-plenty that could be trimmed out depending on the use case.
-
-This program can be run with no arguments, or with "lua app_template.lua test"
-to run any implemented tests. Requires the additional libraries listed below to
-work properly.
---]]
+--------------------------------------------------------------------------------
+-- Template for lua application code used in various places.
+-- 
+-- This is some sample code for an application design that seems to scale fairly
+-- well for larger programs. Note that this is not a minimal example, there is
+-- plenty that could be trimmed out depending on the use case.
+-- 
+-- This program can be run with no arguments, or "./app_template.lua test" to
+-- run any implemented tests. Requires the additional libraries listed below to
+-- work properly.
+-- 
+-- @see file://libapptools/README.md
+-- @see file://libmnet/README.md
+-- @author tdepke2
+--------------------------------------------------------------------------------
 
 
 -- OS libraries.
@@ -22,14 +26,30 @@ local thread = require("thread")
 
 -- User libraries.
 local include = require("include")
+local app = include("app"):new()
 local dlog = include("dlog")
-dlog.osBlockNewGlobals(true)    -- This is used to assert new global variables do not get defined (generally a good practice to avoid the use of globals).
+-- This is used to assert new global variables do not get defined (generally a good practice to avoid the use of globals).
+-- It runs in a cleanup task to undo the globals blocking right before the application stops.
+app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
 local dstructs = include("dstructs")
-local packer = include("packer")
-local wnet = include("wnet")
+local mnet = include("mnet")
+local mrpc_server = include("mrpc").newServer(456)
+
+
+-- Declarations for the mrpc_server. This is usually done in a separate file and
+-- loaded in with mrpc_server.addDeclarations(dofile(...)).
+mrpc_server.addDeclarations({
+  -- Sample RPC declaration, a single string parameter is defined.
+  test_message = {
+    {
+      "message", "string",
+    },
+  },
+})
+
 
 -- Configuration constants.
-local COMMS_PORT = 123
+local MRPC_PORT = mrpc_server.port
 local DLOG_FILE_OUT = "/tmp/messages"
 
 
@@ -50,6 +70,8 @@ setmetatable(MyApp, {
   end
 })
 
+
+-- Constructor for MyApp.
 function MyApp:new(vals)
   self.__index = self
   self = setmetatable({}, self)
@@ -70,22 +92,24 @@ function MyApp:doThing(index)
 end
 
 
--- Callback for handling a received message over the network with the header
--- "test_message" (which won't actually work since this header is not yet
--- defined). See packer module for more details.
-function MyApp:handleTestMessage(address, port, message)
-  io.write("got message from ", address, ": ", tostring(message), "\n")
+-- Callback for handling a remote procedure call request from another server.
+-- See mrpc module for more details.
+function MyApp:handleTestMessage(host, message)
+  io.write("got message from ", host, ": ", tostring(message), "\n")
   
-  -- Send a reply back (also needs to be defined in packer to work).
-  wnet.send(modem, address, COMMS_PORT, packer.pack.test_message_reply("hello"))
+  -- Send a reply back (needs to be declared in mrpc_server to work).
+  mrpc_server.sync.test_message_reply(host, "hey I got your message!")
 end
-packer.callbacks.test_message = MyApp.handleTestMessage
+mrpc_server.functions.test_message = MyApp.handleTestMessage
 
 
 -- Performs setup and initialization tasks.
-function MyApp:setupThreadFunc(mainContext)
-  dlog.out("main", "Setup thread starts.")
-  modem.open(COMMS_PORT)
+function MyApp:setupThreadFunc()
+  -- Example of a typo that could cause a hard to find bug.
+  -- This gets caught and throws an exception thanks to dlog.osBlockNewGlobals().
+  --io.write("MRPC is using port ", tostring(MRPC_ORT), " for comms.\n")
+  
+  io.write("MRPC is using port ", tostring(MRPC_PORT), " for comms.\n")
   
   someLocalFunction()
   
@@ -93,43 +117,33 @@ function MyApp:setupThreadFunc(mainContext)
   io.write(self:doThing(2), "\n")
   io.write(self:doThing(), "\n")
   
-  -- Example of a typo that could cause a hard to find bug.
-  -- This gets caught and throws an exception thanks to dlog.osBlockNewGlobals().
-  --mainContex = {}
-  
-  -- Report system started to any listening devices.
-  --wnet.send(modem, nil, COMMS_PORT, packer.pack.my_app_started())
+  -- Send a message to any active servers.
+  mrpc_server.async.test_message("*", "hello! anyone there?")
   
   dlog.out("setup", "Setup done! Enter commands at the prompt for more options, or press Ctrl + C to exit.")
   dlog.out("setup", "Take a look in \"", DLOG_FILE_OUT, "\" to see all dlog messages.")
   
-  mainContext.threadSuccess = true
-  dlog.out("main", "Setup thread ends.")
+  app:threadDone()
 end
 
 
 -- Listens for incoming packets over the network and deals with them.
-function MyApp:modemThreadFunc(mainContext)
-  dlog.out("main", "Modem thread starts.")
-  io.write("Listening for commands on port ", COMMS_PORT, "...\n")
+function MyApp:networkThreadFunc()
+  io.write("Listening for network events on port ", mnet.port, "...\n")
   while true do
-    local address, port, message = wnet.receive()
-    if port == COMMS_PORT then
-      packer.handlePacket(self, address, port, message)
-    end
+    local host, port, message = mnet.receive(0.1)
+    mrpc_server.handleMessage(self, host, port, message)
   end
-  dlog.out("main", "Modem thread ends.")
 end
 
 
 -- Waits for commands from user-input and executes them.
-function MyApp:commandThreadFunc(mainContext)
-  dlog.out("main", "Command thread starts.")
+function MyApp:commandThreadFunc()
   while true do
     io.write("> ")
     local input = io.read()
     if type(input) ~= "string" then
-      input = "exit"
+      input = ""
     end
     input = text.tokenize(input)
     if input[1] == "help" then    -- Command help
@@ -139,13 +153,11 @@ function MyApp:commandThreadFunc(mainContext)
       io.write("  exit\n")
       io.write("    Exit program.\n")
     elseif input[1] == "exit" then    -- Command exit
-      mainContext.threadSuccess = true
-      break
+      app:exit()
     else
       io.write("Enter \"help\" for command help, or \"exit\" to quit.\n")
     end
   end
-  dlog.out("main", "Command thread ends.")
 end
 
 
@@ -154,35 +166,6 @@ local args = {...}
 
 -- Main program starts here.
 local function main()
-  local mainContext = {}
-  mainContext.threadSuccess = false
-  mainContext.killProgram = false
-  
-  -- Wrapper for os.exit() that restores the blocking of globals. Threads
-  -- spawned from main() can just call os.exit() instead of this version.
-  local function exit(code)
-    dlog.osBlockNewGlobals(false)
-    os.exit(code)
-  end
-  
-  -- Captures the interrupt signal to stop program.
-  local interruptThread = thread.create(function()
-    event.pull("interrupted")
-  end)
-  
-  -- Blocks until any of the given threads finish. If threadSuccess is still
-  -- false and a thread exits, reports error and exits program.
-  local function waitThreads(threads)
-    thread.waitForAny(threads)
-    if interruptThread:status() == "dead" or mainContext.killProgram then
-      exit()
-    elseif not mainContext.threadSuccess then
-      io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-      exit()
-    end
-    mainContext.threadSuccess = false
-  end
-  
   if DLOG_FILE_OUT ~= "" then
     dlog.setFileOut(DLOG_FILE_OUT, "w")
   end
@@ -191,29 +174,30 @@ local function main()
   if next(args) ~= nil then
     if args[1] == "test" then
       io.write("Tests not yet implemented.\n")
-      exit()
+      app:exit(1)
     else
       io.stderr:write("Unknown argument \"", tostring(args[1]), "\".\n")
-      exit()
+      app:exit(1)
     end
   end
   
   local myApp = MyApp:new({"apples", "bananas", "oranges"})
   
-  local setupThread = thread.create(MyApp.setupThreadFunc, myApp, mainContext)
+  -- Captures the interrupt signal to stop program.
+  app:createThread("Interrupt", function()
+    event.pull("interrupted")
+    app:exit(1)
+  end)
   
-  waitThreads({interruptThread, setupThread})
+  app:createThread("Setup", MyApp.setupThreadFunc, myApp)
   
-  local modemThread = thread.create(MyApp.modemThreadFunc, myApp, mainContext)
-  local commandThread = thread.create(MyApp.commandThreadFunc, myApp, mainContext)
+  app:waitAnyThreads()
   
-  waitThreads({interruptThread, modemThread, commandThread})
+  app:createThread("Network", MyApp.networkThreadFunc, myApp)
+  app:createThread("Command", MyApp.commandThreadFunc, myApp)
   
-  dlog.out("main", "Killing threads and stopping program.")
-  interruptThread:kill()
-  modemThread:kill()
-  commandThread:kill()
+  app:waitAnyThreads()
 end
 
 main()
-dlog.osBlockNewGlobals(false)
+app:exit()
