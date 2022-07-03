@@ -87,7 +87,7 @@ function dlog.verboseError(message, level)
     message = string.gsub(debug.traceback(message, level), "\t", "  ")
   end
   if dlog.logErrorsToOutput then
-    dlog.out("error", message)
+    dlog.out("error", "\27[31m", message, "\27[0m")
   end
   error(message, level)
 end

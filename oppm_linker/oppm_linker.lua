@@ -3,8 +3,10 @@
 -- install location. This is designed for easy development of code with the
 -- OpenPrograms Package Manager.
 -- 
+-- @see file://oppm_linker/README.md
 -- @author tdepke2
 --------------------------------------------------------------------------------
+
 
 local component = require("component")
 local computer = require("computer")
@@ -17,6 +19,7 @@ local text = require("text")
 local WARNING_PAUSE_TIME = 2
 
 local numWarnings = 0
+
 
 -- Read the configuration file used by OPPM. This is based on the same process
 -- OPPM uses to load in this file. Note that this is currently only used to grab
@@ -36,6 +39,7 @@ local function readOppmConfig()
   file:close()
   return cfgTable or {-1}
 end
+
 
 -- Creates a symbolic link from srcPath to destPath. Additionally does some
 -- error checking to make sure we don't create any broken links and the
@@ -61,6 +65,7 @@ local function addLink(options, srcPath, destPath)
   end
   assert(fs.link(srcPath, destFilename))
 end
+
 
 -- Read the contents of the programs.cfg file for the repository at repoPath,
 -- and add symlinks to all the specified files. If a repository doesn't have a
@@ -112,6 +117,7 @@ local function readPackageConfig(options, repoPath, installPath)
   end
 end
 
+
 -- Search for all of the repositories in "/repository" and process the OPPM
 -- packages file in each one.
 local function main(options)
@@ -130,6 +136,8 @@ local function main(options)
   end
 end
 
+
+-- Called by rc when daemon runs the first time, or when manually invoked.
 function start(...)
   -- Parse arguments from the rc config if during startup, or from the function arguments if user invoked the start function.
   local arguments, options
