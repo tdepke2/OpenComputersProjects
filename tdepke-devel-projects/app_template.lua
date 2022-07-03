@@ -95,10 +95,10 @@ end
 -- Callback for handling a remote procedure call request from another server.
 -- See mrpc module for more details.
 function MyApp:handleTestMessage(host, message)
-  io.write("got message from ", host, ": ", tostring(message), "\n")
+  dlog.out("handleTestMessage", "Got message from ", host, ": ", message)
   
   -- Send a reply back (needs to be declared in mrpc_server to work).
-  mrpc_server.sync.test_message_reply(host, "hey I got your message!")
+  --mrpc_server.sync.test_message_reply(host, "hey I got your message!")
 end
 mrpc_server.functions.test_message = MyApp.handleTestMessage
 
