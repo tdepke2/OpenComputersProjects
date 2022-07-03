@@ -1,24 +1,16 @@
---[[
-Diagnostic logger and debugging utilities.
+--------------------------------------------------------------------------------
+-- Diagnostic logger and debugging utilities.
+-- 
+-- @see file://libapptools/README.md
+-- @author tdepke2
+--------------------------------------------------------------------------------
 
-Allows writing logging data to standard output and/or a file for debugging code.
-Log messages include a subsystem name and any number of values (preferably
-including some extra text to identify the values). Outputs to a file also prefix
-the message with a timestamp, much like how syslog output appears on unix
-systems.
-
-Subsystem names can be any strings like "storage", "command:info",
-"main():debug", etc. Note that logging output is only shown for enabled
-subsystems, see dlog.setSubsystems() and dlog.setSubsystem(). Also note that
-through the magic of require(), the active subsystems will persist even after a
-restart of the program that is being tested.
---]]
 
 local dlog = {}
 
---[[
-Configuration options:
---]]
+
+-- Configuration options:
+--
 -- Set errors to direct to dlog.out() using the "error" subsystem before getting
 -- passed to error().
 dlog.logErrorsToOutput = true
@@ -34,6 +26,7 @@ dlog.verboseErrorTraceback = true
 -- size messages.
 dlog.maxMessageLength = nil
 
+
 -- Private data members, no touchy:
 dlog.fileOutput = nil
 dlog.stdOutput = true
@@ -48,6 +41,7 @@ dlog.subsystems = {
   removeStor = false,
 } -- FIXME just setting some defaults for when I reboot servers, should change this table back to empty later on. #################################################################
 dlog.env2 = nil
+
 
 -- dlog.xassert(v: boolean, ...): ...
 -- xassert(v: boolean, ...): ...
@@ -76,6 +70,7 @@ if dlog.defineGlobalXassert then
   xassert = dlog.xassert
 end
 
+
 -- dlog.verboseError(message: string[, level: number])
 -- 
 -- Throws the error message, and includes a stack trace in the output (when
@@ -91,6 +86,7 @@ function dlog.verboseError(message, level)
   end
   error(message, level)
 end
+
 
 -- FIXME this should be used everywhere and same for the block globals stuff #############################################################################################################
 -- dlog.checkArgs(val: any, typ: string, ...)
@@ -115,6 +111,7 @@ checkArgsHelper = function(i, val, typ, ...)
     return checkArgsHelper(i + 2, ...)
   end
 end
+
 
 -- dlog.osBlockNewGlobals(state: boolean)
 -- 
@@ -169,6 +166,7 @@ function dlog.osBlockNewGlobals(state)
   end
 end
 
+
 -- dlog.osGetGlobalsList(): table
 -- 
 -- Collects a table of all global variables currently defined. Specifically,
@@ -200,6 +198,7 @@ function dlog.osGetGlobalsList()
   return result
 end
 
+
 -- dlog.setFileOut(filename: string[, mode: string])
 -- 
 -- Open/close a file to output logging data to. Pass a string filename to open
@@ -220,6 +219,7 @@ function dlog.setFileOut(filename, mode)
   end
 end
 
+
 -- dlog.setStdOut(state: boolean)
 -- 
 -- Set output of logging data to standard output on/off. This can be used in
@@ -232,6 +232,7 @@ function dlog.setStdOut(state)
   end
 end
 
+
 -- dlog.setSubsystems(subsystems: table)
 -- 
 -- Set the subsystems to log from the provided table. The table keys are the
@@ -242,6 +243,7 @@ function dlog.setSubsystems(subsystems)
   dlog.subsystems = subsystems
 end
 
+
 -- dlog.setSubsystem(subsystem: string, state: boolean|nil)
 -- 
 -- Similar to dlog.setSubsystems() for setting individual subsystems. The same
@@ -249,6 +251,7 @@ end
 function dlog.setSubsystem(subsystem, state)
   dlog.subsystems[subsystem] = state
 end
+
 
 -- dlog.tableToString(t: table): string
 -- 
@@ -272,6 +275,7 @@ function dlog.tableToString(t)
   tableToStringHelper(t, "  ")
   return str .. "}"
 end
+
 
 -- dlog.out(subsystem: string, ...)
 -- 
