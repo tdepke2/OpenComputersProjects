@@ -14,15 +14,16 @@ Planning:
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
+local gpu = component.gpu
 local thread = require("thread")
 
 -- User libraries.
 local include = require("include")
+local app = include("app"):new()
 local dlog = include("dlog")
-dlog.osBlockNewGlobals(true)
+app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
 local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
-
 mrpc_server.addDeclarations(dofile("ocvnc/ocvnc_mrpc.lua"))
 
 local DLOG_FILE_OUT = "/tmp/messages"
@@ -45,98 +46,284 @@ function VncServer:new()
   self.activeClient = false
   self.gpuRealFuncs = false
   
+  self.bufferedCallQueue = {}
+  
+  app:pushCleanupTask(VncServer.restoreOverrides, nil, {self})
+  
   return self
 end
 
 
-function VncServer:destroy()
+function VncServer:restoreOverrides()
   if self.gpuRealFuncs then
     for k, v in pairs(self.gpuRealFuncs) do
-      component.gpu[k] = v
+      gpu[k] = v
     end
+    self.gpuRealFuncs = false
+    print("restored gpu calls")
+  else
+    print("nothing to restore")
   end
-  print("restored gpu calls")
 end
 
 
-function VncServer:handleConnect(host)
+--[[
+state that we need to sync (and then restore later):
+* current character array with fg/bg
+* current fg/bg
+* current palette colors
+* current depth
+* current resolution
+* current viewport
+
+* make sure the client screen and gpu tier >= server screen or gpu tier!
+--]]
+
+local gpuTrackedCalls = {
+  bind = true,  -- this one is tricky
+  setBackground = true,
+  setForeground = true,
+  setPaletteColor = true,
+  setDepth = true,
+  setResolution = true,
+  setViewport = true,
+  set = true,
+  copy = true,
+  fill = true,
+  
+  -- potentially more when using video ram buffers
+}
+local gpuIgnoredCalls = {
+  getScreen = true,
+  getBackground = true,
+  getForeground = true,
+  getPaletteColor = true,
+  maxDepth = true,
+  getDepth = true,
+  maxResolution = true,
+  getResolution = true,
+  getViewport = true,
+  get = true,
+}
+
+
+function VncServer:onConnect(host)
+  
+  assert(not self.activeClient)
+  
   self.activeClient = host
+  
+  
+  
+  local displayState = {}
+  displayState.depth = gpu.getDepth()
+  displayState.res = {gpu.getResolution()}
+  displayState.view = {gpu.getViewport()}
+  local palette = {}
+  for i = 1, 16 do
+    palette[i] = gpu.getPaletteColor(i - 1)
+  end
+  displayState.palette = palette
+  
+  -- capture screen contents, maybe store in something like:
+  --[[
+  textTable: {
+    <bg>: {
+      <fg>: {
+        1: {
+          1: <x>
+          2: <y>
+          3: <string>
+        }
+        2: {
+          1: <x>
+          2: <y>
+          3: <string>
+        }
+        ...
+      }
+      ...
+    }
+    ...
+  }
+  --]]
+  
+  
+  
+  -- alternative single array design for textBuffer:
+  -- {<entry>, ...}
+  -- entry types:
+  -- x: number[, y: number[, fg: number[, bg: number]]], str: string
+  -- ordered to minimize state changes of fg and bg
+  -- for fg and bg, negative values means palette index
+  
+  --[[
+  textBufferInflated: {
+    <bg>: {
+      <fg>: {
+        1: <x>
+        2: <y>
+        3: <line>
+        4: <x>
+        5: <y>
+        6: <line>
+        ...
+      }
+      ...
+    }
+    ...
+  }
+  
+  textBuffer: {
+    1: <x>
+    2: [<y>]
+    3: [<fg>]
+    4: [<bg>]
+    5: <line>
+    ...
+  }
+  --]]
+  
+  local textBufferInflated = setmetatable({}, {
+    __index = function(t, k)
+      t[k] = setmetatable({}, {
+        __index = function(t2, k2)
+          t2[k2] = {}
+          return t2[k2]
+        end
+      })
+      return t[k]
+    end
+  })
+  
+  -- Scan each character in the screen buffer row-by-row, and insert them into the textBufferInflated. Any white-on-black text that is a contiguous line of spaces is simply discarded to optimize.
+  local foundWBNonSpace = false
+  local width, height = gpu.getResolution()
+  for y = 1, height do
+    for x = 1, width do
+      local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
+      fg = math.floor(fgIndex and -fgIndex - 1 or fg)
+      bg = math.floor(bgIndex and -bgIndex - 1 or bg)
+      
+      local colorWB = (fg == 0xFFFFFF and bg == 0x0)
+      
+      if not colorWB or char ~= " " or foundWBNonSpace then
+        local lineGroup = textBufferInflated[bg][fg]
+        local lineGroupSize = #lineGroup
+        
+        if lineGroup[lineGroupSize - 1] == y and lineGroup[lineGroupSize - 2] + #lineGroup[lineGroupSize] == x then
+          if char ~= " " and colorWB then
+            foundWBNonSpace = true
+          end
+          lineGroup[lineGroupSize] = lineGroup[lineGroupSize] .. char
+        else
+          if foundWBNonSpace then
+            local lineGroupWB = textBufferInflated[0x0][0xFFFFFF]
+            lineGroupWB[#lineGroupWB] = string.match(lineGroupWB[#lineGroupWB], "(.-) *$")
+            foundWBNonSpace = false
+          end
+          if char ~= " " or not colorWB then
+            lineGroup[lineGroupSize + 1] = x
+            lineGroup[lineGroupSize + 2] = y
+            lineGroup[lineGroupSize + 3] = char
+          end
+        end
+      end
+    end
+  end
+  if foundWBNonSpace then
+    local lineGroupWB = textBufferInflated[0x0][0xFFFFFF]
+    lineGroupWB[#lineGroupWB] = string.match(lineGroupWB[#lineGroupWB], "(.-) *$")
+  end
+  
+  local textBuffer = {}
+  local textBufferSize = 0
+  local lineOffset
+  for bg, fgGroup in pairs(textBufferInflated) do
+    -- Add bg color (color changed).
+    textBuffer[textBufferSize + 4] = bg
+    lineOffset = 5
+    for fg, lineGroup in pairs(fgGroup) do
+      -- Add fg color (color changed).
+      textBuffer[textBufferSize + 3] = fg
+      lineOffset = math.max(lineOffset, 4)
+      
+      local lastY
+      
+      for i = 1, #lineGroup, 3 do
+        -- Add x position.
+        textBuffer[textBufferSize + 1] = lineGroup[i]
+        -- Add y position if it changed.
+        if lineGroup[i + 1] ~= lastY then
+          lastY = lineGroup[i + 1]
+          textBuffer[textBufferSize + 2] = lastY
+          lineOffset = math.max(lineOffset, 3)
+        end
+        -- Add the line to the end.
+        textBufferSize = textBufferSize + lineOffset
+        textBuffer[textBufferSize] = lineGroup[i + 2]
+        lineOffset = 2
+      end
+    end
+  end
+  
+  
+  displayState.textBufferInflated = textBufferInflated
+  displayState.textBuffer = textBuffer
+  
+  
+  
+  displayState.bg = {gpu.getBackground()}
+  displayState.fg = {gpu.getForeground()}
+  
+  
+  mrpc_server.async.redraw_display(host, displayState)
+  
   
   local gpuRealFuncs = {}
   self.gpuRealFuncs = gpuRealFuncs
-  for k, v in pairs(component.gpu) do
-    
-    if k == "setForeground" then
-      local count = 0
-      local lastTime = 0
-      
+  for k, v in pairs(gpu) do
+    if gpuTrackedCalls[k] then
       gpuRealFuncs[k] = v
-      component.gpu[k] = function(...)
-        gpuRealFuncs[k](...)
-        count = count + 1
-        if computer.uptime() >= lastTime + 0.2 then
-          lastTime = computer.uptime()
-          mrpc_server.async.gpu_set_foreground(host, count)
-          count = 0
-        end
+      gpu[k] = function(...)
+        v(...)
+        self.bufferedCallQueue[#self.bufferedCallQueue + 1] = table.pack(k, ...)
       end
+    elseif not gpuIgnoredCalls[k] then
+      print("unknown gpu key ", k)
     end
   end
   
   print("replaced gpu calls!")
   os.sleep(1)
   print("one")
-  component.gpu.setForeground(8, true)
+  gpu.setForeground(8, true)
   print("two")
 end
-mrpc_server.functions.connect = VncServer.handleConnect
+mrpc_server.functions.connect = VncServer.onConnect
 
 
-function VncServer:networkThreadFunc(mainContext)
-  dlog.out("main", "Network thread starts.")
+function VncServer:mainThreadFunc()
+  local nextBufferedCallTime = 0
   while true do
     local host, port, message = mnet.receive(0.1)
     mrpc_server.handleMessage(self, host, port, message)
+    
+    if self.activeClient and self.bufferedCallQueue[1] and computer.uptime() >= nextBufferedCallTime then
+      nextBufferedCallTime = computer.uptime() + 0.2
+      local bufferedCalls = self.bufferedCallQueue
+      self.bufferedCallQueue = {}
+      mrpc_server.async.update_display(self.activeClient, bufferedCalls)
+    end
   end
-  dlog.out("main", "Network thread ends.")
 end
 
 
--- Command-line arguments, and forward declaration for cleanup tasks.
+-- Get command-line arguments.
 local args = {...}
-local cleanup
 
 -- Main program starts here.
 local function main()
-  local mainContext = {}
-  mainContext.threadSuccess = false
-  mainContext.killProgram = false
-  
-  -- Wrapper for os.exit() that restores the blocking of globals. Threads
-  -- spawned from main() can just call os.exit() instead of this version.
-  local function exit(code)
-    cleanup()
-    os.exit(code)
-  end
-  
-  -- Captures the interrupt signal to stop program.
-  local interruptThread = thread.create(function()
-    event.pull("interrupted")
-  end)
-  
-  -- Blocks until any of the given threads finish. If threadSuccess is still
-  -- false and a thread exits, reports error and exits program.
-  local function waitThreads(threads)
-    thread.waitForAny(threads)
-    if interruptThread:status() == "dead" or mainContext.killProgram then
-      exit()
-    elseif not mainContext.threadSuccess then
-      io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-      exit()
-    end
-    mainContext.threadSuccess = false
-  end
-  
   if DLOG_FILE_OUT ~= "" then
     dlog.setFileOut(DLOG_FILE_OUT, "w")
   end
@@ -156,19 +343,14 @@ local function main()
   
   local vncServer = VncServer:new()
   
-  cleanup = function()
-    vncServer:destroy()
-    dlog.osBlockNewGlobals(false)
-  end
+  app:createThread("Interrupt", function()
+    event.pull("interrupted")
+    app:exit(1)
+  end)
+  app:createThread("Main", VncServer.mainThreadFunc, vncServer)
   
-  local networkThread = thread.create(VncServer.networkThreadFunc, vncServer, mainContext)
-  
-  waitThreads({interruptThread, networkThread})
-  
-  dlog.out("main", "Killing threads and stopping program.")
-  interruptThread:kill()
-  networkThread:kill()
+  app:waitAnyThreads()
 end
 
 main()
-cleanup()
+app:exit()

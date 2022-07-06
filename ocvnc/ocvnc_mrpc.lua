@@ -7,7 +7,10 @@ return {
   connect = {
   },
   -- 
-  gpu_set_foreground = {
+  redraw_display = {
+  },
+  -- 
+  update_display = {
   },
   -- Request storage to extract items from storage network.
   stor_extract = {

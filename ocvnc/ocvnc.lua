@@ -15,15 +15,17 @@ Planning:
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
+local gpu = component.gpu
+local term = require("term")
 local thread = require("thread")
 
 -- User libraries.
 local include = require("include")
+local app = include("app"):new()
 local dlog = include("dlog")
-dlog.osBlockNewGlobals(true)
+app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
 local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
-
 mrpc_server.addDeclarations(dofile("ocvnc/ocvnc_mrpc.lua"))
 
 local DLOG_FILE_OUT = "/tmp/messages"
@@ -50,32 +52,54 @@ function VncClient:new(vals)
 end
 
 
-function VncClient:handleGpuSetForeground(host, count)
-  dlog.out("d", "handleGpuSetForeground ", count)
-end
-mrpc_server.functions.gpu_set_foreground = VncClient.handleGpuSetForeground
-
-
-function VncClient:mainThreadFunc(mainContext)
-  dlog.out("main", "Main thread starts.")
+function VncClient:onRedrawDisplay(host, displayState)
+  local width, height = gpu.getResolution()
+  gpu.setBackground(0x000000)
+  gpu.setForeground(0xFFFFFF)
+  --gpu.fill(1, 1, width, height, " ")
+  --term.setCursor(1, 1)
   
+  --gpu.setDepth()
+  --gpu.setResolution()
+  --gpu.setViewport()
+  
+  --gpu.setPaletteColor()
+  
+  --for 
+  --gpu.set()
+  --end
+  
+  --gpu.setBackground()
+  --gpu.setForeground()
+  
+  
+  dlog.out("onRedrawDisplay", displayState)
+end
+mrpc_server.functions.redraw_display = VncClient.onRedrawDisplay
+
+
+function VncClient:onUpdateDisplay(host, bufferedCalls)
+  for _, v in ipairs(bufferedCalls) do
+    gpu[v[1]](table.unpack(v, 2, v.n))
+  end
+end
+mrpc_server.functions.update_display = VncClient.onUpdateDisplay
+
+
+function VncClient:mainThreadFunc()
   mrpc_server.sync.connect(TARGET_HOST)
   
   while true do
     os.sleep(10)
   end
-  
-  dlog.out("main", "Main thread ends.")
 end
 
 
-function VncClient:networkThreadFunc(mainContext)
-  dlog.out("main", "Network thread starts.")
+function VncClient:networkThreadFunc()
   while true do
     local host, port, message = mnet.receive(0.1)
     mrpc_server.handleMessage(self, host, port, message)
   end
-  dlog.out("main", "Network thread ends.")
 end
 
 
@@ -84,35 +108,6 @@ local args = {...}
 
 -- Main program starts here.
 local function main()
-  local mainContext = {}
-  mainContext.threadSuccess = false
-  mainContext.killProgram = false
-  
-  -- Wrapper for os.exit() that restores the blocking of globals. Threads
-  -- spawned from main() can just call os.exit() instead of this version.
-  local function exit(code)
-    dlog.osBlockNewGlobals(false)
-    os.exit(code)
-  end
-  
-  -- Captures the interrupt signal to stop program.
-  local interruptThread = thread.create(function()
-    event.pull("interrupted")
-  end)
-  
-  -- Blocks until any of the given threads finish. If threadSuccess is still
-  -- false and a thread exits, reports error and exits program.
-  local function waitThreads(threads)
-    thread.waitForAny(threads)
-    if interruptThread:status() == "dead" or mainContext.killProgram then
-      exit()
-    elseif not mainContext.threadSuccess then
-      io.stderr:write("Error occurred in thread, check log file \"/tmp/event.log\" for details.\n")
-      exit()
-    end
-    mainContext.threadSuccess = false
-  end
-  
   if DLOG_FILE_OUT ~= "" then
     dlog.setFileOut(DLOG_FILE_OUT, "w")
   end
@@ -130,15 +125,15 @@ local function main()
   
   local vncClient = VncClient:new()
   
-  local mainThread = thread.create(VncClient.mainThreadFunc, vncClient, mainContext)
-  local networkThread = thread.create(VncClient.networkThreadFunc, vncClient, mainContext)
+  app:createThread("Interrupt", function()
+    event.pull("interrupted")
+    app:exit(1)
+  end)
+  app:createThread("Main", VncClient.mainThreadFunc, vncClient)
+  app:createThread("Network", VncClient.networkThreadFunc, vncClient)
   
-  waitThreads({interruptThread, mainThread, networkThread})
-  
-  dlog.out("main", "Killing threads and stopping program.")
-  interruptThread:kill()
-  networkThread:kill()
+  app:waitAnyThreads()
 end
 
 main()
-dlog.osBlockNewGlobals(false)
+app:exit()
