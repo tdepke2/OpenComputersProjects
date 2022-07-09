@@ -28,7 +28,7 @@ local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
 mrpc_server.addDeclarations(dofile("ocvnc/ocvnc_mrpc.lua"))
 
-local DLOG_FILE_OUT = "/tmp/messages"
+local DLOG_FILE_OUT = ""--"/tmp/messages"
 local TARGET_HOST = "1315"
 
 -- VncClient class definition.
@@ -46,31 +46,75 @@ function VncClient:new(vals)
   self.__index = self
   self = setmetatable({}, self)
   
-  
+  self.bufferedEventQueue = {}
   
   return self
 end
 
 
+
+local function gpuGetForeground()
+  local color, isPalette = gpu.getForeground()
+  return isPalette and -color - 1 or color
+end
+
+local function gpuSetForeground(color)
+  local c, i = gpu.getForeground()
+  if (i and -c - 1 or c) ~= color then
+    gpu.setForeground(color < 0 and -color - 1 or color, color < 0)
+  end
+end
+
+local function gpuSetBackground(color)
+  local c, i = gpu.getBackground()
+  if (i and -c - 1 or c) ~= color then
+    gpu.setBackground(color < 0 and -color - 1 or color, color < 0)
+  end
+end
+
+
+
 function VncClient:onRedrawDisplay(host, displayState)
   local width, height = gpu.getResolution()
-  gpu.setBackground(0x000000)
-  gpu.setForeground(0xFFFFFF)
-  --gpu.fill(1, 1, width, height, " ")
-  --term.setCursor(1, 1)
+  gpuSetBackground(0x000000)
+  gpuSetForeground(0xFFFFFF)
+  gpu.fill(1, 1, width, height, " ")
+  term.setCursor(1, 1)
   
-  --gpu.setDepth()
-  --gpu.setResolution()
-  --gpu.setViewport()
+  gpu.setDepth(displayState.depth)
+  gpu.setResolution(displayState.res[1], displayState.res[2])
+  gpu.setViewport(displayState.view[1], displayState.view[2])
+  for i = 1, 16 do
+    gpu.setPaletteColor(i - 1, displayState.palette[i])
+  end
   
-  --gpu.setPaletteColor()
   
-  --for 
-  --gpu.set()
-  --end
+  local i = 1
+  local textBuffer = displayState.textBuffer
+  local textBufferSize = #textBuffer
+  local x, y
+  while i < textBufferSize do
+    x = textBuffer[i]
+    i = i + 1
+    if type(textBuffer[i]) == "number" then
+      y = textBuffer[i]
+      i = i + 1
+      if type(textBuffer[i]) == "number" then
+        gpuSetForeground(textBuffer[i])
+        i = i + 1
+        if type(textBuffer[i]) == "number" then
+          gpuSetBackground(textBuffer[i])
+          i = i + 1
+        end
+      end
+    end
+    gpu.set(x, y, textBuffer[i])
+    i = i + 1
+  end
   
-  --gpu.setBackground()
-  --gpu.setForeground()
+  
+  gpuSetBackground(displayState.bg)
+  gpuSetForeground(displayState.fg)
   
   
   dlog.out("onRedrawDisplay", displayState)
@@ -86,11 +130,45 @@ end
 mrpc_server.functions.update_display = VncClient.onUpdateDisplay
 
 
+local trackedInputEvents = {
+  touch = true,
+  drag = true,
+  drop = true,
+  scroll = true,
+  walk = true,
+  key_down = true,
+  key_up = true,
+  clipboard = true
+}
+local trackedControlEvents = {
+  interrupted = true,
+  tablet_use = true
+}
+
 function VncClient:mainThreadFunc()
   mrpc_server.sync.connect(TARGET_HOST)
   
+  local function eventFilter(name)
+    return trackedInputEvents[name] or trackedControlEvents[name]
+  end
+  
+  local nextBufferedEventTime = 0
   while true do
-    os.sleep(10)
+    local e = {event.pullFiltered(0.1, eventFilter)}
+    if e[1] then
+      -- Screen touch and keyboard events include the address of the device that was used, clear this field and substitute correct address on server side.
+      if trackedInputEvents[e[1]] then
+        e[2] = ""
+      end
+      self.bufferedEventQueue[#self.bufferedEventQueue + 1] = e
+    end
+    
+    if self.bufferedEventQueue[1] and computer.uptime() >= nextBufferedEventTime then
+      nextBufferedEventTime = computer.uptime() + 0.2
+      local bufferedEvents = self.bufferedEventQueue
+      self.bufferedEventQueue = {}
+      mrpc_server.async.client_event(TARGET_HOST, bufferedEvents)
+    end
   end
 end
 
@@ -123,11 +201,15 @@ local function main()
     end
   end
   
+  dlog.setStdOut(false)
+  
   local vncClient = VncClient:new()
   
   app:createThread("Interrupt", function()
-    event.pull("interrupted")
-    app:exit(1)
+    while true do
+      event.pull("interrupted")
+    end
+    --app:exit(1)
   end)
   app:createThread("Main", VncClient.mainThreadFunc, vncClient)
   app:createThread("Network", VncClient.networkThreadFunc, vncClient)

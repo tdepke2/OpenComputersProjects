@@ -15,18 +15,24 @@ local component = require("component")
 local computer = require("computer")
 local event = require("event")
 local gpu = component.gpu
+local keyboard_c = component.keyboard
+local screen_c = component.screen
 local thread = require("thread")
+local unicode = require("unicode")
 
 -- User libraries.
 local include = require("include")
 local app = include("app"):new()
 local dlog = include("dlog")
-app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
+
+-- FIXME something bad happened here when running in the daemon, huh #####################################################################
+--app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
+
 local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
-mrpc_server.addDeclarations(dofile("ocvnc/ocvnc_mrpc.lua"))
+mrpc_server.addDeclarations(dofile("/home/ocvnc/ocvnc_mrpc.lua"))
 
-local DLOG_FILE_OUT = "/tmp/messages"
+local DLOG_FILE_OUT = ""--"/tmp/messages"
 
 -- VncServer class definition.
 local VncServer = {}
@@ -89,7 +95,7 @@ local gpuTrackedCalls = {
   setViewport = true,
   set = true,
   copy = true,
-  fill = true,
+  fill = true
   
   -- potentially more when using video ram buffers
 }
@@ -103,7 +109,7 @@ local gpuIgnoredCalls = {
   maxResolution = true,
   getResolution = true,
   getViewport = true,
-  get = true,
+  get = true
 }
 
 
@@ -200,7 +206,8 @@ function VncServer:onConnect(host)
   local foundWBNonSpace = false
   local width, height = gpu.getResolution()
   for y = 1, height do
-    for x = 1, width do
+    local x = 1
+    while x <= width do
       local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
       fg = math.floor(fgIndex and -fgIndex - 1 or fg)
       bg = math.floor(bgIndex and -bgIndex - 1 or bg)
@@ -211,7 +218,8 @@ function VncServer:onConnect(host)
         local lineGroup = textBufferInflated[bg][fg]
         local lineGroupSize = #lineGroup
         
-        if lineGroup[lineGroupSize - 1] == y and lineGroup[lineGroupSize - 2] + #lineGroup[lineGroupSize] == x then
+        -- Add the character to the last line if the y and x position line up (considering the true length in characters in case we have unicode ones).
+        if lineGroup[lineGroupSize - 1] == y and lineGroup[lineGroupSize - 2] + unicode.wlen(lineGroup[lineGroupSize]) == x then
           if char ~= " " and colorWB then
             foundWBNonSpace = true
           end
@@ -228,6 +236,9 @@ function VncServer:onConnect(host)
             lineGroup[lineGroupSize + 3] = char
           end
         end
+        x = x + unicode.wlen(char)
+      else
+        x = x + 1
       end
     end
   end
@@ -272,13 +283,13 @@ function VncServer:onConnect(host)
   displayState.textBuffer = textBuffer
   
   
-  
-  displayState.bg = {gpu.getBackground()}
-  displayState.fg = {gpu.getForeground()}
+  local c, i = gpu.getBackground()
+  displayState.bg = i and -c - 1 or c
+  c, i = gpu.getForeground()
+  displayState.fg = i and -c - 1 or c
   
   
   mrpc_server.async.redraw_display(host, displayState)
-  
   
   local gpuRealFuncs = {}
   self.gpuRealFuncs = gpuRealFuncs
@@ -286,21 +297,48 @@ function VncServer:onConnect(host)
     if gpuTrackedCalls[k] then
       gpuRealFuncs[k] = v
       gpu[k] = function(...)
-        v(...)
         self.bufferedCallQueue[#self.bufferedCallQueue + 1] = table.pack(k, ...)
+        return v(...)
       end
     elseif not gpuIgnoredCalls[k] then
-      print("unknown gpu key ", k)
+      --print("unknown gpu key ", k)
     end
   end
   
-  print("replaced gpu calls!")
-  os.sleep(1)
-  print("one")
-  gpu.setForeground(8, true)
-  print("two")
+  --print("replaced gpu calls!")
+  --os.sleep(1)
+  --print("one")
+  --gpu.setForeground(8, true)
+  --print("two")
 end
 mrpc_server.functions.connect = VncServer.onConnect
+
+
+local trackedScreenEvents = {
+  touch = true,
+  drag = true,
+  drop = true,
+  scroll = true,
+  walk = true
+}
+local trackedKeyboardEvents = {
+  key_down = true,
+  key_up = true,
+  clipboard = true
+}
+
+function VncServer:onClientEvent(host, bufferedEvents)
+  for i, v in ipairs(bufferedEvents) do
+    --print(i, table.unpack(v))
+    if trackedScreenEvents[v[1]] then
+      v[2] = screen_c.address
+    elseif trackedKeyboardEvents[v[1]] then
+      v[2] = keyboard_c.address
+    end
+    computer.pushSignal(table.unpack(v))
+  end
+end
+mrpc_server.functions.client_event = VncServer.onClientEvent
 
 
 function VncServer:mainThreadFunc()
@@ -308,7 +346,6 @@ function VncServer:mainThreadFunc()
   while true do
     local host, port, message = mnet.receive(0.1)
     mrpc_server.handleMessage(self, host, port, message)
-    
     if self.activeClient and self.bufferedCallQueue[1] and computer.uptime() >= nextBufferedCallTime then
       nextBufferedCallTime = computer.uptime() + 0.2
       local bufferedCalls = self.bufferedCallQueue
@@ -343,10 +380,12 @@ local function main()
   
   local vncServer = VncServer:new()
   
+  --[[
   app:createThread("Interrupt", function()
     event.pull("interrupted")
     app:exit(1)
   end)
+  --]]
   app:createThread("Main", VncServer.mainThreadFunc, vncServer)
   
   app:waitAnyThreads()
