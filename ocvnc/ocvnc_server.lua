@@ -32,7 +32,7 @@ local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
 mrpc_server.addDeclarations(dofile("/home/ocvnc/ocvnc_mrpc.lua"))
 
-local DLOG_FILE_OUT = ""--"/tmp/messages"
+local DLOG_FILE_OUT = "/tmp/messages"
 
 -- VncServer class definition.
 local VncServer = {}
@@ -49,10 +49,18 @@ function VncServer:new()
   self.__index = self
   self = setmetatable({}, self)
   
+  if DLOG_FILE_OUT ~= "" then
+    dlog.setFileOut(DLOG_FILE_OUT, "w")
+  end
+  
+  dlog.setStdOut(false)
+  
   self.activeClient = false
   self.gpuRealFuncs = false
   
   self.bufferedCallQueue = {}
+  
+  self.running = true
   
   app:pushCleanupTask(VncServer.restoreOverrides, nil, {self})
   
@@ -343,7 +351,7 @@ mrpc_server.functions.client_event = VncServer.onClientEvent
 
 function VncServer:mainThreadFunc()
   local nextBufferedCallTime = 0
-  while true do
+  while self.running do
     local host, port, message = mnet.receive(0.1)
     mrpc_server.handleMessage(self, host, port, message)
     if self.activeClient and self.bufferedCallQueue[1] and computer.uptime() >= nextBufferedCallTime then
@@ -353,43 +361,19 @@ function VncServer:mainThreadFunc()
       mrpc_server.async.update_display(self.activeClient, bufferedCalls)
     end
   end
+  app:threadDone()
 end
 
 
--- Get command-line arguments.
-local args = {...}
-
--- Main program starts here.
-local function main()
-  if DLOG_FILE_OUT ~= "" then
-    dlog.setFileOut(DLOG_FILE_OUT, "w")
-  end
-  
-  -- Check for any command-line arguments passed to the program.
-  if next(args) ~= nil then
-    if args[1] == "test" then
-      io.write("Tests not yet implemented.\n")
-      exit()
-    else
-      io.stderr:write("Unknown argument \"", tostring(args[1]), "\".\n")
-      exit()
-    end
-  end
-  
-  dlog.setStdOut(false)
-  
-  local vncServer = VncServer:new()
-  
-  --[[
-  app:createThread("Interrupt", function()
-    event.pull("interrupted")
-    app:exit(1)
-  end)
-  --]]
-  app:createThread("Main", VncServer.mainThreadFunc, vncServer)
-  
+function VncServer:start()
+  app:createThread("Main", VncServer.mainThreadFunc, self)
   app:waitAnyThreads()
+  app:exit()
 end
 
-main()
-app:exit()
+
+function VncServer:stop()
+  self.running = false
+end
+
+return VncServer

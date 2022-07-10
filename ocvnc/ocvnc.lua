@@ -208,6 +208,8 @@ local function main()
   app:createThread("Interrupt", function()
     while true do
       event.pull("interrupted")
+      
+      -- FIXME: this doesn't work so well ################################################################################
     end
     --app:exit(1)
   end)
