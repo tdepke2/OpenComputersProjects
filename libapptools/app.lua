@@ -17,14 +17,22 @@ local dlog = include("dlog")
 local app = {}
 
 
--- app:new(): table
+-- app:new([mainThread: table]): table
 -- 
--- Creates a new application context for tracking threads and cleanup tasks.
--- Returns the new app object.
-function app:new()
+-- Creates a new application context for tracking threads and cleanup tasks. If
+-- mainThread is not provided, it defaults to the current execution context (the
+-- thread running this function if any). If this function is run inside a thread
+-- where the system process should be used as the main "thread", a value of
+-- false can be passed to mainThread. Returns the new app object.
+function app:new(mainThread)
   self.__index = self
   self = setmetatable({}, self)
   
+  if mainThread == nil then
+    self.mainThread = thread.current()
+  else
+    self.mainThread = mainThread
+  end
   self.cleanupTasks = {}
   self.threads = {}
   self.threadNames = {}
@@ -178,11 +186,11 @@ end
 -- will stop. A thread can end up dead if the function body ends, os.exit() is
 -- called, exception is thrown, or thread is suspended while a call to
 -- app:waitAnyThreads() or app:waitAllThreads() is running. This function does
--- nothing if called outside of a thread. Returns true if thread was killed (but
--- the thread will end execution before that anyways).
+-- nothing if called outside of a thread (or within mainThread). Returns true if
+-- thread was killed (but the thread will end execution before that anyways).
 function app:threadDone()
   local t = thread.current()
-  if t then
+  if t and t ~= self.mainThread then
     for i, v in ipairs(self.threads) do
       if v == t then
         dlog.out("app", self.threadNames[i], " thread ends.")

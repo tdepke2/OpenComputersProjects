@@ -51,6 +51,7 @@ function VncServer:new()
   
   if DLOG_FILE_OUT ~= "" then
     dlog.setFileOut(DLOG_FILE_OUT, "w")
+    app:pushCleanupTask(dlog.setFileOut, nil, "")
   end
   
   dlog.setStdOut(false)

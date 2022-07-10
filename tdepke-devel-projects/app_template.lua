@@ -168,6 +168,7 @@ local args = {...}
 local function main()
   if DLOG_FILE_OUT ~= "" then
     dlog.setFileOut(DLOG_FILE_OUT, "w")
+    app:pushCleanupTask(dlog.setFileOut, nil, "")
   end
   
   -- Check for any command-line arguments passed to the program.
