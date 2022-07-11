@@ -10,6 +10,8 @@ local filesystem = require("filesystem")
 
 local include = {}
 
+local DEBUG_OUTPUT = true
+
 
 -- Enables include() function call as a shortcut to include.load().
 setmetatable(include, {
@@ -27,6 +29,34 @@ include.moduleDepth = 0
 include.moduleDependencies = nil
 -- Table of unique modules that have been checked for a file change since the last top-level module.
 include.scannedModules = nil
+
+
+-- include.requireWithMemCheck(moduleName: string): table
+-- 
+-- Simple wrapper for the require() function that suppresses errors about memory
+-- allocation while loading a module. Memory allocation errors can happen
+-- occasionally even if a given system has sufficient RAM. Up to three attempts
+-- are made, then the error is just passed along.
+function include.requireWithMemCheck(moduleName)
+  local status, result
+  local attempts = 1
+  while attempts <= 3 do
+    if DEBUG_OUTPUT then
+      print("Loading module \"" .. tostring(moduleName) .. "\"")
+    end
+    status, result = pcall(require, moduleName)
+    if status then
+      return result
+    elseif not string.find(result, "not enough memory", 1, true) then
+      error(result)
+    end
+    if DEBUG_OUTPUT then
+      print("\27[31mFailed to allocate enough memory, retrying...\27[0m")
+    end
+    attempts = attempts + 1
+  end
+  error(result)
+end
 
 
 -- Recursively searches the moduleName and all dependencies for files that
@@ -103,12 +133,11 @@ function include.load(moduleName)
   -- Attempt to load module if it doesn't appear in package.
   local mod
   if not package.loaded[moduleName] then
-    print("Loading module \"" .. moduleName .. "\"")
     local modifiedTime = filesystem.lastModified(modulePath)
     -- Catch errors from require() at the top-level only. This lets us reset the state of traversal before application receives the error.
     if atTopLevel then
       local status
-      status, mod = pcall(require, moduleName)
+      status, mod = pcall(include.requireWithMemCheck, moduleName)
       if not status then
         include.moduleDepth = 0
         include.moduleDependencies = nil
@@ -116,7 +145,7 @@ function include.load(moduleName)
         error(mod)
       end
     else
-      mod = require(moduleName)
+      mod = include.requireWithMemCheck(moduleName)
     end
     include.loaded[moduleName] = "0\0" .. modulePath .. "\0" .. tostring(modifiedTime) .. include.moduleDependencies[include.moduleDepth]
     --print("Added include.loaded entry \"" .. include.loaded[moduleName] .. "\"")
@@ -168,7 +197,9 @@ end
 -- Unloads the given module (removes it from the internal cache). Be careful not
 -- to use this with system libraries!
 function include.unload(moduleName)
-  print("Unloading module \"" .. moduleName .. "\"")
+  if DEBUG_OUTPUT then
+    print("Unloading module \"" .. moduleName .. "\"")
+  end
   if include.loaded[moduleName] then
     -- Set all immediate dependents as requiring a reload.
     for k, v in pairs(include.loaded) do
@@ -195,6 +226,8 @@ function include.unloadAll()
   end
 end
 
+
+-- FIXME below should be moved into a separate file, can we please not force literally everything to depend on a source tree walker? #########################################################################################
 
 -- include.iterateSrcDependencies(sourceFilename: string[, modPattern: string]):
 --   function
