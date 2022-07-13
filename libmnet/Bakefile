@@ -1,0 +1,3 @@
+default:
+  ./simple_preprocess mnet.lua mnet.pp.lua
+  crunch mnet.pp.lua --tree
