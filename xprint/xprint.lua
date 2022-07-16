@@ -129,8 +129,25 @@ function xprint.print(config, ...)
     end
 end
 
-function xprint.hexdump()
-    -- TODO #######################################################################
+function xprint.hexdump(istream)
+    local address = 0
+    local bytes = istream:read(16)
+    while bytes do
+        io.write(string.format("%.8x  ", address))
+        io.write(string.format(string.rep("%.2x ", math.min(#bytes, 8)), string.byte(bytes, 1, math.min(#bytes, 8))), " ")
+        if #bytes > 8 then
+            io.write(string.format(string.rep("%.2x ", #bytes - 8), string.byte(bytes, 9, #bytes)))
+        end
+        if #bytes < 16 then
+            io.write(string.rep("   ", 16 - #bytes))
+        end
+        io.write(" |", string.gsub(bytes, "[^%g ]", "."), "|\n")
+        address = address + #bytes
+        bytes = istream:read(16)
+    end
+    if address ~= 0 then
+        io.write(string.format("%.8x  ", address), "\n")
+    end
 end
 
 
