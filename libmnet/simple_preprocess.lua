@@ -88,13 +88,22 @@ local function main()
     outputLineNum = outputLineNum + 1
   end
   
-  -- Iterate each line in the file.
+  -- Iterate each line in the file. Search for '##' sequence that only has leading whitespace.
   local processedLines, lineNum = {}, 1
   local line = inputFile:read()
   while line do
-    local firstNumberSign = string.find(line, "#", 1, true)
-    if firstNumberSign and string.match(line, "^%s*#[^#]") then
-      processedLines[lineNum] = string.sub(line, 1, firstNumberSign - 1) .. string.sub(line, firstNumberSign + 1) .. "\n"
+    local firstNumberSigns = string.find(line, "##", 1, true)
+    if firstNumberSigns and string.match(line, "^%s*##[^#]") then
+      -- Found a preprocessor directive, if it's a call to spwrite() then paste any leading whitespace into the first argument to preserve alignment.
+      local spwriteIndexEnd = select(2, string.find(line, "^%s*spwrite%s*%(", firstNumberSigns + 2))
+      local leadSpacing = string.sub(line, 1, firstNumberSigns - 1)
+      
+      if spwriteIndexEnd and #leadSpacing > 0 then
+        local endParenthesis = string.find(line, "^%s*%)", spwriteIndexEnd + 1)
+        processedLines[lineNum] = leadSpacing .. string.sub(line, firstNumberSigns + 2, spwriteIndexEnd) .. "\"" .. leadSpacing .. (endParenthesis and "\"" or "\", ") .. string.sub(line, spwriteIndexEnd + 1) .. "\n"
+      else
+        processedLines[lineNum] = leadSpacing .. string.sub(line, firstNumberSigns + 2) .. "\n"
+      end
     else
       processedLines[lineNum] = string.format("spwrite(%q)\n", line)
     end
