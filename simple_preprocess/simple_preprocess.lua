@@ -11,17 +11,18 @@
 -- need to explain format of # lines, the special spwrite function, and example code.
 -- If an input or output filename is unspecified or replaced with a dash, it will default to stdin or stdout respectively.
 
+-- TODO: just got env working, need to modify so that output goes to another table that we write to the file (write one line at a time).
+-- need a function passed to the load env that can output to this table (basically a print function), then we can achieve same behavior in http://lua-users.org/wiki/SimpleLuaPreprocessor
+-- os.getenv() should be usable from within the preprocessed code (should already be working)
+
 
 
 local fs = require("filesystem")
 local serialization = require("serialization")
 local shell = require("shell")
 
-local args, opts = shell.parse(...)
 
-
-local function printUsage()
-  io.write([[Usage: simple_preprocess [OPTION]... [INPUT-FILE] [OUTPUT-FILE]
+local USAGE_STRING = [[Usage: simple_preprocess [OPTION]... [INPUT-FILE] [OUTPUT-FILE]
 
 Options:
   -h, --help                display help message and exit
@@ -30,9 +31,10 @@ Options:
                             input (format should use serialization library)
 
 For more information, run: man simple_preprocess
-]])
-end
+]]
 
+
+-- Check if a file was opened successfully, and raise an error if not.
 local function checkFileError(filename, file, err)
   if not file then
     if fs.isDirectory(filename) then
@@ -40,24 +42,29 @@ local function checkFileError(filename, file, err)
     else
       io.stderr:write("simple_preprocess " .. filename .. ": " .. tostring(err) .. "\n")
     end
-    os.exit(1)
+    os.exit(2)
   end
 end
 
+
+local args, opts = shell.parse(...)
+
+-- Check command line options, open files, start preprocessor, and write results
+-- to output.
 local function main()
   local inputFilename = (args[1] == nil and "-" or args[1])
   local outputFilename = (args[2] == nil and "-" or args[2])
   if #args > 2 or opts["h"] or opts["help"] then
-    printUsage()
+    io.write(USAGE_STRING)
     os.exit(0)
   end
   local verbose = (opts["v"] or opts["verbose"])
-  local appendEnv
+  local appendEnv = {}
   if opts["local-env"] then
     appendEnv = serialization.unserialize(tostring(opts["local-env"]))
     if type(appendEnv) ~= "table" then
       io.stderr:write("simple_preprocess: provided --local-env argument could not be deserialized to a table value\n")
-      os.exit(1)
+      os.exit(2)
     end
   end
   
@@ -81,29 +88,40 @@ local function main()
   end
   checkFileError(outputFilename, outputFile, err)
   
-  -- 
+  -- The spwrite function (simple_preprocess write) behaves very similar to
+  -- print(), except that output is written to the processed file and no
+  -- whitespace or tabs are inserted between arguments (besides a newline at the
+  -- end). This function is available within the preprocessor environment.
   local outputLines, outputLineNum = {}, 1
   local function spwrite(...)
     outputLines[outputLineNum] = string.rep("%s", select("#", ...)):format(...) .. "\n"
     outputLineNum = outputLineNum + 1
   end
   
-  -- Iterate each line in the file. Search for '##' sequence that only has leading whitespace.
+  -- Add a directive (code for preprocessor to run) to the output. Special case
+  -- for spwrite() calls since tab alignment in the output can get a bit funky.
   local processedLines, lineNum = {}, 1
+  local function addDirective(line, prefixStart, prefixSize)
+    -- If the directive is a call to spwrite(), paste any leading whitespace into the first argument to preserve alignment.
+    local spwriteIndexEnd = select(2, string.find(line, "^%s*spwrite%s*%(", prefixStart + prefixSize))
+    local leadSpacing = string.sub(line, 1, prefixStart - 1)
+    
+    if spwriteIndexEnd and #leadSpacing > 0 then
+      local endParenthesis = string.find(line, "^%s*%)", spwriteIndexEnd + 1)
+      processedLines[lineNum] = leadSpacing .. string.sub(line, prefixStart + prefixSize, spwriteIndexEnd) .. "\"" .. leadSpacing .. (endParenthesis and "\"" or "\", ") .. string.sub(line, spwriteIndexEnd + 1) .. "\n"
+    else
+      processedLines[lineNum] = leadSpacing .. string.sub(line, prefixStart + prefixSize) .. "\n"
+    end
+  end
+  
+  -- Iterate each line in the file. Search for '##' or '--##' sequence that only has leading whitespace.
   local line = inputFile:read()
   while line do
     local firstNumberSigns = string.find(line, "##", 1, true)
     if firstNumberSigns and string.match(line, "^%s*##[^#]") then
-      -- Found a preprocessor directive, if it's a call to spwrite() then paste any leading whitespace into the first argument to preserve alignment.
-      local spwriteIndexEnd = select(2, string.find(line, "^%s*spwrite%s*%(", firstNumberSigns + 2))
-      local leadSpacing = string.sub(line, 1, firstNumberSigns - 1)
-      
-      if spwriteIndexEnd and #leadSpacing > 0 then
-        local endParenthesis = string.find(line, "^%s*%)", spwriteIndexEnd + 1)
-        processedLines[lineNum] = leadSpacing .. string.sub(line, firstNumberSigns + 2, spwriteIndexEnd) .. "\"" .. leadSpacing .. (endParenthesis and "\"" or "\", ") .. string.sub(line, spwriteIndexEnd + 1) .. "\n"
-      else
-        processedLines[lineNum] = leadSpacing .. string.sub(line, firstNumberSigns + 2) .. "\n"
-      end
+      addDirective(line, firstNumberSigns, 2)
+    elseif firstNumberSigns and string.match(line, "^%s*%-%-##[^#]") then
+      addDirective(line, firstNumberSigns - 2, 4)
     else
       processedLines[lineNum] = string.format("spwrite(%q)\n", line)
     end
@@ -111,48 +129,53 @@ local function main()
   end
   inputFile:close()
   
-  local y = true
-  
   if verbose then
     io.write("################# PREPARED FILE ##################\n")
     io.write(table.concat(processedLines))
-    io.write("(END)\n")
+    io.write("(END)\n\n")
   end
   
-  
-  -- TODO: just got env working, need to modify so that output goes to another table that we write to the file (write one line at a time).
-  -- need a function passed to the load env that can output to this table (basically a print function), then we can achieve same behavior in http://lua-users.org/wiki/SimpleLuaPreprocessor
-  -- os.getenv() should be usable from within the preprocessed code (should already be working)
-  
-  
-  
-  lineNum = 0
-  local fn, result = load(function()
-    lineNum = lineNum + 1
-    return processedLines[lineNum]
-  end, "=(load)", "t", setmetatable({spwrite=spwrite, y=y}, {
+  -- Prepare a custom environment to use with load(), so user can define local variables in command line.
+  local preprocessorEnv = {}
+  for k, v in pairs(appendEnv) do
+    preprocessorEnv[k] = v
+  end
+  preprocessorEnv.spwrite = spwrite
+  setmetatable(preprocessorEnv, {
     __index = _ENV
-  }))
+  })
+  
+  if verbose then
+    io.write("################## ENVIRONMENT ###################\n")
+    for k, v in pairs(preprocessorEnv) do
+      io.write(tostring(k), " -> ", tostring(v), "\n")
+    end
+    io.write("_G -> ", tostring(preprocessorEnv._G), "\n")
+    io.write("\n")
+  end
+  
+  -- Execute the processed lines as a chunk. This writes to outputLines.
+  local lineNum = 0
+  local fn, result = load(function() lineNum = lineNum + 1 return processedLines[lineNum] end, "=(load)", "t", preprocessorEnv)
   if not fn then
     io.stderr:write("simple_preprocess " .. inputFilename .. ": " .. tostring(result) .. "\n")
-    os.exit(1)
+    os.exit(2)
   end
   local status, result = pcall(fn)
   if not status then
     io.stderr:write("simple_preprocess " .. inputFilename .. ": " .. tostring(result) .. "\n")
-    os.exit(1)
+    os.exit(2)
   end
   
   if verbose then
-    io.write("\n################## OUTPUT FILE ###################\n")
+    io.write("################## OUTPUT FILE ###################\n")
     io.write(table.concat(outputLines))
-    io.write("(END)\n")
+    io.write("(END)\n\n")
   end
   
   for _, line in ipairs(outputLines) do
     outputFile:write(line)
   end
-  
   outputFile:close()
 end
 
