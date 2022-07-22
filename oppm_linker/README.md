@@ -6,7 +6,7 @@ See the man page below for details:
 ---
 
 <!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./oppm_linker.man) -->
-<!-- The below content is automatically added from ./oppm_linker -->
+<!-- The below content is automatically added from ./oppm_linker.man -->
 ## NAME
   oppm_linker - rc daemon for automatically linking files in a Git repository to their install location
 
