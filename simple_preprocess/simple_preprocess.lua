@@ -1,26 +1,14 @@
 --------------------------------------------------------------------------------
 -- Minimalistic Lua preprocessor.
 -- 
--- simple_preprocess [input file] [output file] [-h] [--help] [--local-env={}]
--- 
+-- @see file://simple_preprocess/README.md
 -- @author tdepke2
 --------------------------------------------------------------------------------
-
-
--- FIXME do we want a man page? #############################################################
--- need to explain format of # lines, the special spwrite function, and example code.
--- If an input or output filename is unspecified or replaced with a dash, it will default to stdin or stdout respectively.
-
--- TODO: just got env working, need to modify so that output goes to another table that we write to the file (write one line at a time).
--- need a function passed to the load env that can output to this table (basically a print function), then we can achieve same behavior in http://lua-users.org/wiki/SimpleLuaPreprocessor
--- os.getenv() should be usable from within the preprocessed code (should already be working)
-
 
 
 local fs = require("filesystem")
 local serialization = require("serialization")
 local shell = require("shell")
-
 
 local USAGE_STRING = [[Usage: simple_preprocess [OPTION]... [INPUT-FILE] [OUTPUT-FILE]
 
