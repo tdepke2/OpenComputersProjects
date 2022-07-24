@@ -8,32 +8,32 @@ See the man page below for details:
 <!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./oppm-linker.man) -->
 <!-- The below content is automatically added from ./oppm-linker.man -->
 ## NAME
-  oppm_linker - rc daemon for automatically linking files in a Git repository to their install location
+  oppm-linker - rc daemon for automatically linking files in a Git repository to their install location
 
 ## SYNOPSIS
-  `rc oppm_linker enable`
+  `rc oppm-linker enable`
   
-  `rc oppm_linker disable`
+  `rc oppm-linker disable`
   
-  `rc oppm_linker start [OPTION]...`
+  `rc oppm-linker start [OPTION]...`
 
 ## DESCRIPTION
-  The oppm_linker aims to solve the problem with keeping in-development programs on an OpenComputers machine synchronized with files in a Git repository. This is done by having the user clone a Git repository into the OC machine, adding a `programs.cfg` file to define packages and their install locations, then oppm_linker creates symbolic links from the original files in the places where they would be installed. This simulates what would happen if the packages were all installed with OPPM, but keeps the original files in the Git repo without duplicating them. Since symlinks in OC do not persist across a reboot, oppm_linker runs once at startup to create the symlinks.
+  The oppm-linker aims to solve the problem with keeping in-development programs on an OpenComputers machine synchronized with files in a Git repository. This is done by having the user clone a Git repository into the OC machine, adding a `programs.cfg` file to define packages and their install locations, then oppm-linker creates symbolic links from the original files in the places where they would be installed. This simulates what would happen if the packages were all installed with OPPM, but keeps the original files in the Git repo without duplicating them. Since symlinks in OC do not persist across a reboot, oppm-linker runs once at startup to create the symlinks.
 
 ### Setup instructions:
   1. First consider setting `bufferChanges=false` and increasing the value of `hddSizes` for the hard disk you want to use in the OpenComputers configuration. The `bufferChanges` setting prevents the in-game file systems from writing their contents to disk until the world is saved, and this is a problem if using an external editor to write programs. The default hard disk sizes are also quite small and may not fit the whole Git repo.
   
   2. Get OpenOS and OPPM installed on the OC machine (you can craft the floppy disk to install OPPM).
   
-  3. Run `mkdir /repository` in-game, then copy the Git repo into here outside of the game or `git clone` one from GitHub. The root of the repo should be at `/repository/<your-repo-name>/.git`. You can add as many repos in `/repository` as you want and they will all get loaded by oppm_linker. Other options may be to use the OPPM package called `gitrepo` to clone a repo from within the game, or just download a zip archive from the internet with `wget`.
+  3. Run `mkdir /repository` in-game, then copy the Git repo into here outside of the game or `git clone` one from GitHub. The root of the repo should be at `/repository/<your-repo-name>/.git`. You can add as many repos in `/repository` as you want and they will all get loaded by oppm-linker. Other options may be to use the OPPM package called `gitrepo` to clone a repo from within the game, or just download a zip archive from the internet with `wget`.
   
   4. The Git repo should have a valid `programs.cfg` file to define the packages. See https://ocdoc.cil.li/tutorial:program:oppm for details.
   
-  5. Get oppm_linker installed with `oppm install oppm_linker`, then enable the daemon to run at boot with `rc oppm_linker enable`. It's important for oppm_linker to be the first daemon to run on the system since it sets up binaries, so it should appear as the first entry in `/etc/rc.cfg`. After a reboot (it's usually best to cold-reboot the system by pressing power button), the new symlinks should show up in the package install locations. Note that the symlinks will not show in the physical filesystem outside the game.
+  5. Get oppm-linker installed with `oppm install oppm-linker`, then enable the daemon to run at boot with `rc oppm-linker enable`. It's important for oppm-linker to be the first daemon to run on the system since it sets up binaries, so it should appear as the first entry in `/etc/rc.cfg`. After a reboot (it's usually best to cold-reboot the system by pressing power button), the new symlinks should show up in the package install locations. Note that the symlinks will not show in the physical filesystem outside the game.
   
-  6. If the verbose output from creating symlinks is annoying, add the line `oppm_linker = "-s"` to `/etc/rc.cfg`. This enables the silent option and only errors will show.
+  6. If the verbose output from creating symlinks is annoying, add the line `oppm-linker = "-s"` to `/etc/rc.cfg`. This enables the silent option and only errors will show.
   
-  To refresh the symlinks if a new package was added or files changed, you can manually run `rc oppm_linker start`. This also helps to debug errors and warnings that may be showing during boot. Note that oppm_linker will not delete any old symlinks (they are removed after a reboot anyways) and will not delete directories that no longer exist in the repo.
+  To refresh the symlinks if a new package was added or files changed, you can manually run `rc oppm-linker start`. This also helps to debug errors and warnings that may be showing during boot. Note that oppm-linker will not delete any old symlinks (they are removed after a reboot anyways) and will not delete directories that no longer exist in the repo.
   
   One more useful tip: creating copies of the hard disk that was used to set this up (using cheats) can be helpful to keep the same files synchronized across multiple computers. This can also be done by setting up a RAID and cloning the block to anywhere it is needed. Multiple computers can also access a single RAID when cheats are not an option.
 
@@ -43,7 +43,7 @@ See the man page below for details:
   `-f`  overwrite existing files and create missing directories
 
 ## EXAMPLES
-  `rc oppm_linker start -sf`
+  `rc oppm-linker start -sf`
   > Update symlinks silently and force existing files to be replaced.
 
 ## SEE ALSO
