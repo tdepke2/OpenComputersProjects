@@ -26,7 +26,7 @@ local dlog = include("dlog")
 app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
 local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
-mrpc_server.addDeclarations(dofile("ocvnc/ocvnc-mrpc.lua"))
+mrpc_server.addDeclarations(dofile("ocvnc/ocvnc_mrpc.lua"))
 
 local DLOG_FILE_OUT = ""--"/tmp/messages"
 local TARGET_HOST = "1315"

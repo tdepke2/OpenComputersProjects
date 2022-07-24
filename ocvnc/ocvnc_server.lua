@@ -30,7 +30,7 @@ local dlog = include("dlog")
 
 local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
-mrpc_server.addDeclarations(dofile("/home/ocvnc/ocvnc-mrpc.lua"))
+mrpc_server.addDeclarations(dofile("/home/ocvnc/ocvnc_mrpc.lua"))
 
 local DLOG_FILE_OUT = "/tmp/messages"
 

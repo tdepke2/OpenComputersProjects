@@ -1,12 +1,3 @@
-# oppm_linker
-This tool is designed to ease development of software on OpenComputers when working with the OpenPrograms Package Manager.
-
-See the man page below for details:
-
----
-
-<!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./oppm_linker.man) -->
-<!-- The below content is automatically added from ./oppm_linker.man -->
 ## NAME
   oppm_linker - rc daemon for automatically linking files in a Git repository to their install location
 
@@ -48,4 +39,3 @@ See the man page below for details:
 
 ## SEE ALSO
   [oppm](https://github.com/OpenPrograms/Vexatos-Programs/tree/master/oppm)
-<!-- MARKDOWN-AUTO-DOCS:END -->

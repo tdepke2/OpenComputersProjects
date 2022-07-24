@@ -4,8 +4,6 @@ Application framework for multithreaded apps.
 
 Makes it easy to handle multiple threads that must run in parallel and catch errors if any of them fail. A cleanup task stack is also available for running functions right before the application stops.
 
-See [app-template.lua](app-template.lua) for a comprehensive example that uses this.
-
 ## dlog.lua
 
 Diagnostic logger and debugging utilities.

@@ -1,10 +1,10 @@
 local include = require("include")
-local first = include("include-test.first")
-local second = include("include-test.second")
-local third = include("include-test.third")
-local fourth = include("include-test.fourth")
-local first = include("include-test.first")
-local fifth = include("include-test.fifth")
+local first = include("include_test.first")
+local second = include("include_test.second")
+local third = include("include_test.third")
+local fourth = include("include_test.fourth")
+local first = include("include_test.first")
+local fifth = include("include_test.fifth")
 
 --[[
 Dependency tree:

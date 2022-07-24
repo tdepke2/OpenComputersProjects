@@ -1,6 +1,6 @@
 local include = require("include")
-local first = include("include-test.first")
-local x = include("include-test.x")
+local first = include("include_test.first")
+local x = include("include_test.x")
 
 local fourth = {}
 

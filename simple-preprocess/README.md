@@ -1,10 +1,10 @@
-<!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./simple-preprocess.man) -->
-<!-- The below content is automatically added from ./simple-preprocess.man -->
+<!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./simple_preprocess.man) -->
+<!-- The below content is automatically added from ./simple_preprocess.man -->
 ## NAME
-  simple-preprocess - minimalistic preprocessor for Lua code.
+  simple_preprocess - minimalistic preprocessor for Lua code.
 
 ## SYNOPSIS
-  `simple-preprocess [OPTION]... [INPUT-FILE] [OUTPUT-FILE]`
+  `simple_preprocess [OPTION]... [INPUT-FILE] [OUTPUT-FILE]`
 
 ## DESCRIPTION
   This tool allows transforming the contents of a Lua source file to generate new code that is specialized for a certain task. For example, it can be used to build a lookup table for a program before the actual program runs, or compile-out certain bits of code that are only needed for testing. This is done by adding lines called 'directives' in the code that will be executed as a Lua program to build the modified version. Directives start with a `##` or `--##` sequence which must not have any leading characters other than whitespace.
@@ -23,7 +23,7 @@
   `--local-env=STRING`  data to append to local environment when processing input (format should use serialization library)
 
 ## EXAMPLES
-  `simple-preprocess test.lua test.out.lua --local-env={DEBUG=true}`
+  `simple_preprocess test.lua test.out.lua --local-env={DEBUG=true}`
   
   Input file `test.lua`:
 ```lua

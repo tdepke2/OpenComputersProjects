@@ -5,7 +5,7 @@
 -- well for larger programs. Note that this is not a minimal example, there is
 -- plenty that could be trimmed out depending on the use case.
 -- 
--- This program can be run with no arguments, or "./app-template.lua test" to
+-- This program can be run with no arguments, or "./app_template.lua test" to
 -- run any implemented tests. Requires the additional libraries listed below to
 -- work properly.
 -- 
