@@ -19,7 +19,7 @@ local thread = require("thread")
 local include = require("include")
 local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
-local craft_solver = include("craft_solver")
+local craft_solver = include("craft-solver")
 local dstructs = include("dstructs")
 local packer = include("packer")
 local wnet = include("wnet")
@@ -815,7 +815,7 @@ function Crafting:setupThreadFunc(mainContext)
   self.workers.robotConnections = loadRobotsConfig(ROBOTS_CONFIG_FILENAME)
   if not self.workers.robotConnections then
     io.stderr:write("Failed to open robots config file \"" .. ROBOTS_CONFIG_FILENAME .. "\".\n")
-    io.stderr:write("Please run the setup_robots utility to create this file.\n")
+    io.stderr:write("Please run the setup-robots utility to create this file.\n")
     mainContext.killProgram = true
     os.exit()
   end
@@ -853,7 +853,7 @@ function Crafting:setupThreadFunc(mainContext)
   -- Send robot code to active robots.
   local dlogWnetState = dlog.subsystems.wnet
   dlog.setSubsystem("wnet", false)
-  for libName, srcCode in include.iterateSrcDependencies("robot_up.lua") do
+  for libName, srcCode in include.iterateSrcDependencies("robot-up.lua") do
     wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(libName, srcCode))
   end
   dlog.setSubsystem("wnet", dlogWnetState)
@@ -884,7 +884,7 @@ function Crafting:setupThreadFunc(mainContext)
     end
     if not foundConnection then
       io.stderr:write("Robot at address " .. address .. " has no connections to drone inventories.\n")
-      io.stderr:write("The robots config may be outdated, please run the setup_robots utility.\n")
+      io.stderr:write("The robots config may be outdated, please run the setup-robots utility.\n")
       mainContext.killProgram = true
       os.exit()
     end

@@ -533,7 +533,7 @@ function solver.testDependencySolver(loadRecipesFunc, verifyRecipesFunc)
   local stations = {}
   local recipes = {}
   local storageItems
-  loadRecipesFunc(stations, recipes, "misc/test_recipes.txt")
+  loadRecipesFunc(stations, recipes, "misc/test-recipes.txt")
   verifyRecipesFunc(stations, recipes)
   
   local function addStorageItem(itemName, label, total, maxSize)
