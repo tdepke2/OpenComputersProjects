@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- Minimalistic Lua preprocessor.
 -- 
--- @see file://simple_preprocess/README.md
+-- @see file://simple-preprocess/README.md
 -- @author tdepke2
 --------------------------------------------------------------------------------
 
@@ -10,7 +10,7 @@ local fs = require("filesystem")
 local serialization = require("serialization")
 local shell = require("shell")
 
-local USAGE_STRING = [[Usage: simple_preprocess [OPTION]... [INPUT-FILE] [OUTPUT-FILE]
+local USAGE_STRING = [[Usage: simple-preprocess [OPTION]... [INPUT-FILE] [OUTPUT-FILE]
 
 Options:
   -h, --help                display help message and exit
@@ -18,7 +18,7 @@ Options:
       --local-env=STRING    data to append to local environment when processing
                             input (format should use serialization library)
 
-For more information, run: man simple_preprocess
+For more information, run: man simple-preprocess
 ]]
 
 
@@ -26,9 +26,9 @@ For more information, run: man simple_preprocess
 local function checkFileError(filename, file, err)
   if not file then
     if fs.isDirectory(filename) then
-      io.stderr:write("simple_preprocess " .. filename .. ": is a directory\n")
+      io.stderr:write("simple-preprocess " .. filename .. ": is a directory\n")
     else
-      io.stderr:write("simple_preprocess " .. filename .. ": " .. tostring(err) .. "\n")
+      io.stderr:write("simple-preprocess " .. filename .. ": " .. tostring(err) .. "\n")
     end
     os.exit(2)
   end
@@ -51,7 +51,7 @@ local function main()
   if opts["local-env"] then
     appendEnv = serialization.unserialize(tostring(opts["local-env"]))
     if type(appendEnv) ~= "table" then
-      io.stderr:write("simple_preprocess: provided --local-env argument could not be deserialized to a table value\n")
+      io.stderr:write("simple-preprocess: provided --local-env argument could not be deserialized to a table value\n")
       os.exit(2)
     end
   end
@@ -76,7 +76,7 @@ local function main()
   end
   checkFileError(outputFilename, outputFile, err)
   
-  -- The spwrite function (simple_preprocess write) behaves very similar to
+  -- The spwrite function (simple-preprocess write) behaves very similar to
   -- print(), except that output is written to the processed file and no
   -- whitespace or tabs are inserted between arguments (besides a newline at the
   -- end). This function is available within the preprocessor environment.
@@ -146,12 +146,12 @@ local function main()
   local lineNum = 0
   local fn, result = load(function() lineNum = lineNum + 1 return processedLines[lineNum] end, "=(load)", "t", preprocessorEnv)
   if not fn then
-    io.stderr:write("simple_preprocess " .. inputFilename .. ": " .. tostring(result) .. "\n")
+    io.stderr:write("simple-preprocess " .. inputFilename .. ": " .. tostring(result) .. "\n")
     os.exit(2)
   end
   local status, result = pcall(fn)
   if not status then
-    io.stderr:write("simple_preprocess " .. inputFilename .. ": " .. tostring(result) .. "\n")
+    io.stderr:write("simple-preprocess " .. inputFilename .. ": " .. tostring(result) .. "\n")
     os.exit(2)
   end
   

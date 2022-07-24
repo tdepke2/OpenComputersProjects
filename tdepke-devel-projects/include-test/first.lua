@@ -1,6 +1,6 @@
 local include = require("include")
-local x = include("include_test.x")
-local y = include("include_test.y")
+local x = include("include-test.x")
+local y = include("include-test.y")
 
 local first = {}
 

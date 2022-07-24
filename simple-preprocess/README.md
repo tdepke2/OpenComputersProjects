@@ -1,4 +1,4 @@
-<!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./simple_preprocess.man) -->
+<!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./simple-preprocess.man) -->
 <!-- The below content is automatically added from ./simple_preprocess.man -->
 ## NAME
   simple_preprocess - minimalistic preprocessor for Lua code.

@@ -9,7 +9,7 @@
 local computer = require("computer")
 local thread = require("thread")
 
-local SERVICE_MAIN_PROGRAM = "/home/ocvnc/ocvnc_server.lua"
+local SERVICE_MAIN_PROGRAM = "/home/ocvnc/ocvnc-server.lua"
 
 local mainThread, vncServer
 local isStarting, isStopping = false, false

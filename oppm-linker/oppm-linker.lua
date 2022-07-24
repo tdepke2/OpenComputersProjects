@@ -3,7 +3,7 @@
 -- install location. This is designed for easy development of code with the
 -- OpenPrograms Package Manager.
 -- 
--- @see file://oppm_linker/README.md
+-- @see file://oppm-linker/README.md
 -- @author tdepke2
 --------------------------------------------------------------------------------
 
@@ -88,8 +88,8 @@ local function readPackageConfig(options, repoPath, installPath)
   
   -- The programs.cfg file just gives a table with package names, where each one defines files in the repo and their install path.
   for pkgName, pkgDat in pairs(pkgTable) do
-    -- Special case since the oppm_linker files need to be persistent on the system and we don't want to try to create symlinks to replace them.
-    if pkgName == "oppm_linker" then
+    -- Special case since the oppm-linker files need to be persistent on the system and we don't want to try to create symlinks to replace them.
+    if pkgName == "oppm-linker" then
       pkgDat.files = nil
     end
     for srcPath, destPath in pairs(pkgDat.files or {}) do
@@ -162,7 +162,7 @@ function start(...)
     if options.silent then
       require("term").clear()
     end
-    io.write("\27[31mERROR: failed to run oppm_linker\n")
+    io.write("\27[31mERROR: failed to run oppm-linker\n")
     io.write(tostring(err), "\n")
     if isStarting then
       io.write("\27[0m\n(press enter to continue)\n")
