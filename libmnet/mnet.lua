@@ -16,6 +16,7 @@
 -- * potential bug: can modem.broadcast() trigger a thread sleep? (pretty sure no). could cause problems with return value from mnet.send() if two threads try to send a message
 -- * potential bug: what happens if two servers are reliably communicating and connection goes down for a long time, then comes back? (neither server reboots)
 -- * loopback interface?
+-- * what happens if a NIC is plugged or unplugged? do we need a function to register/unregister a NIC?
 
 
 
@@ -32,7 +33,7 @@ local dlog = include("dlog")
 ##end
 
 -- Most private variables have been bound to a local value to optimize file compression and performance. See comments in below section for descriptions.
-local mnet, mnetRoutingTable, mnetFoundPackets, mnetSentPackets, mnetReceivedPackets, mnetLastSent, mnetLastReceived, mnetReceiveReadyHostSeq, mnetMaxSequence = {}, {}, {}, {}, {}, {}, {}, nil, 100
+local mnet, mnetRoutingTable, mnetFoundPackets, mnetSentPackets, mnetReceivedPackets, mnetLastSent, mnetLastReceived, mnetReceiveReadyHostSeq, mnetMaxSequence = {}, {}, {}, {}, {}, {}, {}, nil, math.floor(2 ^ 52)
 
 -- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
 mnet.hostname = computer.address():sub(1, 4)
@@ -47,9 +48,6 @@ mnet.routeTime = 30
 mnet.retransmitTime = 3
 -- Time in seconds until packets in the cache are dropped or reliable messages time out.
 mnet.dropTime = 12
-
--- The message string can be up to the max packet size, minus a bit to make sure the packet can send.
-mnet.mtuAdjusted = 1000  --1024  --computer.getDeviceInfo()[component.modem.address].capacity - 32
 
 
 -- Used to determine routes for packets. Stores uptime, receiverAddress, and senderAddress for each host.
@@ -70,84 +68,133 @@ mnet.mtuAdjusted = 1000  --1024  --computer.getDeviceInfo()[component.modem.addr
 --mnet.maxSequence = mnetMaxSequence
 
 
+-- Collect all network interfaces into a table.
+-- Other devices (like the linked card) can be included here as long as they implement open(), close(), send(), and broadcast().
 local modems = {}
 for address in component.list("modem", true) do
   modems[address] = component.proxy(address)
   modems[address].open(mnet.port)
+  mnet.mtuAdjusted = modems[address].maxPacketSize()
+end
+for address in component.list("tunnel", true) do
+  local tunnel = component.proxy(address)
+  modems[address] = setmetatable({
+    open = function() end,
+    close = function() end,
+    send = function(a, p, ...) return tunnel.send(...) end,
+    broadcast = function(p, ...) return tunnel.send(...) end
+  }, {
+    __index = tunnel
+  })
+  mnet.mtuAdjusted = tunnel.maxPacketSize()
 end
 
+-- The message string we send in a packet can be up to the maximum transmission unit (default 8192) minus the maximum amount of overhead bytes to make sure the packet can send.
+-- Maximum overhead =    sum(total values,  id, sequence, flags, dest hostname, src hostname, port, fragment, a little extra)
+##local maxPacketOverhead = (       7 * 2  + 8       + 8    + 8           + 36          + 36   + 8       + 0            + 0)    -- FIXME change extra to 32 #################################################################
+##spwrite("mnet.mtuAdjusted = mnet.mtuAdjusted - ", maxPacketOverhead)
 
-##if USE_DLOG then
 
--- FIXME evil broadcast used for testing unreliable comms ###################################################
-local dropSeq, swapSeq
-if mnet.hostname == "2f2c" then
-  dropSeq = {}
-  swapSeq = {}
-else
-  dropSeq = {}
-  swapSeq = {}
-end
+##if EXPERIMENTAL_DEBUG then
+-- Debugging functions. The following should only be used for testing purposes.
+
+-- Artificial cap on the maximum transmission unit when debugSetSmallMTU() is enabled.
+local SMALL_MTU_SIZE = 10
+-- Probability to intentionally drop a packet [0, 1].
+local PACKET_DROP_CHANCE = 0.1
+-- Probability to intentionally reorder a packet [0, 1].
+local PACKET_SWAP_CHANCE = 0.1
+-- Highest number of packets to come after the swapped one before we finally send it.
+local PACKET_SWAP_MAX_OFFSET = 3
+
+
+-- mnet.debugEnableLossy(lossy: boolean)
+-- 
+-- Sets lossy mode for packet transmission. This hooks into each network
+-- interface in the modems table and overrides modem.send() and
+-- modem.broadcast() to have a percent chance to drop (delete) or swap the
+-- ordering of a packet during transmit. This mimics real behavior of wireless
+-- packet transfer when the receiver is close to the maximum range of the
+-- wireless transmitter. Packets can also arrive in a different order than the
+-- order they are sent in large networks where routing paths are frequently
+-- changing. This is purely for debugging the performance and correctness of
+-- mnet.
 function mnet.debugEnableLossy(lossy)
-  for address in component.list("modem", true) do
-    local modem = component.proxy(address)
-    if lossy and not modem.debugLossyActive then
-      modem.broadcastReal = modem.broadcast
-      modem.broadcast = function(...)
-        -- Attempt to drop the packet.
-        local doDrop = (math.random() < 0.1)
-        if dropSeq[1] then
-          doDrop = (dropSeq[1] == 1)
-          table.remove(dropSeq, 1)
-        end
-        if doDrop then
-          dlog.out("modem", "\27[31mDropped.\27[0m")
-          return
-        end
-        
-        -- Attempt to swap order with the next N packets.
-        local swapAmount = (math.random() < 0.1 and math.floor(math.random(1, 3)) or 0)
-        if swapSeq[1] then
-          swapAmount = swapSeq[1]
-          table.remove(swapSeq, 1)
-        end
-        if not modem.debugBufferedPackets then
-          modem.debugBufferedPackets = {}
-        end
-        if swapAmount > 0 then
-          dlog.out("modem", "\27[31mSwapping packet order with next ", swapAmount, " packets\27[0m")
-          modem.debugBufferedPackets[#modem.debugBufferedPackets + 1] = {computer.uptime() + 20, swapAmount, table.pack(...)}
-        else
-          modem.broadcastReal(...)
-        end
-        -- Send any swapped packets that are ready.
-        local i = 1
-        while modem.debugBufferedPackets[i] do
-          local v = modem.debugBufferedPackets[i]
-          v[2] = v[2] - 1
-          if computer.uptime() > v[1] or v[2] < 0 then
-            if computer.uptime() < v[1] then
-              modem.broadcastReal(table.unpack(v[3], 1, v[3].n))
-            end
-            table.remove(modem.debugBufferedPackets, i)
-            i = i - 1
-          end
-          i = i + 1
-        end
+  local function buildTransmitWrapper(modem, func)
+    local dropSeq, swapSeq = {}, {}
+    
+    return function(...)
+      -- Attempt to drop the packet.
+      local doDrop = (math.random() < PACKET_DROP_CHANCE)
+      if dropSeq[1] then
+        doDrop = (dropSeq[1] == 1)
+        table.remove(dropSeq, 1)
       end
+      if doDrop then
+        dlog.out("modem", "\27[31mDropped.\27[0m")
+        return true
+      end
+      
+      -- Attempt to swap order with the next N packets.
+      local swapAmount = (math.random() < PACKET_SWAP_CHANCE and math.floor(math.random(1, PACKET_SWAP_MAX_OFFSET)) or 0)
+      if swapSeq[1] then
+        swapAmount = swapSeq[1]
+        table.remove(swapSeq, 1)
+      end
+      if not modem.debugBufferedPackets then
+        modem.debugBufferedPackets = {}
+      end
+      if swapAmount > 0 then
+        dlog.out("modem", "\27[31mSwapping packet order with next ", swapAmount, " packets\27[0m")
+        modem.debugBufferedPackets[#modem.debugBufferedPackets + 1] = {computer.uptime() + 20, swapAmount, table.pack(...)}
+      else
+        func(...)
+      end
+      -- Send any swapped packets that are ready.
+      local i = 1
+      while modem.debugBufferedPackets[i] do
+        local v = modem.debugBufferedPackets[i]
+        v[2] = v[2] - 1
+        if computer.uptime() > v[1] or v[2] < 0 then
+          if computer.uptime() < v[1] then
+            func(table.unpack(v[3], 1, v[3].n))
+          end
+          table.remove(modem.debugBufferedPackets, i)
+          i = i - 1
+        end
+        i = i + 1
+      end
+      return true
+    end
+  end
+  
+  for _, modem in pairs(modems) do
+    if lossy and not modem.debugLossyActive then
+      modem.sendReal = modem.send
+      modem.send = buildTransmitWrapper(modem, modem.sendReal)
+      modem.broadcastReal = modem.broadcast
+      modem.broadcast = buildTransmitWrapper(modem, modem.broadcastReal)
       modem.debugLossyActive = true
     elseif not lossy and modem.debugLossyActive then
+      modem.send = modem.sendReal
       modem.broadcast = modem.broadcastReal
       modem.debugLossyActive = false
     end
   end
 end
 
+-- mnet.debugSetSmallMTU(b: boolean)
+-- 
+-- Sets small MTU mode for testing how mnet behaves when a message is fragmented
+-- into many small pieces.
+local mtuAdjustedReal
 function mnet.debugSetSmallMTU(b)
-  if b then
-    mnet.mtuAdjusted = 10
-  else
-    mnet.mtuAdjusted = 1024
+  if b and not mtuAdjustedReal then
+    mtuAdjustedReal = mnet.mtuAdjusted
+    mnet.mtuAdjusted = SMALL_MTU_SIZE
+  elseif not b and mtuAdjustedReal then
+    mnet.mtuAdjusted = mtuAdjustedReal
+    mtuAdjustedReal = nil
   end
 end
 

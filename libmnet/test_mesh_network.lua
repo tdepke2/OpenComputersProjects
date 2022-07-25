@@ -32,7 +32,15 @@ local mnet = include.reload("mnet")
 
 local MODEM_RANGE_SHORT = 12
 local MODEM_RANGE_MAX = 400
+
+-- Test parameters. See mnet for drop and swap probabilities.
 local TEST_TIME_SECONDS = 60
+local MESSAGE_DELAY_MIN = 0.0
+local MESSAGE_DELAY_MAX = 2.0
+local MESSAGE_LENGTH_MIN = 1
+local MESSAGE_LENGTH_MAX = 32
+local MESSAGE_RELIABLE_CHANCE = 0.5
+local MESSAGE_BROADCAST_CHANCE = 0.2
 
 -- Creates a new enumeration from a given table (matches keys to values and vice
 -- versa). The given table is intended to use numeric keys and string values,
@@ -96,6 +104,11 @@ function NetInterface:setTestingMode(b)
     mnet.debugEnableLossy(false)
     mnet.debugSetSmallMTU(false)
   end
+  
+  -- The wireless NIC can be physically tested by reducing the max range. This is more accurate to a real scenario but much harder to debug which packets are actually lost.
+  --for address in component.list("modem", true) do
+    --component.proxy(address).setStrength(MODEM_RANGE_MAX)
+  --end
 end
 
 --[[
@@ -231,9 +244,6 @@ local function main()
   dlog.setSubsystem("mnet", true)
   
   netInterface:setTestingMode(false)
-  for address in component.list("modem", true) do
-    component.proxy(address).setStrength(MODEM_RANGE_MAX)
-  end
   
   dlog.out("init", "Mesh test ready, press \'s\' to start. I am ", netInterface:getHostname())
   
@@ -245,9 +255,9 @@ local function main()
     if testState == TestState.running and computer.uptime() >= sendTimer then
       local host = remoteHosts[math.random(1, #remoteHosts)]
       local port = math.floor(math.random(1, 65535))
-      local message = randomString(math.random(1, 32))
-      local reliable = math.random() < 0.5
-      if not reliable and math.random() < 0.2 then
+      local message = randomString(math.random(MESSAGE_LENGTH_MIN, MESSAGE_LENGTH_MAX))
+      local reliable = math.random() < MESSAGE_RELIABLE_CHANCE
+      if not reliable and math.random() < MESSAGE_BROADCAST_CHANCE then
         host = "*"
       end
       
@@ -269,8 +279,8 @@ local function main()
         end
       end
       
+      sendTimer = computer.uptime() + (MESSAGE_DELAY_MAX - MESSAGE_DELAY_MIN) * math.random() + MESSAGE_DELAY_MIN
       netInterface:send(host, port, message, reliable)
-      sendTimer = computer.uptime() + 2.0 * math.random()
     end
     
     -- Check for state transition.

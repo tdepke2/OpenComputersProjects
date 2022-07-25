@@ -1,3 +1,15 @@
-default:
-	simple_preprocess mnet.lua mnet.pp.lua
-	crunch mnet.pp.lua --tree --verbose
+all: full min
+
+full: mnet_full.lua
+mnet_full.lua: mnet.lua
+	simple_preprocess mnet.lua mnet_full.lua --local-env={OPEN_OS=true,USE_DLOG=true,EXPERIMENTAL_DEBUG=true}
+	crunch mnet_full.lua --tree --verbose
+
+min: mnet_min.lua
+mnet_min.lua: mnet.lua
+	simple_preprocess mnet.lua mnet_min.lua --local-env={}
+	crunch mnet_min.lua --tree --verbose
+
+.PHONY: clean
+clean:
+	rm -f mnet_full* mnet_min*
