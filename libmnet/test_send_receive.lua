@@ -17,8 +17,8 @@ dlog.osBlockNewGlobals(true)
 local mnet = include.reload("mnet")
 
 --local PORT = 123
-local HOST1 = "1315"
-local HOST2 = "2f2c"
+local HOST1 = "1315ba5c"
+local HOST2 = "2f2cacf9"
 
 local totalReceivedAck = 0
 local sentData = {}

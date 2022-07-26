@@ -42,8 +42,8 @@ mrpc_server.addDeclarations({
   },
 })
 
-local HOST1 = "1315"
-local HOST2 = "2f2c"
+local HOST1 = "1315ba5c"
+local HOST2 = "2f2cacf9"
 
 local sentData = {}
 local receivedData = {}

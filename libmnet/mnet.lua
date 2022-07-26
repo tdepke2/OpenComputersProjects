@@ -1,6 +1,12 @@
 --------------------------------------------------------------------------------
 -- Mesh networking protocol with minimalistic API.
 -- 
+##if OPEN_OS then
+-- Compiled by simple_preprocess. This version runs on OpenOS.
+##else
+-- Compiled by simple_preprocess. This version runs on embedded systems.
+##end
+-- 
 -- @see file://libmnet/README.md
 -- @author tdepke2
 --------------------------------------------------------------------------------
@@ -9,7 +15,6 @@
 
 -- FIXME things left to do: #############################################################
 -- * test fixes to simultaneous connection start
--- * add support for linked cards
 -- * finish routing behavior
 -- * functions to open/close mnet.port?
 -- * BUG: broadcasts need to be consumed and forwarded
@@ -33,10 +38,10 @@ local dlog = include("dlog")
 ##end
 
 -- Most private variables have been bound to a local value to optimize file compression and performance. See comments in below section for descriptions.
-local mnet, mnetRoutingTable, mnetFoundPackets, mnetSentPackets, mnetReceivedPackets, mnetLastSent, mnetLastReceived, mnetReceiveReadyHostSeq, mnetMaxSequence = {}, {}, {}, {}, {}, {}, {}, nil, math.floor(2 ^ 52)
+local mnet, mnetRoutingTable, mnetFoundPackets, mnetSentPackets, mnetReceivedPackets, mnetLastSent, mnetLastReceived, mnetReceiveReadyHostSeq, mnetMaxSequence = {}, {}, {}, {}, {}, {}, {}, nil, math.floor(2 ^ 32)
 
 -- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
-mnet.hostname = computer.address():sub(1, 4)
+mnet.hostname = computer.address():sub(1, 8)
 -- Common hardware port used by all hosts in this network.
 mnet.port = 123
 
@@ -64,7 +69,7 @@ mnet.dropTime = 12
 --mnet.lastReceived = mnetLastReceived
 -- Set to a host-sequence pair when data in mnetReceivedPackets is ready to return.
 --mnet.receiveReadyHostSeq = mnetReceiveReadyHostSeq
--- Largest value allowed for sequence before wrapping back to 1.
+-- Largest value allowed for sequence before wrapping back to 1. This can theoretically be up to 2^53 (integer precision of 64-bit floating-point mantissa in Lua 5.2).
 --mnet.maxSequence = mnetMaxSequence
 
 
@@ -74,8 +79,8 @@ local modems = {}
 for address in component.list("modem", true) do
   modems[address] = component.proxy(address)
   modems[address].open(mnet.port)
-  mnet.mtuAdjusted = modems[address].maxPacketSize()
 end
+##if OPEN_OS then
 for address in component.list("tunnel", true) do
   local tunnel = component.proxy(address)
   modems[address] = setmetatable({
@@ -86,13 +91,19 @@ for address in component.list("tunnel", true) do
   }, {
     __index = tunnel
   })
-  mnet.mtuAdjusted = tunnel.maxPacketSize()
 end
+if component.isAvailable("modem") then
+  mnet.mtuAdjusted = tonumber(computer.getDeviceInfo()[component.modem.address].capacity)
+end
+if component.isAvailable("tunnel") then
+  mnet.mtuAdjusted = math.min(tonumber(computer.getDeviceInfo()[component.tunnel.address].capacity), mnet.mtuAdjusted or math.huge)
+end
+##end
 
 -- The message string we send in a packet can be up to the maximum transmission unit (default 8192) minus the maximum amount of overhead bytes to make sure the packet can send.
 -- Maximum overhead =    sum(total values,  id, sequence, flags, dest hostname, src hostname, port, fragment, a little extra)
-##local maxPacketOverhead = (       7 * 2  + 8       + 8    + 8           + 36          + 36   + 8       + 0            + 0)    -- FIXME change extra to 32 #################################################################
-##spwrite("mnet.mtuAdjusted = mnet.mtuAdjusted - ", maxPacketOverhead)
+##local maxPacketOverhead = (       7 * 2  + 8       + 8    + 8           + 36          + 36   + 8       + 0            + 32)
+##spwrite("mnet.mtuAdjusted = (mnet.mtuAdjusted or 8192) - ", maxPacketOverhead)
 
 
 ##if EXPERIMENTAL_DEBUG then
@@ -106,7 +117,6 @@ local PACKET_DROP_CHANCE = 0.1
 local PACKET_SWAP_CHANCE = 0.1
 -- Highest number of packets to come after the swapped one before we finally send it.
 local PACKET_SWAP_MAX_OFFSET = 3
-
 
 -- mnet.debugEnableLossy(lossy: boolean)
 -- 
@@ -198,9 +208,8 @@ function mnet.debugSetSmallMTU(b)
   end
 end
 
+
 ##end
-
-
 
 -- Forms a new packet with generated id to send over the network. The host is
 -- expected to have a leading character representing reliability of the message.
@@ -366,9 +375,9 @@ function mnet.receive(timeout, connectionLostCallback)
 ##else
 function mnet.receive(ev, connectionLostCallback)
 ##end
-##if USE_DLOG then
+  ##if USE_DLOG then
   dlog.checkArgs(timeout, "number", connectionLostCallback, "function,nil")
-##end
+  ##end
   
   -- Check if we have buffered packets that are ready to return immediately.
   if mnetReceiveReadyHostSeq then
@@ -426,7 +435,7 @@ function mnet.receive(ev, connectionLostCallback)
   end
   
   -- Return early if not a valid packet.
-  if eventType ~= "modem_message" or senderPort ~= mnet.port or mnetFoundPackets[id] then
+  if eventType ~= "modem_message" or (senderPort ~= mnet.port and senderPort ~= 0) or mnetFoundPackets[id] then
     return
   end
   sequence = math.floor(sequence)
