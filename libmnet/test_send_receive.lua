@@ -25,6 +25,10 @@ local sentData = {}
 local receivedData = {}
 
 local function listenerThreadFunc()
+  local function connectionLostCallback(hostSeq, port, fragment)
+    dlog.out("receive", "Connection lost, hostSeq=", hostSeq, ", port=", port, ", fragment=", fragment)
+  end
+  
   while true do
     --[[
     local eventType, receiverAddress, senderAddress, senderPort, distance, message = event.pull(0.1, "modem_message")
@@ -34,7 +38,7 @@ local function listenerThreadFunc()
     end
     --]]
     
-    local host, port, message = mnet.receive(0.1)
+    local host, port, message = mnet.receive(0.1, connectionLostCallback)
     if host then
       dlog.out("receive", host, " ", port, " ", message)
       receivedData[#receivedData + 1] = message
@@ -79,7 +83,7 @@ local function main()
       end
       
       
-      dlog.out("done", "table sizes: routingTable=", numKeys(mnet.routingTable), ", foundPackets=", numKeys(mnet.foundPackets), ", sentPackets=", numKeys(mnet.sentPackets), ", receivedPackets=", numKeys(mnet.receivedPackets), ", lastSent=", numKeys(mnet.lastSent), ", lastReceived=", numKeys(mnet.lastReceived))
+      --dlog.out("done", "table sizes: routingTable=", numKeys(mnet.routingTable), ", foundPackets=", numKeys(mnet.foundPackets), ", sentPackets=", numKeys(mnet.sentPackets), ", receivedPackets=", numKeys(mnet.receivedPackets), ", lastSent=", numKeys(mnet.lastSent), ", lastReceived=", numKeys(mnet.lastReceived))
       break
     elseif event[1] == "key_down" then
       if not keyboard.isControl(event[3]) then

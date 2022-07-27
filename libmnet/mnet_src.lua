@@ -264,11 +264,12 @@ end
 -- The string "*" can be used to broadcast the message to all other hosts
 -- (reliable must be set to false in this case). When reliable is true, this
 -- function returns a string concatenating the host and last used sequence
--- number separated by a comma (the host also begins with an 'r' character). The
--- sent message is expected to be acknowledged in this case (think TCP). When
--- reliable is false, nil is returned and no "ack" is expected (think UDP). If
--- reliable and waitForAck are true, this function will block until the "ack" is
--- received or the message times out (nil is returned if it timed out).
+-- number separated by a comma (the host also begins with an 'r' character, like
+-- "rHOST,SEQUENCE"). The sent message is expected to be acknowledged in this
+-- case (think TCP). When reliable is false, nil is returned and no "ack" is
+-- expected (think UDP). If reliable and waitForAck are true, this function will
+-- block until the "ack" is received or the message times out (nil is returned
+-- if it timed out).
 function mnet.send(host, port, message, reliable, waitForAck)
   ##if USE_DLOG then
   dlog.checkArgs(host, "string", port, "number", message, "string", reliable, "boolean", waitForAck, "boolean,nil")
@@ -308,7 +309,9 @@ function mnet.send(host, port, message, reliable, waitForAck)
 end
 
 
--- Breaks a comma-separated host and sequence string into their values.
+-- Breaks a comma-separated host and sequence string into their values. The host
+-- will still have the extra prefix character. To remove this, just add a period
+-- at the start of the match pattern.
 local function splitHostSequencePair(hostSeq)
   local host, sequence = hostSeq:match("(.*),([^,]+)$")
   return host, tonumber(sequence)
@@ -339,7 +342,7 @@ local function nextMessage(hostSeq, currentPacket)
     for i = currentPacket[5], 1, -1 do
       local packet = mnetReceivedPackets[host .. "," .. sequence]
       ##if USE_DLOG then
-      dlog.out("mnet", "Collecting fragment ", host .. "," .. sequence)
+      dlog.out("mnet:d", "Collecting fragment ", host .. "," .. sequence)
       ##end
       if not (packet and packet[4]) then
         return
@@ -351,7 +354,7 @@ local function nextMessage(hostSeq, currentPacket)
     for i = 1, currentPacket[5] do
       sequence = sequence % mnetMaxSequence + 1
       ##if USE_DLOG then
-      dlog.out("mnet", "Removing ", host .. "," .. sequence, " from cache.")
+      dlog.out("mnet:d", "Removing ", host .. "," .. sequence, " from cache.")
       ##end
       mnetReceivedPackets[host .. "," .. sequence][4] = nil
     end
@@ -368,8 +371,10 @@ end
 -- connectionLostCallback is used to catch reliable messages that failed to send
 -- from this host. If provided, the function is called with a string
 -- host-sequence pair, a virtual port number, and string fragment. The
--- host-sequence pair corresponds to the return values from mnet.send(), except
--- that fragments besides the last one in a message will not match up.
+-- host-sequence pair corresponds to the return values from mnet.send(). Note
+-- that the host in this pair has an 'r' character prefix, and the sequence
+-- number will only match a previous return value from mnet.send() if it
+-- corresponds to the last fragment of the original message.
 ##if OPEN_OS then
 function mnet.receive(timeout, connectionLostCallback)
 ##else
@@ -383,7 +388,7 @@ function mnet.receive(ev, connectionLostCallback)
   if mnetReceiveReadyHostSeq then
     local hostSeq, host, sequence = mnetReceiveReadyHostSeq, splitHostSequencePair(mnetReceiveReadyHostSeq)
     ##if USE_DLOG then
-    dlog.out("mnet", "Buffered data ready, hostSeq=", hostSeq, ", type(packet)=", type(mnetReceivedPackets[hostSeq]))
+    dlog.out("mnet:d", "Buffered data ready, hostSeq=", hostSeq, ", type(packet)=", type(mnetReceivedPackets[hostSeq]))
     ##end
     if mnetReceivedPackets[hostSeq] then
       mnetReceiveReadyHostSeq = host .. "," .. sequence % mnetMaxSequence + 1
@@ -392,7 +397,7 @@ function mnet.receive(ev, connectionLostCallback)
         return
       end
       ##if USE_DLOG then
-      dlog.out("mnet", "Returning buffered packet ", hostSeq, ", dat=", mnetReceivedPackets[hostSeq])
+      dlog.out("mnet:d", "Returning buffered packet ", hostSeq, ", dat=", mnetReceivedPackets[hostSeq])
       ##end
       return nextMessage(hostSeq, mnetReceivedPackets[hostSeq])
     else
@@ -418,7 +423,7 @@ function mnet.receive(ev, connectionLostCallback)
     elseif packet[5] and t > mnetFoundPackets[packet[2]] + mnet.retransmitTime then
       -- Packet requires retransmission. The same data is sent again but with a new packet id.
       ##if USE_DLOG then
-      dlog.out("mnet", "Retransmitting packet with previous id ", packet[2])
+      dlog.out("mnet:d", "Retransmitting packet with previous id ", packet[2])
       ##end
       local sentHost, sentSequence = splitHostSequencePair(hostSeq)
       packet[2] = sendFragment(sentSequence, packet[3], sentHost, packet[4], packet[5])
@@ -483,7 +488,7 @@ function mnet.receive(ev, connectionLostCallback)
         -- Set the message to nil to mark completion (and all previous sequential messages).
         while mnetSentPackets[hostSeq] and mnetSentPackets[hostSeq][5] do
           ##if USE_DLOG then
-          dlog.out("mnet", "Marking ", hostSeq, " as acknowledged.")
+          dlog.out("mnet:d", "Marking ", hostSeq, " as acknowledged.")
           ##end
           mnetSentPackets[hostSeq][5] = nil
           sequence = (sequence - 2) % mnetMaxSequence + 1
@@ -500,12 +505,12 @@ function mnet.receive(ev, connectionLostCallback)
         
         -- If the ack does not correspond to before the first pending sent packet and we found the first pending one, force it to have the syn flag set.
         ##if USE_DLOG then
-        dlog.out("mnet", "Found unexpected ack, beforeFirstSequence is ", beforeFirstSequence, ", first hostSeq is ", hostSeq)
+        dlog.out("mnet:d", "Found unexpected ack, beforeFirstSequence is ", beforeFirstSequence, ", first hostSeq is ", hostSeq)
         ##end
         local firstSentPacket = mnetSentPackets[hostSeq]
         if beforeFirstSequence ~= sequence and firstSentPacket and not firstSentPacket[3]:find("s1") then
           ##if USE_DLOG then
-          dlog.out("mnet", "Setting syn flag for hostSeq.")
+          dlog.out("mnet:d", "Setting syn flag for hostSeq.")
           ##end
           firstSentPacket[3] = firstSentPacket[3] .. "s1"
         end
@@ -533,15 +538,15 @@ function mnet.receive(ev, connectionLostCallback)
       if not reliable then
         -- Packet is unreliable, we don't care about ordering.
         ##if USE_DLOG then
-        dlog.out("mnet", "Ignored ordering, passing packet through.")
+        dlog.out("mnet:d", "Ignored ordering, passing packet through.")
         ##end
       elseif flags:find("s1") or mnetLastReceived[src] and mnetLastReceived[src] % mnetMaxSequence + 1 == sequence then
         -- Packet has syn flag set (marks a new connection) or the sequence corresponds to the next one we expect.
         ##if USE_DLOG then
         if flags:find("s1") then
-          dlog.out("mnet", "Begin new connection to ", src:sub(2))
+          dlog.out("mnet:d", "Begin new connection to ", src:sub(2))
         else
-          dlog.out("mnet", "Packet arrived in expected order.")
+          dlog.out("mnet:d", "Packet arrived in expected order.")
         end
         ##end
         mnetLastReceived[src] = sequence
@@ -549,20 +554,20 @@ function mnet.receive(ev, connectionLostCallback)
         while mnetReceivedPackets[src .. "," .. mnetLastReceived[src] % mnetMaxSequence + 1] do
           mnetLastReceived[src] = mnetLastReceived[src] % mnetMaxSequence + 1
           ##if USE_DLOG then
-          dlog.out("mnet", "Buffered packet ready, bumped last sequence to ", mnetLastReceived[src])
+          dlog.out("mnet:d", "Buffered packet ready, bumped last sequence to ", mnetLastReceived[src])
           ##end
           mnetReceiveReadyHostSeq = mnetReceiveReadyHostSeq or src .. "," .. mnetLastReceived[src]
         end
       else
         -- Sequence does not correspond to the expected one, delay processing the packet until later.
         ##if USE_DLOG then
-        dlog.out("mnet", "Packet arrived in unexpected order (last sequence was ", mnetLastReceived[src], ")")
+        dlog.out("mnet:d", "Packet arrived in unexpected order (last sequence was ", mnetLastReceived[src], ")")
         ##end
         currentPacket = nil
       end
     else
       ##if USE_DLOG then
-      dlog.out("mnet", "Already processed this sequence, ignoring.")
+      dlog.out("mnet:d", "Already processed this sequence, ignoring.")
       ##end
     end
     

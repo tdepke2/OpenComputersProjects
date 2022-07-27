@@ -18,6 +18,7 @@ The basic idea:
   * Each machine shows results.
 --]]
 
+
 local component = require("component")
 local computer = require("computer")
 local event = require("event")
@@ -35,8 +36,8 @@ local MODEM_RANGE_MAX = 400
 
 -- Test parameters. See mnet for drop and swap probabilities.
 local TEST_TIME_SECONDS = 60
-local MESSAGE_DELAY_MIN = 0.0
-local MESSAGE_DELAY_MAX = 2.0
+local MESSAGE_DELAY_MIN = 1.0
+local MESSAGE_DELAY_MAX = 3.0
 local MESSAGE_LENGTH_MIN = 0
 local MESSAGE_LENGTH_MAX = 32
 local MESSAGE_RELIABLE_CHANCE = 0.5
@@ -131,7 +132,9 @@ local netInterface = NetInterface:new()
 -- Capture lost connection and add to counter for this host.
 local function connectionLostCallback(hostSeq, port, fragment)
   dlog.out("receive", "Connection lost, hostSeq=", hostSeq, ", port=", port, ", fragment=", fragment)
-  local host, sequence = string.match(hostSeq, "(.*),([^,]+)$")
+  local host, sequence = string.match(hostSeq, ".(.*),([^,]+)$")
+  dlog.out("d", "reportedLost:", reportedLost)
+  dlog.out("d", "reportedLost at [", host, "] = ", reportedLost[host])
   reportedLost[host] = reportedLost[host] + 1
 end
 
@@ -337,6 +340,7 @@ local function main()
           addMessageResults(totalResults[4], v[4])
           addMessageResults(totalResults[5], v[5])
         end
+        dlog.out("d", "                             |                                        |")
         displayResults("total", totalResults)
         break
       end
