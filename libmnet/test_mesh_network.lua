@@ -36,12 +36,18 @@ local MODEM_RANGE_MAX = 400
 
 -- Test parameters. See mnet for drop and swap probabilities.
 local TEST_TIME_SECONDS = 60
+-- Min/max delay to wait after sending a message. These may need to be increased based on the number of servers in the test.
 local MESSAGE_DELAY_MIN = 1.0
 local MESSAGE_DELAY_MAX = 3.0
+-- Min/max number of randomized characters in each message.
 local MESSAGE_LENGTH_MIN = 0
 local MESSAGE_LENGTH_MAX = 32
+-- Probability to use reliable protocol (range [0, 1]).
 local MESSAGE_RELIABLE_CHANCE = 0.5
+-- Probability to send a broadcast if reliable was not chosen (range [0, 1]).
 local MESSAGE_BROADCAST_CHANCE = 0.2
+-- If true, each server adds itself to the list of remote hosts.
+local MESSAGE_ALLOW_LOOPBACK = true
 
 -- Creates a new enumeration from a given table (matches keys to values and vice
 -- versa). The given table is intended to use numeric keys and string values,
@@ -138,6 +144,90 @@ local function connectionLostCallback(hostSeq, port, fragment)
   reportedLost[host] = reportedLost[host] + 1
 end
 
+-- Start tracking a new remote host and add them to data collection tables.
+local function addHost(host)
+  remoteHosts[#remoteHosts + 1] = host
+  sentData[host] = {}
+  receivedData[host] = {}
+  connectionResets[host] = 0
+  reportedLost[host] = 0
+end
+
+-- Compare the contents of another host's sentData table with the messages we
+-- got from them (from receivedData). The errors and latency measurements are
+-- calculated and added to results.
+local function addResults(host, remoteSent)
+  local receivedSize = #receivedData[host]
+  
+  -- Data measurements we collect now and report later.
+  local numErrors = 0
+  local numConnectionResets = connectionResets[host]
+  local numReportedLost = reportedLost[host]
+  local reliableMessages = {
+    lastIndex = 1,
+    sent = 0,
+    lost = 0,
+    wrongOrder = 0,
+    latencyMin = math.huge,
+    latencyMax = -math.huge,
+    latencySum = 0
+  }
+  local unreliableMessages = {
+    lastIndex = 1,
+    sent = 0,
+    lost = 0,
+    wrongOrder = 0,
+    latencyMin = math.huge,
+    latencyMax = -math.huge,
+    latencySum = 0
+  }
+  
+  -- Iterate through each message the sender sent to us.
+  for i, sent in ipairs(remoteSent[netInterface:getHostname()]) do
+    local m = sent[3] and reliableMessages or unreliableMessages
+    m.sent = m.sent + 1
+    
+    -- Scan through a range [i - 16, size] of receivedData to find the entry where the messages match.
+    local received
+    for i = math.max(m.lastIndex - 16, 1), receivedSize do
+      local r = receivedData[host][i]
+      if r and sent[2] == r[2] then
+        received = r
+        receivedData[host][i] = nil
+        
+        -- If message was found prior to the index, it is out of order.
+        if i < m.lastIndex then
+          m.wrongOrder = m.wrongOrder + 1
+        end
+        while i <= receivedSize and not receivedData[host][i] do
+          i = i + 1
+        end
+        m.lastIndex = i
+        break
+      end
+    end
+    
+    if received then
+      -- Convert in-game time to real seconds.
+      local latency = (received[1] - sent[1]) * 3 / 216
+      m.latencyMin = math.min(m.latencyMin, latency)
+      m.latencyMax = math.max(m.latencyMax, latency)
+      m.latencySum = m.latencySum + latency
+    else
+      m.lost = m.lost + 1
+    end
+  end
+  
+  for i, received in pairs(receivedData[host]) do
+    numErrors = numErrors + 1
+  end
+  
+  results[host] = {numErrors, numConnectionResets, numReportedLost, reliableMessages, unreliableMessages}
+end
+
+-- Listens for incoming network messages and handles them. Command messages
+-- always contain a null character, while generic messages we add to
+-- receivedData do not.
 local function listenerThreadFunc()
   while true do
     local host, port, message = netInterface:receive(0.1, connectionLostCallback)
@@ -146,85 +236,20 @@ local function listenerThreadFunc()
       if string.find(message, "\0") then
         local messageType, messageData = string.match(message, "^([^\0]*)\0(.*)")
         if messageType == "hostname" and not sentData[host] then
-          remoteHosts[#remoteHosts + 1] = host
-          sentData[host] = {}
-          receivedData[host] = {}
-          connectionResets[host] = 0
-          reportedLost[host] = 0
           if testState == TestState.standby then
             dlog.out("state", "Got start request.")
+            if MESSAGE_ALLOW_LOOPBACK then
+              addHost(netInterface:getHostname())
+            end
+            addHost(host)
             netInterface:send("*", 123, "hostname\0", false)
             testState = testState + 1
             stateTimer = computer.uptime() + 5
+          else
+            addHost(host)
           end
         elseif messageType == "sentData" and not results[host] then
-          local remoteSent = serialization.unserialize(messageData)
-          local receivedSize = #receivedData[host]
-          
-          -- Data measurements we collect now and report later.
-          local numErrors = 0
-          local numConnectionResets = connectionResets[host]
-          local numReportedLost = reportedLost[host]
-          local reliableMessages = {
-            lastIndex = 1,
-            sent = 0,
-            lost = 0,
-            wrongOrder = 0,
-            latencyMin = math.huge,
-            latencyMax = -math.huge,
-            latencySum = 0
-          }
-          local unreliableMessages = {
-            lastIndex = 1,
-            sent = 0,
-            lost = 0,
-            wrongOrder = 0,
-            latencyMin = math.huge,
-            latencyMax = -math.huge,
-            latencySum = 0
-          }
-          
-          -- Iterate through each message the sender sent to us.
-          for i, sent in ipairs(remoteSent[netInterface:getHostname()]) do
-            local m = sent[3] and reliableMessages or unreliableMessages
-            m.sent = m.sent + 1
-            
-            -- Scan through a range [i - 16, size] of receivedData to find the entry where the messages match.
-            local received
-            for i = math.max(m.lastIndex - 16, 1), receivedSize do
-              local r = receivedData[host][i]
-              if r and sent[2] == r[2] then
-                received = r
-                receivedData[host][i] = nil
-                
-                -- If message was found prior to the index, it is out of order.
-                if i < m.lastIndex then
-                  m.wrongOrder = m.wrongOrder + 1
-                end
-                while i <= receivedSize and not receivedData[host][i] do
-                  i = i + 1
-                end
-                m.lastIndex = i
-                break
-              end
-            end
-            
-            if received then
-              -- Convert in-game time to real seconds.
-              local latency = (received[1] - sent[1]) * 3 / 216
-              m.latencyMin = math.min(m.latencyMin, latency)
-              m.latencyMax = math.max(m.latencyMax, latency)
-              m.latencySum = m.latencySum + latency
-            else
-              m.lost = m.lost + 1
-            end
-          end
-          
-          for i, received in pairs(receivedData[host]) do
-            numErrors = numErrors + 1
-          end
-          
-          results[host] = {numErrors, numConnectionResets, numReportedLost, reliableMessages, unreliableMessages}
+          addResults(host, serialization.unserialize(messageData))
         end
       else
         receivedData[host][#receivedData[host] + 1] = {os.time(), message .. "\0" .. port}
@@ -278,7 +303,9 @@ local function main()
         sentData[host][#sentData[host] + 1] = sent
       else
         for i, v in pairs(remoteHosts) do
-          sentData[v][#sentData[v] + 1] = sent
+          if v ~= netInterface:getHostname() then
+            sentData[v][#sentData[v] + 1] = sent
+          end
         end
       end
       
@@ -305,6 +332,9 @@ local function main()
         
         --dlog.out("d", "sentData: ", sentData)
         --dlog.out("d", "receivedData: ", receivedData)
+        if MESSAGE_ALLOW_LOOPBACK then
+          addResults(netInterface:getHostname(), sentData)
+        end
         netInterface:send("*", 123, "sentData\0" .. serialization.serialize(sentData), false)
         stateTimer = computer.uptime() + 5
       elseif testState == TestState.getSentData then
@@ -314,8 +344,8 @@ local function main()
         local function displayResults(host, r)
           local reliableLatencyAvg = r[4].latencySum / (r[4].sent - r[4].lost)
           local unreliableLatencyAvg = r[5].latencySum / (r[5].sent - r[5].lost)
-          dlog.out("d", string.format("%-9s %4d   %4d   %4d |   %4d %4d    %4d %5.2f %5.2f %5.2f  |   %4d %4d    %4d %5.2f %5.2f %5.2f",
-            string.sub(host, 1, 5) .. ":", r[1], r[2], r[3],
+          dlog.out("d", string.format("%-14s %4d   %4d   %4d |   %4d %4d    %4d %5.2f %5.2f %5.2f  |   %4d %4d    %4d %5.2f %5.2f %5.2f",
+            host .. (host ~= netInterface:getHostname() and ":" or " (me):"), r[1], r[2], r[3],
             r[4].sent, r[4].lost, r[4].wrongOrder, r[4].latencyMin, r[4].latencyMax, reliableLatencyAvg == reliableLatencyAvg and reliableLatencyAvg or 0,
             r[5].sent, r[5].lost, r[5].wrongOrder, r[5].latencyMin, r[5].latencyMax, unreliableLatencyAvg == unreliableLatencyAvg and unreliableLatencyAvg or 0
           ))
@@ -330,18 +360,25 @@ local function main()
           total.latencySum = (total.latencySum or 0) + m.latencySum
         end
         
-        dlog.out("d", "host    errors resets r_lost | r(sent lost w_order t_min t_max t_avg) | u(sent lost w_order t_min t_max t_avg)")
+        dlog.out("d", "host         errors resets r_lost | r(sent lost w_order t_min t_max t_avg) | u(sent lost w_order t_min t_max t_avg)")
         local totalResults = {0, 0, 0, {}, {}}
-        for k, v in pairs(results) do
-          displayResults(k, v)
-          totalResults[1] = totalResults[1] + v[1]
-          totalResults[2] = totalResults[2] + v[2]
-          totalResults[3] = totalResults[3] + v[3]
-          addMessageResults(totalResults[4], v[4])
-          addMessageResults(totalResults[5], v[5])
+        for _, host in ipairs(remoteHosts) do
+          local r = results[host]
+          results[host] = nil
+          if r then
+            displayResults(host, r)
+            totalResults[1] = totalResults[1] + r[1]
+            totalResults[2] = totalResults[2] + r[2]
+            totalResults[3] = totalResults[3] + r[3]
+            addMessageResults(totalResults[4], r[4])
+            addMessageResults(totalResults[5], r[5])
+          else
+            dlog.out("d", "ERROR: no data for host " .. host)
+          end
         end
-        dlog.out("d", "                             |                                        |")
+        dlog.out("d", string.rep(" ", 34), "|", string.rep(" ", 40), "|")
         displayResults("total", totalResults)
+        assert(next(results) == nil, "got data from unregistered host \"" .. tostring(next(results)) .. "\"")
         break
       end
       testState = testState + 1
@@ -357,6 +394,9 @@ local function main()
         if event[3] == string.byte("s") and testState == TestState.standby then
           dlog.out("state", "Starting test...")
           
+          if MESSAGE_ALLOW_LOOPBACK then
+            addHost(netInterface:getHostname())
+          end
           netInterface:send("*", 123, "hostname\0", false)
           testState = testState + 1
           stateTimer = computer.uptime() + 5

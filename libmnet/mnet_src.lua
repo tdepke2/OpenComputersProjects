@@ -20,9 +20,10 @@
 -- * BUG: broadcasts need to be consumed and forwarded
 -- * potential bug: can modem.broadcast() trigger a thread sleep? (pretty sure no). could cause problems with return value from mnet.send() if two threads try to send a message
 -- * potential bug: what happens if two servers are reliably communicating and connection goes down for a long time, then comes back? (neither server reboots)
--- * loopback interface?
 -- * what happens if a NIC is plugged or unplugged? do we need a function to register/unregister a NIC?
 
+-- done:
+-- * loopback interface
 
 
 
@@ -39,6 +40,9 @@ local dlog = include("dlog")
 
 -- Most private variables have been bound to a local value to optimize file compression and performance. See comments in below section for descriptions.
 local mnet, mnetRoutingTable, mnetFoundPackets, mnetSentPackets, mnetReceivedPackets, mnetLastSent, mnetLastReceived, mnetReceiveReadyHostSeq, mnetMaxSequence = {}, {}, {}, {}, {}, {}, {}, nil, math.floor(2 ^ 32)
+##if ENABLE_LOOPBACK then
+local mnetLocalReadyHostSeq
+##end
 
 -- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
 mnet.hostname = computer.address():sub(1, 8)
@@ -57,18 +61,30 @@ mnet.dropTime = 12
 
 -- Used to determine routes for packets. Stores uptime, receiverAddress, and senderAddress for each host.
 --mnet.routingTable = mnetRoutingTable
+
 -- Cache of packets that we have seen. Stores uptime for each packet id.
 --mnet.foundPackets = mnetFoundPackets
--- Pending reliable sent packets waiting for acknowledgment, and recently sent packets. Stores uptime, id, flags, port, and message (or nil if acknowledged) where the key is a host-sequence pair.
+
+-- Reliable sent packets that are waiting for acknowledgment (or recently acknowledged). Stores uptime, id, flags, port, and message (or nil if acknowledged) where the key is a host-sequence pair.
 --mnet.sentPackets = mnetSentPackets
--- Pending packets of a message that have been received, and recently received packets. Stores uptime, flags, port, message (or nil if found previously), and fragment number (or nil) where the key is a host-sequence pair.
+
+-- Packets of a message that have been received (or recently received). Stores uptime, flags, port, message (or nil if found previously), and fragment number (or nil) where the key is a host-sequence pair.
 --mnet.receivedPackets = mnetReceivedPackets
+
 -- Most recent sequence number used for sent packets. Stores sequence number for each host.
 --mnet.lastSent = mnetLastSent
--- First sequence number and most recent in-order sequence number found from reliable received packets. Stores sequence numbers for each host.
+
+-- Most recent in-order sequence number found from reliable received packets. Stores sequence number for each host.
 --mnet.lastReceived = mnetLastReceived
+
 -- Set to a host-sequence pair when data in mnetReceivedPackets is ready to return.
 --mnet.receiveReadyHostSeq = mnetReceiveReadyHostSeq
+
+##if ENABLE_LOOPBACK then
+-- Same as mnetReceiveReadyHostSeq for packets that come through the loopback interface.
+--mnet.localReadyHostSeq = mnetLocalReadyHostSeq
+
+##end
 -- Largest value allowed for sequence before wrapping back to 1. This can theoretically be up to 2^53 (integer precision of 64-bit floating-point mantissa in Lua 5.2).
 --mnet.maxSequence = mnetMaxSequence
 
@@ -80,7 +96,7 @@ for address in component.list("modem", true) do
   modems[address] = component.proxy(address)
   modems[address].open(mnet.port)
 end
-##if OPEN_OS then
+##if ENABLE_LINK_CARD then
 for address in component.list("tunnel", true) do
   local tunnel = component.proxy(address)
   modems[address] = setmetatable({
@@ -92,9 +108,13 @@ for address in component.list("tunnel", true) do
     __index = tunnel
   })
 end
+##end
+##if OPEN_OS then
 if component.isAvailable("modem") then
   mnet.mtuAdjusted = tonumber(computer.getDeviceInfo()[component.modem.address].capacity)
 end
+##end
+##if ENABLE_LINK_CARD then
 if component.isAvailable("tunnel") then
   mnet.mtuAdjusted = math.min(tonumber(computer.getDeviceInfo()[component.tunnel.address].capacity), mnet.mtuAdjusted or math.huge)
 end
@@ -134,6 +154,8 @@ function mnet.debugEnableLossy(lossy)
     local dropSeq, swapSeq = {}, {}
     
     return function(...)
+      local varargs = table.pack(...)
+      
       -- Attempt to drop the packet.
       local doDrop = (math.random() < PACKET_DROP_CHANCE)
       if dropSeq[1] then
@@ -144,6 +166,22 @@ function mnet.debugEnableLossy(lossy)
         dlog.out("modem", "\27[31mDropped.\27[0m")
         return true
       end
+      
+      --[[
+      -- Attempt to corrupt the packet (only the message data in the last field).
+      -- Just implemented here for fun, mnet can't handle corrupt packets right now because they never occur naturally.
+      local doCorrupt = (math.random() < 0.1)
+      if doCorrupt and type(varargs[varargs.n]) == "string" then
+        dlog.out("modem", "\27[31mCorrupted.\27[0m")
+        local fragment = varargs[varargs.n]
+        local i, charCode
+        while not i or string.byte(fragment, i) == charCode do
+          i = math.random(0, #fragment + 1)
+          charCode = math.random(32, 126)
+        end
+        varargs[varargs.n] = string.sub(fragment, 1, math.max(i - 1, 0)) .. string.char(charCode) .. string.sub(fragment, i + 1)
+      end
+      --]]
       
       -- Attempt to swap order with the next N packets.
       local swapAmount = (math.random() < PACKET_SWAP_CHANCE and math.floor(math.random(1, PACKET_SWAP_MAX_OFFSET)) or 0)
@@ -156,9 +194,9 @@ function mnet.debugEnableLossy(lossy)
       end
       if swapAmount > 0 then
         dlog.out("modem", "\27[31mSwapping packet order with next ", swapAmount, " packets\27[0m")
-        modem.debugBufferedPackets[#modem.debugBufferedPackets + 1] = {computer.uptime() + 20, swapAmount, table.pack(...)}
+        modem.debugBufferedPackets[#modem.debugBufferedPackets + 1] = {computer.uptime() + 20, swapAmount, varargs}
       else
-        func(...)
+        func(table.unpack(varargs, 1, varargs.n))
       end
       -- Send any swapped packets that are ready.
       local i = 1
@@ -250,6 +288,14 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
   ##if USE_DLOG then
   dlog.out("mnet", "\27[32mSending packet ", mnet.hostname, " -> ", host:sub(2), ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", fragment, "\27[0m")
   ##end
+  ##if ENABLE_LOOPBACK then
+  if host:sub(2) == mnet.hostname then
+    local hostSeq = host .. "," .. sequence
+    mnetReceivedPackets[hostSeq] = {t, flags, port, fragment, tonumber(flags:match("f(%d+)"))}
+    mnetLocalReadyHostSeq = mnetLocalReadyHostSeq or hostSeq
+    return id
+  end
+  ##end
   for _, modem in pairs(modems) do
     modem.broadcast(mnet.port, id, sequence, flags, host:sub(2), mnet.hostname, port, fragment)
   end
@@ -264,12 +310,12 @@ end
 -- The string "*" can be used to broadcast the message to all other hosts
 -- (reliable must be set to false in this case). When reliable is true, this
 -- function returns a string concatenating the host and last used sequence
--- number separated by a comma (the host also begins with an 'r' character, like
--- "rHOST,SEQUENCE"). The sent message is expected to be acknowledged in this
--- case (think TCP). When reliable is false, nil is returned and no "ack" is
--- expected (think UDP). If reliable and waitForAck are true, this function will
--- block until the "ack" is received or the message times out (nil is returned
--- if it timed out).
+-- number separated by a comma (the host also begins with an 'r' or 'u'
+-- character indicating reliability, like "rHOST,SEQUENCE"). The sent message is
+-- expected to be acknowledged in this case (think TCP). When reliable is false,
+-- nil is returned and no "ack" is expected (think UDP). If reliable and
+-- waitForAck are true, this function will block until the "ack" is received or
+-- the message times out (nil is returned if it timed out).
 function mnet.send(host, port, message, reliable, waitForAck)
   ##if USE_DLOG then
   dlog.checkArgs(host, "string", port, "number", message, "string", reliable, "boolean", waitForAck, "boolean,nil")
@@ -277,6 +323,16 @@ function mnet.send(host, port, message, reliable, waitForAck)
   ##else
   assert(not reliable or host ~= "*")
   ##end
+  
+  ##if ENABLE_LOOPBACK then
+  local reliableBak
+  if host == mnet.hostname or host == "localhost" then
+    host = mnet.hostname
+    reliableBak = reliable
+    reliable = false
+  end
+  ##end
+  
   -- We prepend an extra character to the host to guarantee unique host-sequence pairs for reliable and unreliable packets.
   host = (reliable and "r" or "u") .. host
   
@@ -292,7 +348,11 @@ function mnet.send(host, port, message, reliable, waitForAck)
     end
   end
   
+  ##if ENABLE_LOOPBACK then
+  if reliable or reliableBak then
+  ##else
   if reliable then
+  ##end
     local lastHostSeq = host .. "," .. mnetLastSent[host]
     if waitForAck then
       -- Busy-wait until the last packet receives an ack or it times out.
@@ -385,7 +445,15 @@ function mnet.receive(ev, connectionLostCallback)
   ##end
   
   -- Check if we have buffered packets that are ready to return immediately.
+  ##if ENABLE_LOOPBACK then
+  if mnetReceiveReadyHostSeq or mnetLocalReadyHostSeq then
+    if not mnetReceiveReadyHostSeq then
+      mnetReceiveReadyHostSeq = mnetLocalReadyHostSeq
+      mnetLocalReadyHostSeq = nil
+    end
+  ##else
   if mnetReceiveReadyHostSeq then
+  ##end
     local hostSeq, host, sequence = mnetReceiveReadyHostSeq, splitHostSequencePair(mnetReceiveReadyHostSeq)
     ##if USE_DLOG then
     dlog.out("mnet:d", "Buffered data ready, hostSeq=", hostSeq, ", type(packet)=", type(mnetReceivedPackets[hostSeq]))
@@ -397,7 +465,7 @@ function mnet.receive(ev, connectionLostCallback)
         return
       end
       ##if USE_DLOG then
-      dlog.out("mnet:d", "Returning buffered packet ", hostSeq, ", dat=", mnetReceivedPackets[hostSeq])
+      dlog.out("mnet:d", "Attempting return of buffered packet ", hostSeq, ", dat=", mnetReceivedPackets[hostSeq])
       ##end
       return nextMessage(hostSeq, mnetReceivedPackets[hostSeq])
     else

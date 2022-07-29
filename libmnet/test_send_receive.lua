@@ -58,7 +58,7 @@ local function main()
   mnet.debugEnableLossy(true)
   mnet.debugSetSmallMTU(true)
   
-  dlog.out("init", "Hello, I am ", mnet.hostname, ". Press \'s\' to send a message to ", HOST1, " or \'d\' to send a message to ", HOST2)
+  dlog.out("init", "Hello, I am ", mnet.hostname, ". Press \'a\' to send a message to myself, \'s\' to send a message to ", HOST1, ", or \'d\' to send a message to ", HOST2)
   
   local listenerThread = thread.create(listenerThreadFunc)
   
@@ -87,7 +87,15 @@ local function main()
       break
     elseif event[1] == "key_down" then
       if not keyboard.isControl(event[3]) then
-        if event[3] == string.byte("s") then
+        if event[3] == string.byte("a") then
+          sendPacket("localhost", 456, "abcdefghijklmnopqrstuvwxyz", false)
+          sendPacket("localhost", 456, "abcdefghijklmnopqrstuvwxyz abcdefghijklmnopqrstuvwxyz", true)
+          sendPacket(mnet.hostname, 456, "abcdefghijklmnopqrstuvwxyz", false)
+          
+          sendPacket("localhost", 456, "a_" .. math.floor(math.random(1, 100)), true)
+          sendPacket(mnet.hostname, 456, "b_" .. math.floor(math.random(1, 100)), true)
+          sendPacket("localhost", 456, "c_" .. math.floor(math.random(1, 100)), true)
+        elseif event[3] == string.byte("s") then
           --dlog.out("send", modem.broadcast(PORT, "ping"))
           
           sendPacket("*", 456, "abcdefghijklmnopqrstuvwxyz", false)

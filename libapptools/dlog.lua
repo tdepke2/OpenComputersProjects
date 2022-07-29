@@ -27,6 +27,8 @@ dlog.verboseErrorTraceback = true
 dlog.maxMessageLength = nil
 
 
+dlog.coredump = nil
+
 -- Private data members, no touchy:
 dlog.fileOutput = nil
 dlog.stdOutput = true
@@ -85,6 +87,80 @@ function dlog.verboseError(message, level)
     dlog.out("error", "\27[31m", message, "\27[0m")
   end
   error(message, level)
+end
+
+
+function dlog.dumpCore()
+  local core = {}
+  core.traceback = debug.traceback()
+  
+  local level = 0
+  while true do
+    local info = debug.getinfo(level)
+    if not info then
+      break
+    end
+    local frameHeader = (info.short_src or "?") .. ((info.currentline or -1) > 0 and ":" .. info.currentline .. ": in " or ": in ")
+    if info.what == "main" then
+      frameHeader = frameHeader .. "main chunk\n"
+    else
+      local funcName = info.name and "\'" .. info.name .. "\'"
+      if not funcName and info.short_src and (info.linedefined or -1) > 0 then
+        funcName = "<" .. info.short_src .. ":" .. info.linedefined .. ">"
+      end
+      if funcName then
+        frameHeader = frameHeader .. ((info.namewhat == "global" or info.namewhat == "") and "function" or info.namewhat) .. " " .. funcName .. "\n"
+      else
+        frameHeader = frameHeader .. "?\n"
+      end
+    end
+    local frame = {}
+    core[level] = frame
+    frame.frame = frameHeader
+    frame.localNames = {}
+    frame.localDatum = {}
+    frame.upvalNames = {}
+    frame.upvalDatum = {}
+    
+    local i = 1
+    while true do
+      local n, v = debug.getlocal(level, i)
+      if not n then
+        break
+      end
+      frame.localNames[i] = n
+      frame.localDatum[i] = v
+      i = i + 1
+    end
+    i = i - 1
+    local j = -1
+    while true do
+      local n, v = debug.getlocal(level, j)
+      if not n then
+        break
+      end
+      frame.localNames[i - j] = n
+      frame.localDatum[i - j] = v
+      j = j - 1
+    end
+    if info.func then
+      i = 1
+      while true do
+        local n, v = debug.getupvalue(info.func, i)
+        if not n then
+          break
+        end
+        frame.upvalNames[i] = n
+        frame.upvalDatum[i] = v
+        i = i + 1
+      end
+    end
+    
+    level = level + 1
+  end
+  
+  dlog.coredump = core
+  return core
 end
 
 

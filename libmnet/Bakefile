@@ -2,7 +2,7 @@ all: full embed
 
 full: mnet.lua
 mnet.lua: mnet_src.lua
-	simple_preprocess mnet_src.lua mnet.lua --local-env={OPEN_OS=true,USE_DLOG=true,EXPERIMENTAL_DEBUG=true}
+	simple_preprocess mnet_src.lua mnet.lua --local-env={OPEN_OS=true,USE_DLOG=true,EXPERIMENTAL_DEBUG=true,ENABLE_LINK_CARD=true,ENABLE_LOOPBACK=true}
 	crunch mnet.lua mnet_cr.lua --tree --verbose
 
 embed: mnet_embed.lua
