@@ -21,6 +21,7 @@
 -- * potential bug: can modem.broadcast() trigger a thread sleep? (pretty sure no). could cause problems with return value from mnet.send() if two threads try to send a message
 -- * potential bug: what happens if two servers are reliably communicating and connection goes down for a long time, then comes back? (neither server reboots)
 -- * what happens if a NIC is plugged or unplugged? do we need a function to register/unregister a NIC?
+-- * static routes?
 
 -- done:
 -- * loopback interface
