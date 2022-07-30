@@ -45,6 +45,7 @@ local HOSTS = {
 local potato
 
 
+-- Passes the potato off to a random host.
 local function sendPotato()
   if potato.target ~= mnet.hostname then
     potato = nil
@@ -72,6 +73,7 @@ local function sendPotato()
 end
 
 
+-- Listens for packets and handles them.
 local function listenerThreadFunc()
   while true do
     local host, port, message = mnet.receive(0.1)
@@ -81,7 +83,7 @@ local function listenerThreadFunc()
         os.exit()
       end
       potato = serialization.unserialize(message)
-      potato.sendTime = computer.uptime() + 12
+      potato.sendTime = computer.uptime() + 6
       
       if potato.target == mnet.hostname then
         dlog.out("d", "I have the potato!\27[7m\n.\n.\n.\n.\n.\n.\27[0m")
@@ -94,7 +96,7 @@ end
 
 
 local function main()
-  --dlog.setFileOut("/tmp/messages", "w")
+  dlog.setFileOut("/tmp/messages", "w")
   dlog.setSubsystem("mnet", true)
   
   mnet.debugEnableLossy(false)

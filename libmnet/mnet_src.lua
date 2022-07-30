@@ -17,7 +17,6 @@
 -- * test fixes to simultaneous connection start
 -- * finish routing behavior
 -- * functions to open/close mnet.port?
--- * BUG: broadcasts need to be consumed and forwarded
 -- * potential bug: can modem.broadcast() trigger a thread sleep? (pretty sure no). could cause problems with return value from mnet.send() if two threads try to send a message
 -- * potential bug: what happens if two servers are reliably communicating and connection goes down for a long time, then comes back? (neither server reboots)
 -- * what happens if a NIC is plugged or unplugged? do we need a function to register/unregister a NIC?
@@ -50,7 +49,7 @@ mnet.hostname = computer.address():sub(1, 8)
 -- Common hardware port used by all hosts in this network.
 mnet.port = 123
 
--- FIXME NYI ##################################################################################################
+-- Enables forwarding of packets to other hosts (packets with a different destination than mnet.hostname). Can be disabled for network nodes that function as endpoints.
 mnet.route = true
 -- Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
 mnet.routeTime = 30
@@ -72,10 +71,10 @@ mnet.dropTime = 12
 -- Packets of a message that have been received (or recently received). Stores uptime, flags, port, message (or nil if found previously), and fragment number (or nil) where the key is a host-sequence pair.
 --mnet.receivedPackets = mnetReceivedPackets
 
--- Most recent sequence number used for sent packets. Stores sequence number for each host.
+-- Most recent sequence number used for sent packets. Stores sequence number for each host (host has leading character).
 --mnet.lastSent = mnetLastSent
 
--- Most recent in-order sequence number found from reliable received packets. Stores sequence number for each host.
+-- Most recent in-order sequence number found from reliable received packets. Stores sequence number for each host (host has leading character).
 --mnet.lastReceived = mnetLastReceived
 
 -- Set to a host-sequence pair when data in mnetReceivedPackets is ready to return.
@@ -250,6 +249,22 @@ end
 
 ##end
 
+-- Communicates with available modems to send the packet to the destination
+-- host. If a corresponding entry for the destination is found in
+-- mnetRoutingTable, we send the packet directly to that modem address (and hope
+-- that the address will still lead back to the destination). Otherwise, we just
+-- broadcast the packet to everyone.
+local function routePacket(id, sequence, flags, dest, src, port, fragment)
+  if mnetRoutingTable[dest] and modems[mnetRoutingTable[dest][2]] then
+    modems[mnetRoutingTable[dest][2]].send(mnetRoutingTable[dest][3], mnet.port, id, sequence, flags, dest, src, port, fragment)
+  else
+    for _, modem in pairs(modems) do
+      modem.broadcast(mnet.port, id, sequence, flags, dest, src, port, fragment)
+    end
+  end
+end
+
+
 -- Forms a new packet with generated id to send over the network. The host is
 -- expected to have a leading character representing reliability of the message.
 -- If sequence is nil, the next value in the sequence is used (or a random value
@@ -297,9 +312,7 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
     return id
   end
   ##end
-  for _, modem in pairs(modems) do
-    modem.broadcast(mnet.port, id, sequence, flags, host:sub(2), mnet.hostname, port, fragment)
-  end
+  routePacket(id, sequence, flags, host:sub(2), mnet.hostname, port, fragment)
   return id
 end
 
@@ -507,6 +520,14 @@ function mnet.receive(ev, connectionLostCallback)
       mnetFoundPackets[k] = nil
     end
   end
+  for k, v in pairs(mnetRoutingTable) do
+    if t > v[1] + mnet.routeTime then
+      ##if USE_DLOG then
+      dlog.out("mnet:d", "Removing stale routing entry for host ", k)
+      ##end
+      mnetRoutingTable[k] = nil
+    end
+  end
   
   -- Return early if not a valid packet.
   if eventType ~= "modem_message" or (senderPort ~= mnet.port and senderPort ~= 0) or mnetFoundPackets[id] then
@@ -515,12 +536,6 @@ function mnet.receive(ev, connectionLostCallback)
   sequence = math.floor(sequence)
   port = math.floor(port)
   
-  --[[
-  for k, v in pairs(mnetRoutingTable) do
-    if t > v[1] + mnet.routeTime then
-      mnetRoutingTable[k] = nil
-    end
-  end--]]
   for k, v in pairs(mnetReceivedPackets) do
     if t > v[1] + mnet.dropTime then
       ##if USE_DLOG then
@@ -536,16 +551,17 @@ function mnet.receive(ev, connectionLostCallback)
   dlog.out("mnet", "\27[36mGot packet ", src, " -> ", dest, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", message, "\27[0m")
   ##end
   mnetFoundPackets[id] = t
+  mnetRoutingTable[src] = mnetRoutingTable[src] or {t, receiverAddress, senderAddress}
   
-  if dest ~= mnet.hostname and dest ~= "*" then
+  if dest ~= mnet.hostname and mnet.route then
     -- Packet is intended for a different recipient, forward it.
     ##if USE_DLOG then
     dlog.out("mnet", "\27[32mRouting packet ", id, "\27[0m")
     ##end
-    for _, modem in pairs(modems) do
-      modem.broadcast(mnet.port, id, sequence, flags, dest, src, port, message)
-    end
-  else
+    routePacket(id, sequence, flags, dest, src, port, message)
+  end
+  
+  if dest == mnet.hostname or dest == "*" then
     -- Prepend reliability character just like we do in mnet.send().
     local reliable = flags:find("[ra]1")
     src = (reliable and "r" or "u") .. src
