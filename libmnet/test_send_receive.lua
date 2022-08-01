@@ -38,7 +38,11 @@ local function listenerThreadFunc()
     end
     --]]
     
-    local host, port, message = mnet.receive(0.1, connectionLostCallback)
+    local status, host, port, message = xpcall(mnet.receive, debug.traceback, 0.1, connectionLostCallback)
+    if not status then
+      dlog.out("error", host)
+      os.exit()
+    end
     if host then
       dlog.out("receive", host, " ", port, " ", message)
       receivedData[#receivedData + 1] = message

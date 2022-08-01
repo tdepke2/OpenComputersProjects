@@ -14,11 +14,7 @@
 
 
 -- FIXME things left to do: #############################################################
--- * test fixes to simultaneous connection start
--- * finish routing behavior
 -- * functions to open/close mnet.port?
--- * potential bug: can modem.broadcast() trigger a thread sleep? (pretty sure no). could cause problems with return value from mnet.send() if two threads try to send a message
--- * potential bug: what happens if two servers are reliably communicating and connection goes down for a long time, then comes back? (neither server reboots)
 -- * what happens if a NIC is plugged or unplugged? do we need a function to register/unregister a NIC?
 -- * static routes?
 
@@ -45,7 +41,7 @@ local mnetLocalReadyHostSeq
 ##end
 
 -- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
-mnet.hostname = computer.address():sub(1, 8)
+##spwrite("mnet.hostname = ", OPEN_OS and "os.getenv()[\"HOSTNAME\"] or " or "", "computer.address():sub(1, 8)")
 -- Common hardware port used by all hosts in this network.
 mnet.port = 123
 
@@ -151,7 +147,7 @@ local PACKET_SWAP_MAX_OFFSET = 3
 -- mnet.
 function mnet.debugEnableLossy(lossy)
   local function buildTransmitWrapper(modem, func)
-    local dropSeq, swapSeq = {}, {}
+    local bufferedPackets, dropSeq, swapSeq = {}, {}, {}
     
     return function(...)
       local varargs = table.pack(...)
@@ -189,25 +185,22 @@ function mnet.debugEnableLossy(lossy)
         swapAmount = swapSeq[1]
         table.remove(swapSeq, 1)
       end
-      if not modem.debugBufferedPackets then
-        modem.debugBufferedPackets = {}
-      end
       if swapAmount > 0 then
         dlog.out("modem", "\27[31mSwapping packet order with next ", swapAmount, " packets\27[0m")
-        modem.debugBufferedPackets[#modem.debugBufferedPackets + 1] = {computer.uptime() + 20, swapAmount, varargs}
+        bufferedPackets[#bufferedPackets + 1] = {computer.uptime() + 20, swapAmount, varargs}
       else
         func(table.unpack(varargs, 1, varargs.n))
       end
       -- Send any swapped packets that are ready.
       local i = 1
-      while modem.debugBufferedPackets[i] do
-        local v = modem.debugBufferedPackets[i]
+      while bufferedPackets[i] do
+        local v = bufferedPackets[i]
         v[2] = v[2] - 1
         if computer.uptime() > v[1] or v[2] < 0 then
           if computer.uptime() < v[1] then
             func(table.unpack(v[3], 1, v[3].n))
           end
-          table.remove(modem.debugBufferedPackets, i)
+          table.remove(bufferedPackets, i)
           i = i - 1
         end
         i = i + 1
@@ -256,8 +249,10 @@ end
 -- broadcast the packet to everyone.
 local function routePacket(id, sequence, flags, dest, src, port, fragment)
   if mnetRoutingTable[dest] and modems[mnetRoutingTable[dest][2]] then
+    dlog.out("d", "cached entry!")
     modems[mnetRoutingTable[dest][2]].send(mnetRoutingTable[dest][3], mnet.port, id, sequence, flags, dest, src, port, fragment)
   else
+    dlog.out("d", "no cache")
     for _, modem in pairs(modems) do
       modem.broadcast(mnet.port, id, sequence, flags, dest, src, port, fragment)
     end
@@ -512,6 +507,7 @@ function mnet.receive(ev, connectionLostCallback)
     end
   end
   
+  -- Remove previously found packet id numbers and routing cache entries that are old.
   for k, v in pairs(mnetFoundPackets) do
     if t > v + mnet.dropTime then
       ##if USE_DLOG then
@@ -603,19 +599,15 @@ function mnet.receive(ev, connectionLostCallback)
       return
     end
     
-    
-    --[[
-    FIXME consider these cases: ###############################################################
-      * two syn packets with same sequence arrive
-      * two ack packets for same sequence arrive
-      * random ack arrives (may need to ignore or start new connection)
-      * unexpected sequence arrives
-      * syn packet arrives after we saw other sequences in order
-    --]]
-    
-    local currentPacket
+    -- Some tricky cases that can happen, and how they are handled:
+    --   * Two syn packets with same sequence arrive (second gets dropped because we already saw that sequence).
+    --   * Two ack packets for same sequence arrive (second gets ignored because we still have the sent packet cached and it's marked acknowledged).
+    --   * Random ack arrives (determine if a new connection is needed based on the first pending sent packet).
+    --   * Unexpected sequence arrives (cache it for later and ack the last in-order sequence we got).
+    --   * Syn packet arrives after we saw other sequences in order (syn sequence takes priority and we renew the connection, we still bump it forward if there are buffered packets).
     
     -- Only process packet with this sequence number if it has not been processed before.
+    local currentPacket
     if not mnetReceivedPackets[hostSeq] or mnetReceivedPackets[hostSeq][4] then
       currentPacket = {t, flags, port, message, tonumber(flags:match("f(%d+)"))}
       mnetReceivedPackets[hostSeq] = currentPacket

@@ -1,4 +1,5 @@
 # oppm_linker
+
 This tool is designed to ease development of software on OpenComputers when working with the OpenPrograms Package Manager.
 
 See the man page below for details:
@@ -49,3 +50,9 @@ See the man page below for details:
 ## SEE ALSO
   [oppm](https://github.com/OpenPrograms/Vexatos-Programs/tree/master/oppm)
 <!-- MARKDOWN-AUTO-DOCS:END -->
+
+# auto_hostname
+
+Simple daemon for setting hostname at boot. This lets computers with a shared filesystem individually set their hostname (the hostname usually lives in `/etc/hostname`).
+
+Copy the file into `/etc/rc.d/` and run `rc auto_hostname enable` to use.
