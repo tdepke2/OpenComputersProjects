@@ -14,12 +14,12 @@
 
 
 -- FIXME things left to do: #############################################################
--- * functions to open/close mnet.port?
--- * what happens if a NIC is plugged or unplugged? do we need a function to register/unregister a NIC?
--- * static routes?
+-- 
 
 -- done:
 -- * loopback interface
+-- * static routes
+-- * functions to register/unregister a NIC
 
 
 
@@ -35,16 +35,19 @@ local dlog = include("dlog")
 ##end
 
 -- Most private variables have been bound to a local value to optimize file compression and performance. See comments in below section for descriptions.
-local mnet, mnetRoutingTable, mnetFoundPackets, mnetSentPackets, mnetReceivedPackets, mnetLastSent, mnetLastReceived, mnetReceiveReadyHostSeq, mnetMaxSequence = {}, {}, {}, {}, {}, {}, {}, nil, math.floor(2 ^ 32)
+local mnet, mnetRoutingTable, mnetFoundPackets, mnetSentPackets, mnetReceivedPackets, mnetLastSent, mnetLastReceived, mnetReceiveReadyHostSeq, mnetMaxSequence, modems = {}, {}, {}, {}, {}, {}, {}, nil, math.floor(2 ^ 32), {}
 ##if ENABLE_LOOPBACK then
 local mnetLocalReadyHostSeq
+##end
+##if ENABLE_STATIC_ROUTES then
+local mnetStaticRoutes = {}
+setmetatable(mnetRoutingTable, {__index = mnetStaticRoutes})
 ##end
 
 -- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
 ##spwrite("mnet.hostname = ", OPEN_OS and "os.getenv()[\"HOSTNAME\"] or " or "", "computer.address():sub(1, 8)")
 -- Common hardware port used by all hosts in this network.
 mnet.port = 123
-
 -- Enables forwarding of packets to other hosts (packets with a different destination than mnet.hostname). Can be disabled for network nodes that function as endpoints.
 mnet.route = true
 -- Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
@@ -55,9 +58,14 @@ mnet.retransmitTime = 3
 mnet.dropTime = 12
 
 
--- Used to determine routes for packets. Stores uptime, receiverAddress, and senderAddress for each host.
+-- Used to determine routes for packets. Stores receiverAddress, senderAddress, and uptime (or nil if static) for each host.
 --mnet.routingTable = mnetRoutingTable
 
+##if ENABLE_STATIC_ROUTES then
+-- Static routes override the dynamically created entries in mnetRoutingTable. Stores receiverAddress and senderAddress for each host.
+--mnet.staticRoutes = mnetStaticRoutes
+
+##end
 -- Cache of packets that we have seen. Stores uptime for each packet id.
 --mnet.foundPackets = mnetFoundPackets
 
@@ -85,15 +93,68 @@ mnet.dropTime = 12
 --mnet.maxSequence = mnetMaxSequence
 
 
--- Collect all network interfaces into a table.
--- Other devices (like the linked card) can be included here as long as they implement open(), close(), send(), and broadcast().
-local modems = {}
+##if OPEN_OS then
+-- mnet.registerDevice(address: string[, proxy: table]): table|nil
+-- 
+-- Adds a device that mnet can use for communication with other hosts in the
+-- network. Usually, the address should be the component address of a modem
+-- (wired/wireless card) or tunnel (linked card) plugged into the machine and
+-- proxy should be left as nil. To add a custom device for communication, a
+-- proxy table should be provided (must implement the functions open(), close(),
+-- send(), and broadcast() much like the modem component) with an address that
+-- is not currently in use. Returns the proxy object for the device, or nil if
+-- the address does not point to a valid network device.
+function mnet.registerDevice(address, proxy)
+  ##spwrite(USE_DLOG and "xassert" or "assert", "(proxy == nil or (proxy.open and proxy.close and proxy.send and proxy.broadcast), \"provided proxy for device must implement open(), close(), send(), and broadcast().\")")
+  modems[address] = proxy
+  if proxy then
+    proxy.open(mnet.port)
+  elseif component.type(address) == "modem" then
+    modems[address] = component.proxy(address)
+    modems[address].open(mnet.port)
+  ##if ENABLE_LINK_CARD then
+  elseif component.type(address) == "tunnel" then
+    local tunnel = component.proxy(address)
+    modems[address] = setmetatable({
+      open = function() end,
+      close = function() end,
+      send = function(a, p, ...) return tunnel.send(...) end,
+      broadcast = function(p, ...) return tunnel.send(...) end
+    }, {
+      __index = tunnel
+    })
+  ##end
+  end
+  return modems[address]
+end
+
+
+-- mnet.unregisterDevice(address: string)
+-- 
+-- Removes a device from the list of interfaces that mnet can use. To allow hot
+-- swapping network cards while mnet is running, call this function on
+-- "component_removed" signals and call mnet.registerDevice() on
+-- "component_added" signals.
+function mnet.unregisterDevice(address)
+  modems[address] = nil
+end
+##end
+
+
+-- Collect all currently attached network interfaces into a table.
 for address in component.list("modem", true) do
+  ##if OPEN_OS then
+  mnet.registerDevice(address)
+  ##else
   modems[address] = component.proxy(address)
   modems[address].open(mnet.port)
+  ##end
 end
 ##if ENABLE_LINK_CARD then
 for address in component.list("tunnel", true) do
+  ##if OPEN_OS then
+  mnet.registerDevice(address)
+  ##else
   local tunnel = component.proxy(address)
   modems[address] = setmetatable({
     open = function() end,
@@ -103,6 +164,7 @@ for address in component.list("tunnel", true) do
   }, {
     __index = tunnel
   })
+  ##end
 end
 ##end
 ##if OPEN_OS then
@@ -238,9 +300,31 @@ function mnet.debugSetSmallMTU(b)
     mtuAdjustedReal = nil
   end
 end
-
-
 ##end
+
+
+##if ENABLE_STATIC_ROUTES then
+-- mnet.getStaticRoutes(): table
+-- 
+-- Returns the static routes table for getting/setting a route. A static route
+-- specifies which network interface on the local and remote sides to use when
+-- sending a packet to a specific host. Each entry in the static routes table
+-- has a hostname key and table value, where the value stores the network
+-- interface address for the local and remote devices (keys 1 and 2
+-- respectively). The special hostname "*" can be used to route all packets
+-- through a specific network interface (other static routes will still take
+-- priority). The "*" static route will disable automatic routing behavior and
+-- broadcast messages will be sent only to the specified interface.
+-- 
+-- Example:
+--   -- Route all packets (besides broadcast) going to host123 through modem at
+--   -- "0a19..." to remote "d2c6..." (need to use the full address).
+--   mnet.getStaticRoutes()["host123"] = {"0a19...", "d2c6..."}
+function mnet.getStaticRoutes()
+  return mnetStaticRoutes
+end
+##end
+
 
 -- Communicates with available modems to send the packet to the destination
 -- host. If a corresponding entry for the destination is found in
@@ -248,11 +332,19 @@ end
 -- that the address will still lead back to the destination). Otherwise, we just
 -- broadcast the packet to everyone.
 local function routePacket(id, sequence, flags, dest, src, port, fragment)
-  if mnetRoutingTable[dest] and modems[mnetRoutingTable[dest][2]] then
-    dlog.out("d", "cached entry!")
-    modems[mnetRoutingTable[dest][2]].send(mnetRoutingTable[dest][3], mnet.port, id, sequence, flags, dest, src, port, fragment)
+  if mnetRoutingTable[dest] and modems[mnetRoutingTable[dest][1]] then
+    ##if USE_DLOG then
+    dlog.out("mnet:d", "Route is cached, sending from device ", mnetRoutingTable[dest][1], " to ", mnetRoutingTable[dest][2])
+    ##end
+    modems[mnetRoutingTable[dest][1]].send(mnetRoutingTable[dest][2], mnet.port, id, sequence, flags, dest, src, port, fragment)
+  ##if ENABLE_STATIC_ROUTES then
+  elseif mnetStaticRoutes["*"] and modems[mnetStaticRoutes["*"][1]] then
+    ##if USE_DLOG then
+    dlog.out("mnet:d", "Route is cached, sending from device ", mnetStaticRoutes["*"][1], " to ", mnetStaticRoutes["*"][2])
+    ##end
+    modems[mnetStaticRoutes["*"][1]].send(mnetStaticRoutes["*"][2], mnet.port, id, sequence, flags, dest, src, port, fragment)
+  ##end
   else
-    dlog.out("d", "no cache")
     for _, modem in pairs(modems) do
       modem.broadcast(mnet.port, id, sequence, flags, dest, src, port, fragment)
     end
@@ -316,15 +408,17 @@ end
 --   waitForAck: boolean]): string|nil
 -- 
 -- Sends a message with a virtual port number to another host in the network.
--- The string "*" can be used to broadcast the message to all other hosts
--- (reliable must be set to false in this case). When reliable is true, this
--- function returns a string concatenating the host and last used sequence
--- number separated by a comma (the host also begins with an 'r' or 'u'
--- character indicating reliability, like "rHOST,SEQUENCE"). The sent message is
--- expected to be acknowledged in this case (think TCP). When reliable is false,
--- nil is returned and no "ack" is expected (think UDP). If reliable and
--- waitForAck are true, this function will block until the "ack" is received or
--- the message times out (nil is returned if it timed out).
+-- The message can be any length and contain binary data. The host "*" can be
+-- used to broadcast the message to all other hosts (reliable must be set to
+-- false in this case).
+-- 
+-- When reliable is true, this function returns a string concatenating the host
+-- and last used sequence number separated by a comma (the host also begins with
+-- an 'r' or 'u' character indicating reliability, like "rHOST,SEQUENCE"). The
+-- sent message is expected to be acknowledged in this case (think TCP). When
+-- reliable is false, nil is returned and no "ack" is expected (think UDP). If
+-- reliable and waitForAck are true, this function will block until the "ack" is
+-- received or the message times out (nil is returned if it timed out).
 function mnet.send(host, port, message, reliable, waitForAck)
   ##if USE_DLOG then
   dlog.checkArgs(host, "string", port, "number", message, "string", reliable, "boolean", waitForAck, "boolean,nil")
@@ -517,7 +611,7 @@ function mnet.receive(ev, connectionLostCallback)
     end
   end
   for k, v in pairs(mnetRoutingTable) do
-    if t > v[1] + mnet.routeTime then
+    if t > v[3] + mnet.routeTime then
       ##if USE_DLOG then
       dlog.out("mnet:d", "Removing stale routing entry for host ", k)
       ##end
@@ -547,7 +641,14 @@ function mnet.receive(ev, connectionLostCallback)
   dlog.out("mnet", "\27[36mGot packet ", src, " -> ", dest, ":", port, " id=", id, ", seq=", sequence, ", flags=", flags, ", m=", message, "\27[0m")
   ##end
   mnetFoundPackets[id] = t
-  mnetRoutingTable[src] = mnetRoutingTable[src] or {t, receiverAddress, senderAddress}
+  ##-- When using static routes, we need to avoid adding a new routing entry that could mask a static one in the __index metamethod.
+  ##if ENABLE_STATIC_ROUTES then
+  if not (mnetRoutingTable[src] or mnetStaticRoutes["*"]) then
+    mnetRoutingTable[src] = {receiverAddress, senderAddress, t}
+  end
+  ##else
+  mnetRoutingTable[src] = mnetRoutingTable[src] or {receiverAddress, senderAddress, t}
+  ##end
   
   if dest ~= mnet.hostname and mnet.route then
     -- Packet is intended for a different recipient, forward it.

@@ -1,13 +1,16 @@
+FULL_OPTS = "{OPEN_OS=true, USE_DLOG=true, EXPERIMENTAL_DEBUG=true, ENABLE_LINK_CARD=true, ENABLE_LOOPBACK=true, ENABLE_STATIC_ROUTES=true}"
+EMBED_OPTS = "{}"
+
 all: full embed
 
 full: mnet.lua
 mnet.lua: mnet_src.lua
-	simple_preprocess mnet_src.lua mnet.lua --local-env={OPEN_OS=true,USE_DLOG=true,EXPERIMENTAL_DEBUG=true,ENABLE_LINK_CARD=true,ENABLE_LOOPBACK=true}
+	simple_preprocess mnet_src.lua mnet.lua --local-env=$(FULL_OPTS)
 	crunch mnet.lua mnet_cr.lua --tree --verbose
 
 embed: mnet_embed.lua
 mnet_embed.lua: mnet_src.lua
-	simple_preprocess mnet_src.lua mnet_embed.lua --local-env={}
+	simple_preprocess mnet_src.lua mnet_embed.lua --local-env=$(EMBED_OPTS)
 	crunch mnet_embed.lua mnet_embed_cr.lua --tree --verbose
 
 .PHONY: clean

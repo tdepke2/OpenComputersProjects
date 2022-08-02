@@ -19,7 +19,7 @@ local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
 local mnet = include.reload("mnet")
 
-local MAX_POTATO_TOSSES = 5
+local MAX_POTATO_TOSSES = 10
 local MESSAGE_RELIABLE_CHANCE = 1.0--0.5
 local MESSAGE_BROADCAST_CHANCE = 0.4
 

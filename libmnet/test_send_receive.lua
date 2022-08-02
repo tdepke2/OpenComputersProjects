@@ -102,9 +102,9 @@ local function main()
         elseif event[3] == string.byte("s") then
           --dlog.out("send", modem.broadcast(PORT, "ping"))
           
-          sendPacket("*", 456, "abcdefghijklmnopqrstuvwxyz", false)
-          sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz abcdefghijklmnopqrstuvwxyz", true)
-          sendPacket(HOST1, 456, "abcdefghijklmnopqrstuvwxyz", false)
+          sendPacket("*", 456,   "sample unreliable message", false)
+          sendPacket(HOST1, 456, "this is a reliable one, it should not be lost", true)
+          sendPacket(HOST1, 456, "another unreliable message!", false)
           --sendPacket(HOST1, 456, "first second third fourth fifth sixth " .. math.floor(math.random(1, 100)), false)
           --sendPacket(HOST1, 456, "beef_" .. math.floor(math.random(1, 100)), false)
           
@@ -125,6 +125,12 @@ local function main()
       elseif event[4] == keyboard.keys.enter then
         dlog.out("d", "")
       end
+    elseif event[1] == "component_added" then
+      dlog.out("component", "New device ", event[2])
+      dlog.out("component", tostring(mnet.registerDevice(event[2])))
+    elseif event[1] == "component_removed" then
+      dlog.out("component", "Disconnected device ", event[2])
+      mnet.unregisterDevice(event[2])
     end
     
     if listenerThread:status() == "dead" then
