@@ -47,7 +47,7 @@ setmetatable(mnetRoutingTable, {__index = mnetStaticRoutes})
 -- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
 ##spwrite("mnet.hostname = ", OPEN_OS and "os.getenv()[\"HOSTNAME\"] or " or "", "computer.address():sub(1, 8)")
 -- Common hardware port used by all hosts in this network.
-mnet.port = 123
+mnet.port = 2048
 -- Enables forwarding of packets to other hosts (packets with a different destination than mnet.hostname). Can be disabled for network nodes that function as endpoints.
 mnet.route = true
 -- Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
@@ -102,8 +102,9 @@ mnet.dropTime = 12
 -- proxy should be left as nil. To add a custom device for communication, a
 -- proxy table should be provided (must implement the functions open(), close(),
 -- send(), and broadcast() much like the modem component) with an address that
--- is not currently in use. Returns the proxy object for the device, or nil if
--- the address does not point to a valid network device.
+-- is not currently in use. The custom communication device must also push a
+-- "modem_message" signal when data is received. Returns the proxy object for
+-- the device, or nil if the address does not point to a valid network device.
 function mnet.registerDevice(address, proxy)
   ##spwrite(USE_DLOG and "xassert" or "assert", "(proxy == nil or (proxy.open and proxy.close and proxy.send and proxy.broadcast), \"provided proxy for device must implement open(), close(), send(), and broadcast().\")")
   modems[address] = proxy
@@ -129,14 +130,18 @@ function mnet.registerDevice(address, proxy)
 end
 
 
--- mnet.unregisterDevice(address: string)
+-- mnet.getDevices(): table
 -- 
--- Removes a device from the list of interfaces that mnet can use. To allow hot
--- swapping network cards while mnet is running, call this function on
--- "component_removed" signals and call mnet.registerDevice() on
--- "component_added" signals.
-function mnet.unregisterDevice(address)
-  modems[address] = nil
+-- Returns the table of registered network devices that mnet is using. The keys
+-- in the table are string addresses and values are proxy objects, like in
+-- mnet.registerDevice(). When mnet first loads, this table is initialized with
+-- all wired/wireless/linked cards plugged in to the machine.
+-- 
+-- To allow hot swapping network cards while mnet is running, make a call to
+-- "mnet.getDevices()[address] = nil" on "component_removed" signals and call
+-- mnet.registerDevice(address) on "component_added" signals.
+function mnet.getDevices()
+  return modems
 end
 ##end
 
@@ -410,7 +415,8 @@ end
 -- Sends a message with a virtual port number to another host in the network.
 -- The message can be any length and contain binary data. The host "*" can be
 -- used to broadcast the message to all other hosts (reliable must be set to
--- false in this case).
+-- false in this case). The host "localhost" or mnet.hostname allow the machine
+-- to send a message to itself (loopback interface).
 -- 
 -- When reliable is true, this function returns a string concatenating the host
 -- and last used sequence number separated by a comma (the host also begins with
@@ -527,6 +533,10 @@ end
 
 
 -- mnet.receive(timeout: number[, connectionLostCallback: function]): nil |
+--   (string, number, string)
+-- 
+-- On embedded systems, pass an event (in a table) instead of timeout:
+-- mnet.receive(ev: table[, connectionLostCallback: function]): nil |
 --   (string, number, string)
 -- 
 -- Pulls events up to the timeout duration and returns the sender host, virtual

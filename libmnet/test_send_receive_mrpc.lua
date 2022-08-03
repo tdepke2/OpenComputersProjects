@@ -15,7 +15,7 @@ local include = require("include")
 local dlog = include("dlog")
 dlog.osBlockNewGlobals(true)
 local mnet = include.reload("mnet")
-local mrpc_server = include("mrpc").newServer(789)
+local mrpc_server = include("mrpc").newServer(530)
 
 mrpc_server.addDeclarations({
   -- Request storage server address.

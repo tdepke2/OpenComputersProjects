@@ -11,20 +11,28 @@ Key features:
 * Automatic configuration of routes.
 * No background service to handle packets keeps things simple and fast.
 * Minified version runs on embedded hardware like drones and microcontrollers.
+* Loopback interface.
+* Static routes can be configured.
+* Supports wired/wireless cards and linked cards, in addition to custom communication devices.
 
 Limitations:
 
-* Hostnames are used as addresses, they must be unique (no DNS or DHCP).
+* Hostnames are used as addresses, they must be unique (no DNS or DHCP built in).
 * No congestion control, the network can get overloaded in extreme cases.
-* No loopback interface (machine cannot send messages to itself).
 
-Each message consists of a string sent to a target host (or broadcasted to all hosts in the network) and a virtual port. The virtual port is used to specify which process on the host the message is intended for. All messages are sent over the modem using a common port number `mnet.port`. This hardware port number can be changed to separate networks with overlapping range.
+Each message consists of a string sent to a target host (or broadcasted to all hosts in the network) and a virtual port. The virtual port is used to specify which process on the host the message is intended for. All messages are sent over the modem using a common port number `mnet.port` (port 2048 by default). This hardware port number can be changed to separate networks with overlapping range.
+
+> **Note**
+> 
+> If changing `mnet.port` after mnet is loaded, you should iterate `mnet.getDevices()` to close the old port and open the new one.
 
 When sending a message, there is a choice between reliable transfer and unreliable transfer. With the reliable option, the sender expects the message to be acknowledged to confirm successful transmission. The sender will retransmit the message until an "ack" is received, or the message may time out (see mnet configuration options). When unreliable is used, the message will only be sent once and the receiver will not send an "ack" back to the sender. This can reduce latency, but the message may not be received or it might arrive in a different order. One thing to note is that there is no interface to establish a connection for reliable messaging. Connections are managed internally by mnet and are allowed to persist forever (no "keepalive" like we have in TCP).
 
-For both reliable and unreliable transmission, if the message size is larger than the maximum transmission unit the modem supports (default is 8192) then it will be fragmented. A fragmented message gets split into multiple packets and sent one at a time, then they are recombined into the full message on the receiving end. This means there is no worry about sending a message with too much data.
+For both reliable and unreliable transmission, if the message size is larger than the maximum transmission unit the modem supports (default is 8192) then it will be fragmented. A fragmented message gets split into multiple packets and sent one at a time, then they are recombined on the receiving end and the full message is returned. This means there is no worry about sending a message with too much data.
 
 Routing in mnet is very simple and in practice roughly mimics shortest path first algorithm. When a packet needs to be sent to a receiver, the address of the modem to forward it to may be unknown (and we may need to broadcast the packet to everyone). However, the address it came from is known so we will remember which way to send the next one destined for that sender. When combined with reliable messaging, a single message and "ack" pair will populate the routing cache with the current best route between the two hosts (assuming all routing hosts are processing packets at the same rate).
+
+Note that there are significant differences between the version of mnet that runs on OpenOS and the minified version for embedded systems. Specifically, only `mnet.send()` and `mnet.receive()` are available. This is because the minified version is designed to fit onto a tiny 4KB EEPROM, so a lot of optional features are stripped out. Since mnet is compiled into these different versions using (simple_preprocess)[../simple_preprocess], it's very easy to build your own version by setting the preprocessor flags for only the features you need. These are the available flags: `OPEN_OS`, `USE_DLOG`, `EXPERIMENTAL_DEBUG`, `ENABLE_LINK_CARD`, `ENABLE_LOOPBACK`, `ENABLE_STATIC_ROUTES`. See the Bakefile for an example.
 
 Example usage:
 ```lua
@@ -64,8 +72,8 @@ Most of this code was adapted from the old packer.lua module. The packer module 
 
 Example usage:
 ```lua
--- Create server on port 1024.
-local mrpc_server = mrpc.newServer(1024)
+-- Create server on port 530.
+local mrpc_server = mrpc.newServer(530)
 
 -- Declare function say_hello.
 mrpc_server.declareFunction("say_hello", {

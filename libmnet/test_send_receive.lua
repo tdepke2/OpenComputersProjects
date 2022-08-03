@@ -130,7 +130,7 @@ local function main()
       dlog.out("component", tostring(mnet.registerDevice(event[2])))
     elseif event[1] == "component_removed" then
       dlog.out("component", "Disconnected device ", event[2])
-      mnet.unregisterDevice(event[2])
+      mnet.getDevices()[event[2]] = nil
     end
     
     if listenerThread:status() == "dead" then
