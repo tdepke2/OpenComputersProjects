@@ -32,6 +32,18 @@ When sending a message, there is a choice between reliable transfer and unreliab
 
 For both reliable and unreliable transmission, if the message size is larger than the maximum transmission unit the modem supports (default is 8192) then it will be fragmented. A fragmented message gets split into multiple packets and sent one at a time, then they are recombined on the receiving end and the full message is returned. This means there is no worry about sending a message with too much data.
 
+Packets are composed of 7 fields, see the table below for details:
+
+| Field    | Type    | Description |
+| -------- | ------- | ----------- |
+| id       | number  | A unique identifier for the packet (used to prevent feedback loop in routing) generated from a random number in range \[0, 1). It's theoretically possible for the number to not be unique, but this just results with a dropped packet. |
+| sequence | integer | Sequences start as a random positive integer and are specific to each host (along with reliable/unreliable protocol). The value increases by one for each message sent. Similar to TCP sequence, but also used for unreliable protocol to identify fragment ordering. |
+| flags    | string  | List of letter-number pairs. Options are 's' for synchronize (begin new connection), 'r' for requires acknowledgment, 'a' for acknowledged, or 'f' for fragment count/more fragments. |
+| dest     | string  | Hostname of the target host the packet should go to. |
+| src      | string  | Hostname of the sender. |
+| port     | integer | Virtual port number (which process on the target host the message is intended for). |
+| message  | string  | The message data, or a fragment of the whole if the MTU size would be exceeded. |
+
 Routing in mnet is very simple and in practice roughly mimics shortest path first algorithm. When a packet needs to be sent to a receiver, the address of the modem to forward it to may be unknown (and we may need to broadcast the packet to everyone). However, the address it came from is known so we will remember which way to send the next one destined for that sender. When combined with reliable messaging, a single message and "ack" pair will populate the routing cache with the current best route between the two hosts (assuming all routing hosts are processing packets at the same rate).
 
 Note that there are significant differences between the version of mnet that runs on OpenOS and the minified version for embedded systems. Specifically, only `mnet.send()` and `mnet.receive()` are available for the latter. This is because the minified version is designed to fit onto a tiny 4KB EEPROM, so a lot of optional features are stripped out. Since mnet is compiled into these different versions using [simple_preprocess](../simple_preprocess), it's very easy to build your own version by setting the preprocessor flags for only the features you need. These are the available flags: `OPEN_OS`, `USE_DLOG`, `EXPERIMENTAL_DEBUG`, `ENABLE_LINK_CARD`, `ENABLE_LOOPBACK`, `ENABLE_STATIC_ROUTES`. See the Bakefile for an example.

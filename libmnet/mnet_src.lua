@@ -12,17 +12,6 @@
 --------------------------------------------------------------------------------
 
 
-
--- FIXME things left to do: #############################################################
--- 
-
--- done:
--- * loopback interface
--- * static routes
--- * functions to register/unregister a NIC
-
-
-
 local component = require("component")
 ##if OPEN_OS then
 local computer = require("computer")
@@ -176,17 +165,17 @@ end
 if component.isAvailable("modem") then
   mnet.mtuAdjusted = tonumber(computer.getDeviceInfo()[component.modem.address].capacity)
 end
-##end
-##if ENABLE_LINK_CARD then
+  ##if ENABLE_LINK_CARD then
 if component.isAvailable("tunnel") then
   mnet.mtuAdjusted = math.min(tonumber(computer.getDeviceInfo()[component.tunnel.address].capacity), mnet.mtuAdjusted or math.huge)
 end
+  ##end
 ##end
 
 -- The message string we send in a packet can be up to the maximum transmission unit (default 8192) minus the maximum amount of overhead bytes to make sure the packet can send.
 -- Maximum overhead =    sum(total values,  id, sequence, flags, dest hostname, src hostname, port, fragment, a little extra)
 ##local maxPacketOverhead = (       7 * 2  + 8       + 8    + 8           + 36          + 36   + 8       + 0            + 32)
-##spwrite("mnet.mtuAdjusted = (mnet.mtuAdjusted or 8192) - ", maxPacketOverhead)
+##spwrite("mnet.mtuAdjusted = ", OPEN_OS and "(mnet.mtuAdjusted or 8192) - " .. maxPacketOverhead or 8192 - maxPacketOverhead)
 
 
 ##if EXPERIMENTAL_DEBUG then
