@@ -34,12 +34,42 @@ function app:new(mainThread)
     self.mainThread = mainThread
   end
   self.cleanupTasks = {}
+  -- Sequence of thread handles. The value "false" is used as a placeholder for a thread that is initializing.
   self.threads = {}
+  -- Sequence of names for threads. Each name begins with a character prefix separated by a comma.
+  -- The prefix is "r" for running or "d" for done (thread exited successfully).
   self.threadNames = {}
   self.killProgram = false
   self.exitCode = nil
   
   return self
+end
+
+
+-- app:run(func: function, ...)
+-- 
+-- Starts the application with body function func in a protected call. Any
+-- additional provided arguments are passed to func (when called from the main
+-- thread, use "..." to pass all arguments sent to the program). After func
+-- completes or returns an error, app:exit() is called to run cleanup and end
+-- the program.
+function app:run(func, ...)
+  local status, result
+  if dlog.logErrorsToOutput then
+    status, result = dlog.handleError(xpcall(func, debug.traceback, ...))
+  else
+    status, result = dlog.handleError(pcall(func, ...))
+  end
+  if status then
+    --print("exit ok")
+    self:exit()
+  elseif type(result) == "table" and result.reason ~= nil then
+    --print("exit with code ", result.code)
+    self:exit(result.code)
+  else
+    --print("exit with error")
+    self:exit(1)
+  end
 end
 
 
@@ -95,37 +125,47 @@ end
 -- app:createThread(name: string, threadProc: function, ...): table
 -- 
 -- Creates a new thread executing the function threadProc and registers it to
--- the app. Any additional provided arguments are passed to threadProc. Returns
--- the thread handle.
+-- the app. Any additional provided arguments are passed to threadProc. If
+-- dlog.logErrorsToOutput is enabled, threadProc is wrapped inside an xpcall()
+-- to capture exceptions with a stack trace. Returns the thread handle.
 function app:createThread(name, threadProc, ...)
   dlog.checkArgs(name, "string", threadProc, "function")
   local i = #self.threads + 1
-  self.threadNames[i] = name
+  self.threads[i] = false
+  self.threadNames[i] = "r," .. name
   dlog.out("app", name, " thread starts.")
-  local t = thread.create(threadProc, ...)
+  local t
+  if dlog.logErrorsToOutput then
+    t = thread.create(function(...)
+      local status, result = dlog.handleError(xpcall(threadProc, debug.traceback, ...))
+      if not status then
+        error(result, 0)
+      end
+    end, ...)
+  else
+    t = thread.create(threadProc, ...)
+  end
   self.threads[i] = t
   return t
 end
 
 
--- app:registerThread(name: string, t: table): number, string|boolean|nil
+-- app:registerThread(name: string, t: table): number, string|nil
 -- 
 -- Registers an existing thread to the app. Returns the index and name if the
 -- thread has already been registered, or just an index if the thread was added
--- successfully. If the thread was already registered and exited successfully, a
--- value of true is returned for the name instead. Registering a dead thread is
--- considered an error.
+-- successfully. Registering a dead thread is considered an error.
 function app:registerThread(name, t)
   dlog.checkArgs(name, "string", t, "table")
   for i, v in ipairs(self.threads) do
     if v == t then
-      return i, self.threadNames[i]
+      return i, string.sub(self.threadNames[i], 3)
     end
   end
   local i = #self.threads + 1
-  self.threadNames[i] = name
-  dlog.out("app", name, " thread registered.")
   self.threads[i] = t
+  self.threadNames[i] = "r," .. name
+  dlog.out("app", name, " thread registered.")
   return i
 end
 
@@ -133,13 +173,14 @@ end
 -- app:unregisterThread(t: table): boolean
 -- 
 -- Unregisters a thread from the app. The app will not consider this thread in
--- app:waitAnyThreads() or app:waitAllThreads() and the thread will no longer be
--- checked for exceptions. Returns true if thread was removed, or false if
--- thread is not currently registered.
+-- app:waitAnyThreads() or app:waitAllThreads() and the thread will no longer
+-- stop the application if an error occurs. Returns true if thread was removed,
+-- or false if thread is not currently registered.
 function app:unregisterThread(t)
   dlog.checkArgs(t, "table")
   for i, v in ipairs(self.threads) do
     if v == t then
+      dlog.out("app", string.sub(self.threadNames[i], 3), " thread unregistered.")
       table.remove(self.threads, i)
       table.remove(self.threadNames, i)
       return true
@@ -151,15 +192,19 @@ end
 
 -- Helper function to kill threads and run cleanup before stopping application.
 local function exitProgram(self, code)
-  dlog.out("app", "Stopping ", #self.threads, " threads and running ", #self.cleanupTasks, " cleanup tasks.")
+  if #self.threads > 0 or #self.cleanupTasks > 0 then
+    dlog.out("app", "Stopping ", #self.threads, " threads and running ", #self.cleanupTasks, " cleanup tasks.")
+  end
   for i = #self.threads, 1, -1 do
     if self.threads[i]:status() ~= "dead" then
-      dlog.out("app", self.threadNames[i], " thread ends.")
+      dlog.out("app", string.sub(self.threadNames[i], 3), " thread ends.")
       self.threads[i]:kill()
     end
+    self.threads[i] = nil
+    self.threadNames[i] = nil
   end
   self:doCleanup()
-  os.exit(code)
+  os.exit(code ~= nil and code or 0)
 end
 
 
@@ -179,7 +224,7 @@ function app:exit(code)
 end
 
 
--- app:threadDone(): boolean|nil
+-- app:threadDone(): boolean
 -- 
 -- Kills the current thread and reports successful execution. If a thread
 -- becomes dead in any other way then this is considered an error and the app
@@ -191,23 +236,20 @@ end
 function app:threadDone()
   local t = thread.current()
   if t and t ~= self.mainThread then
+    local numThreads = #self.threads
     for i, v in ipairs(self.threads) do
-      if v == t then
-        dlog.out("app", self.threadNames[i], " thread ends.")
-        -- Set the name to true to indicate successful execution.
-        self.threadNames[i] = true
+      -- Check for the matching entry for current thread (if it's still initializing, it will be the last entry).
+      if v == t or (i == numThreads and v == false) then
+        dlog.out("app", string.sub(self.threadNames[i], 3), " thread ends.")
+        -- Set the done flag in the name to indicate successful execution.
+        self.threadNames[i] = "d," .. string.sub(self.threadNames[i], 3)
         t:kill()
         os.sleep()
         return true
       end
     end
-    -- It's possible for the thread to finish during construction in app:createThread(), and the handle will not yet be in self.threads.
-    dlog.out("app", self.threadNames[#self.threadNames], " thread ends.")
-    self.threadNames[#self.threadNames] = true
-    t:kill()
-    os.sleep()
-    return true
   end
+  return false
 end
 
 
@@ -216,8 +258,8 @@ local function cleanDeadThreads(self)
   local threadError = false
   for i = #self.threads, 1, -1 do
     if self.threads[i]:status() == "dead" then
-      if self.threadNames[i] ~= true then
-        dlog.out("error", "\27[31m", self.threadNames[i], " thread exited unexpectedly, check log file \"/tmp/event.log\" for exception details.\27[0m")
+      if string.byte(self.threadNames[i]) ~= string.byte("d") then
+        dlog.handleError(false, string.sub(self.threadNames[i], 3) .. " thread exited unexpectedly, check log file \"/tmp/event.log\" for exception details.")
         threadError = true
       end
       table.remove(self.threads, i)

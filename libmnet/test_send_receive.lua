@@ -66,6 +66,23 @@ local function main()
   
   local listenerThread = thread.create(listenerThreadFunc)
   
+  mnet.registerDevice("redrs232", {})  --FIXME errors don't look good here, need redesign with xpcall :/
+  
+  mnet.registerDevice("redrs232", {
+    open = function(...)
+      dlog.out("redrs232", "OPEN CALLED: ", ...)
+    end,
+    close = function(...)
+      dlog.out("redrs232", "CLOSE CALLED: ", ...)
+    end,
+    send = function(...)
+      dlog.out("redrs232", "SEND CALLED: ", ...)
+    end,
+    broadcast = function(...)
+      dlog.out("redrs232", "BROADCAST CALLED: ", ...)
+    end
+  })
+  
   while true do
     local event = {event.pull(0.1)}
     if event[1] == "interrupted" then

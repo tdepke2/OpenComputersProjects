@@ -26,14 +26,17 @@ local thread = require("thread")
 
 -- User libraries.
 local include = require("include")
-local app = include("app"):new()
 local dlog = include("dlog")
+-- Setting dlog mode to debug enables message output to stdout and file logging.
+-- Other dlog modes are available to disable logging and optimize some features when testing is done.
+dlog.mode("debug")
+local app = include("app"):new()
 -- This is used to assert new global variables do not get defined (generally a good practice to avoid the use of globals).
 -- It runs in a cleanup task to undo the globals blocking right before the application stops.
 app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
 local dstructs = include("dstructs")
 local mnet = include("mnet")
-local mrpc_server = include("mrpc").newServer(456)
+local mrpc_server = include("mrpc").newServer(530)
 
 
 -- Declarations for the mrpc_server. This is usually done in a separate file and
@@ -50,7 +53,6 @@ mrpc_server.addDeclarations({
 
 -- Configuration constants.
 local MRPC_PORT = mrpc_server.port
-local DLOG_FILE_OUT = "/tmp/messages"
 
 
 -- This function just prints a message.
@@ -118,10 +120,10 @@ function MyApp:setupThreadFunc()
   io.write(self:doThing(), "\n")
   
   -- Send a message to any active servers.
-  mrpc_server.async.test_message("*", "hello! anyone there?")
+  --mrpc_server.async.test_message("*", "hello! anyone there?")
   
   dlog.out("setup", "Setup done! Enter commands at the prompt for more options, or press Ctrl + C to exit.")
-  dlog.out("setup", "Take a look in \"", DLOG_FILE_OUT, "\" to see all dlog messages.")
+  dlog.out("setup", "Take a look in \"/tmp/messages\" to see all dlog messages.")
   
   app:threadDone()
 end
@@ -131,11 +133,15 @@ end
 function MyApp:networkThreadFunc()
   io.write("Listening for network events on port ", mnet.port, "...\n")
   while true do
-    local host, port, message = mnet.receive(0.1)
+    local host, port, message = mnet.receive(1.1)
     mrpc_server.handleMessage(self, host, port, message)
+    print("net")
   end
 end
 
+local function badThing()
+  local x = MyApp()
+end
 
 -- Waits for commands from user-input and executes them.
 function MyApp:commandThreadFunc()
@@ -152,6 +158,7 @@ function MyApp:commandThreadFunc()
       io.write("    Show this help menu.\n")
       io.write("  exit\n")
       io.write("    Exit program.\n")
+      badThing()
     elseif input[1] == "exit" then    -- Command exit
       app:exit()
     else
@@ -160,18 +167,10 @@ function MyApp:commandThreadFunc()
   end
 end
 
-
--- Get command-line arguments.
-local args = {...}
-
 -- Main program starts here.
-local function main()
-  if DLOG_FILE_OUT ~= "" then
-    dlog.setFileOut(DLOG_FILE_OUT, "w")
-    app:pushCleanupTask(dlog.setFileOut, nil, "")
-  end
-  
+local function main(...)
   -- Check for any command-line arguments passed to the program.
+  local args = {...}
   if next(args) ~= nil then
     if args[1] == "test" then
       io.write("Tests not yet implemented.\n")
@@ -183,6 +182,8 @@ local function main()
   end
   
   local myApp = MyApp:new({"apples", "bananas", "oranges"})
+  
+  badThing()
   
   -- Captures the interrupt signal to stop program.
   app:createThread("Interrupt", function()
@@ -200,5 +201,4 @@ local function main()
   app:waitAnyThreads()
 end
 
-main()
-app:exit()
+app:run(main, ...)

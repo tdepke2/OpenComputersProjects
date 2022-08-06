@@ -10,17 +10,12 @@ local dlog = {}
 
 
 -- Configuration options:
---
--- Set errors to direct to dlog.out() using the "error" subsystem before getting
--- passed to error().
+-- 
+-- Set errors to direct to dlog.out() using the "error" subsystem.
 dlog.logErrorsToOutput = true
 -- Enables the xassert() call as a global function. To disable, this must be set
 -- to false here before loading dlog module.
 dlog.defineGlobalXassert = true
--- Enables dlog.verboseError() to append a stack trace with the error message.
--- In some cases it is helpful to disable to avoid getting multiple stack traces
--- in an error message.
-dlog.verboseErrorTraceback = true
 -- Sets a maximum string length on the output from dlog.out(). A message that
 -- exceeds this size will be trimmed to fit. Set this value to nil for unlimited
 -- size messages.
@@ -28,19 +23,104 @@ dlog.maxMessageLength = nil
 
 
 -- Private data members, no touchy:
-dlog.fileOutput = nil
-dlog.stdOutput = true
-dlog.enableOutput = true
-dlog.subsystems = {
-  ["*"] = true,
-  ["wnet:d"] = false,
-  routeItems = false,
-  insertStor = false,
-  extractStor = false,
-  addStor = false,
-  removeStor = false,
-} -- FIXME just setting some defaults for when I reboot servers, should change this table back to empty later on. #################################################################
-dlog.env2 = nil
+local dlogFileOutput = nil
+local dlogStandardOutput = false
+local dlogSubsystems = {}
+local dlogEnv2 = nil
+local dlogMode = 2
+local dlogFunctionBackups = {}
+
+
+-- dlog.mode([newMode: string]): string
+-- 
+-- Configure mode of operation for dlog. The mode sets defaults for logging and
+-- can disable some dlog features completely to increase performance. If newMode
+-- is provided, the mode is set to this value. The valid modes are:
+--   * debug (all subsystems on, logging enabled for stdout and /tmp/messages)
+--   * release (default mode, all logging off)
+--   * optimize1 (functions dlog.out() and dlog.fileOutput() are disabled)
+--   * optimize2 (function dlog.osBlockNewGlobals() is disabled)
+--   * optimize3 (function dlog.checkArgs() is disabled)
+--   * optimize4 (function dlog.xassert() is disabled)
+-- 
+-- Each mode includes behavior from the previous modes (optimize4 pretty much
+-- disables everything). The mode is intended to be set once right after dlog is
+-- loaded in the main program, it can be changed at any time though. Returns the
+-- current mode.
+function dlog.mode(newMode)
+  local modes = {"debug", "release", "optimize1", "optimize2", "optimize3", "optimize4"}
+  if not newMode then
+    return modes[dlogMode]
+  end
+  local doNothing = function() end
+  dlogMode = 0
+  
+  -- debug
+  for k, v in ipairs(dlogFunctionBackups) do
+    dlog[k] = v
+  end
+  if dlog.defineGlobalXassert then
+    xassert = dlog.xassert
+  end
+  dlogMode = dlogMode + 1
+  if newMode == modes[dlogMode] then
+    if dlog.subsystems()["*"] == nil then
+      dlog.subsystems()["*"] = true
+    end
+    if not dlog.fileOutput() then
+      dlog.fileOutput("/tmp/messages", "w")
+    end
+    dlog.standardOutput(true)
+    return newMode
+  end
+  
+  -- release
+  dlog.fileOutput("")
+  dlog.standardOutput(false)
+  dlogMode = dlogMode + 1
+  if newMode == modes[dlogMode] then
+    return newMode
+  end
+  
+  -- optimize1
+  dlogFunctionBackups["fileOutput"] = dlog.fileOutput
+  dlog.fileOutput = doNothing
+  dlogFunctionBackups["out"] = dlog.out
+  dlog.out = doNothing
+  dlogMode = dlogMode + 1
+  if newMode == modes[dlogMode] then
+    return newMode
+  end
+  
+  -- optimize2
+  dlogFunctionBackups["osBlockNewGlobals"] = dlog.osBlockNewGlobals
+  dlog.osBlockNewGlobals = doNothing
+  dlogMode = dlogMode + 1
+  if newMode == modes[dlogMode] then
+    return newMode
+  end
+  
+  -- optimize3
+  dlogFunctionBackups["checkArgs"] = dlog.checkArgs
+  dlog.checkArgs = doNothing
+  dlogMode = dlogMode + 1
+  if newMode == modes[dlogMode] then
+    return newMode
+  end
+  
+  -- optimize4
+  dlogFunctionBackups["xassert"] = dlog.xassert
+  dlog.xassert = doNothing
+  if dlog.defineGlobalXassert then
+    xassert = doNothing
+  end
+  dlogMode = dlogMode + 1
+  if newMode == modes[dlogMode] then
+    return newMode
+  end
+  
+  error("specified mode \"" .. tostring(newMode) .. "\" is not a valid mode.")
+end
 
 
 -- dlog.xassert(v: boolean, ...): ...
@@ -48,20 +128,17 @@ dlog.env2 = nil
 -- 
 -- Extended assert, a global replacement for the standard assert() function.
 -- This improves performance by delaying the concatenation of strings to form
--- the message until the message is actually needed, and also appends a stack
--- trace. The arguments after v are optional and can be anything that tostring()
--- will convert. Returns v and all other arguments.
--- Note that if an exception is caught, it should not be re-thrown with this
--- function. Use error() instead to avoid adding another stack trace onto the
--- message.
+-- the message until the message is actually needed. The arguments after v are
+-- optional and can be anything that tostring() will convert. Returns v and all
+-- other arguments.
 -- Original idea from: http://lua.space/general/assert-usage-caveat
 function dlog.xassert(v, ...)
   if not v then
     local argc = select("#", ...)
     if argc > 0 then
-      dlog.verboseError(string.rep("%s", argc):format(...), 3)
+      error(string.rep("%s", argc):format(...), 2)
     else
-      dlog.verboseError("assertion failed!", 3)
+      error("assertion failed!", 2)
     end
   end
   return v, ...
@@ -71,20 +148,25 @@ if dlog.defineGlobalXassert then
 end
 
 
--- dlog.verboseError(message: string[, level: number])
+-- dlog.handleError(status: boolean, ...): boolean, ...
 -- 
--- Throws the error message, and includes a stack trace in the output (when
--- enabled with dlog.verboseErrorTraceback). An optional level number specifies
--- the level to start the error and traceback (defaults to 1, and usually should
--- be set to 2).
-function dlog.verboseError(message, level)
-  if dlog.verboseErrorTraceback then
-    message = string.gsub(debug.traceback(message, level), "\t", "  ")
+-- Logs an error message/object if status is false and dlog.logErrorsToOutput is
+-- enabled. This is designed to be called with the results of pcall() or
+-- xpcall() to echo any errors that occurred. Returns the same arguments passed
+-- to the function.
+function dlog.handleError(status, ...)
+  if not status and dlog.logErrorsToOutput then
+    local message = select(1, ...)
+    -- Format tabs to spaces created from debug.traceback().
+    if type(message) == "string" then
+      message = string.gsub(message, "\t", "  ")
+    end
+    -- Avoid sending an error message for an exit code (os.exit() throws an error with table message).
+    if type(message) ~= "table" or message.reason == nil then
+      dlog.out("error", "\27[31m", message, "\27[0m")
+    end
   end
-  if dlog.logErrorsToOutput then
-    dlog.out("error", "\27[31m", message, "\27[0m")
-  end
-  error(message, level)
+  return status, ...
 end
 
 
@@ -99,14 +181,14 @@ end
 local checkArgsHelper
 function dlog.checkArgs(val, typ, ...)
   if not string.find(typ, type(val), 1, true) and typ ~= "any" then
-    dlog.verboseError("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 3)
+    error("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 2)
   end
   return checkArgsHelper(3, ...)
 end
 checkArgsHelper = function(i, val, typ, ...)
   if typ then
     if not string.find(typ, type(val), 1, true) and typ ~= "any" then
-      dlog.verboseError("bad argument at index #" .. i .. " (" .. typ .. " expected, got " .. type(val) .. ")", 3)
+      error("bad argument at index #" .. i .. " (" .. typ .. " expected, got " .. type(val) .. ")", 2)
     end
     return checkArgsHelper(i + 2, ...)
   end
@@ -132,29 +214,30 @@ function dlog.osBlockNewGlobals(state)
   -- The top of this hierarchy is _G where Lua/OpenOS globals are defined, and next in line is the table where user globals declared in main process and modules get defined.
   -- Typically in Lua, _G is the same as _ENV._G and globals get added directly in the _ENV table.
   -- See /boot/01_process.lua for details.
-  if state and not dlog.env2 then
+  if state and not dlogEnv2 then
     local env2 = rawget(environmentMetatable, "__index")    -- ENV at next level up.
     
     -- Be careful here: Certain globals (or undefined ones) need to be aliased to local vars when used in these metamethods, otherwise we get stack overflow.
+    local error, tostring = error, tostring
     rawset(environmentMetatable, "__index", function(t, key)
       local v = env2[key]
       if v == nil then
-        dlog.verboseError("attempt to read from undeclared global variable " .. key, 3)
+        error("attempt to read from undeclared global variable " .. tostring(key), 2)
         --print("__index invoked for " .. key)
       end
       return v
     end)
     rawset(environmentMetatable, "__newindex", function(_, key, value)
       if env2[key] == nil then
-        dlog.verboseError("attempt to write to undeclared global variable " .. key, 3)
+        error("attempt to write to undeclared global variable " .. tostring(key), 2)
         --print("__newindex invoked for " .. key)
       end
       env2[key] = value
     end)
     
-    dlog.env2 = env2
-  elseif not state and dlog.env2 then
-    local env2 = dlog.env2
+    dlogEnv2 = env2
+  elseif not state and dlogEnv2 then
+    local env2 = dlogEnv2
     
     -- Reset the metatable to the same way it is set up in /boot/01_process.lua in the intercept_load() function.
     rawset(environmentMetatable, "__index", env2)
@@ -162,7 +245,7 @@ function dlog.osBlockNewGlobals(state)
       env2[key] = value
     end)
     
-    dlog.env2 = nil
+    dlogEnv2 = nil
   end
 end
 
@@ -190,7 +273,7 @@ function dlog.osGetGlobalsList()
       envLevel = rawget(envLevel, "__index")
       -- If we find an __index set to a function, assume dlog.osBlockNewGlobals() is in effect and jump to the cached _ENV value.
       if type(envLevel) == "function" then
-        envLevel = dlog.env2
+        envLevel = dlogEnv2
       end
     end
   end
@@ -199,59 +282,62 @@ function dlog.osGetGlobalsList()
 end
 
 
--- dlog.setFileOut(filename: string[, mode: string])
+-- dlog.fileOutput([filename: string[, mode: string]]): table|nil
 -- 
--- Open/close a file to output logging data to. Pass a string filename to open
--- file, or empty string to close any opened one. Default mode is append to end
--- of file.
-function dlog.setFileOut(filename, mode)
-  mode = mode or "a"
-  if dlog.fileOutput then
-    dlog.fileOutput:close()
-    dlog.fileOutput = nil
+-- Open/close a file to output logging data to. If filename is provided then
+-- this file is opened (an empty string will close any opened one instead).
+-- Default mode is "a" to append to end of file. Returns the currently open file
+-- (or nil if closed).
+function dlog.fileOutput(filename, mode)
+  if filename ~= nil then
+    mode = mode or "a"
+    if dlogFileOutput then
+      dlogFileOutput:close()
+      dlogFileOutput = nil
+    end
+    if filename ~= "" then
+      dlogFileOutput = io.open(filename, mode)
+    end
+  elseif type(dlogFileOutput) == "table" and dlogFileOutput.closed then
+    -- File may have been closed by an external method, so delete our copy of the file descriptor.
+    -- This works in OpenOS but may not work with other setups (like regular Lua where files are a FILE* type).
+    dlogFileOutput = nil
   end
-  if filename ~= "" then
-    dlog.fileOutput = io.open(filename, mode)
-  end
-  dlog.enableOutput = false
-  if dlog.fileOutput or dlog.stdOutput then
-    dlog.enableOutput = true
-  end
+  return dlogFileOutput
 end
 
 
--- dlog.setStdOut(state: boolean)
+-- dlog.standardOutput([state: boolean]): boolean
 -- 
--- Set output of logging data to standard output on/off. This can be used in
--- conjunction with file output.
-function dlog.setStdOut(state)
-  dlog.stdOutput = state
-  dlog.enableOutput = false
-  if dlog.fileOutput or dlog.stdOutput then
-    dlog.enableOutput = true
+-- Set output of logging data to standard output. This can be used in
+-- conjunction with file output. If state is provided, logging to standard
+-- output is enabled/disabled based on the value. Returns true if logging to
+-- standard output is enabled and false otherwise.
+function dlog.standardOutput(state)
+  if state ~= nil then
+    dlogStandardOutput = state
   end
+  return dlogStandardOutput
 end
 
 
--- dlog.setSubsystems(subsystems: table)
+-- dlog.subsystems([subsystems: table]): table
 -- 
 -- Set the subsystems to log from the provided table. The table keys are the
 -- subsystem names (strings, case sensitive) and the values should be true or
 -- false. The special subsystem name "*" can be used to enable all subsystems,
--- except ones that are explicitly disabled with the value of false.
-function dlog.setSubsystems(subsystems)
-  dlog.subsystems = subsystems
+-- except ones that are explicitly disabled with the value of false. If the
+-- subsystems are provided, these overwrite the old table contents. Returns the
+-- current subsystems table.
+function dlog.subsystems(subsystems)
+  if subsystems ~= nil then
+    dlogSubsystems = subsystems
+  end
+  return dlogSubsystems
 end
 
 
--- dlog.setSubsystem(subsystem: string, state: boolean|nil)
--- 
--- Similar to dlog.setSubsystems() for setting individual subsystems. The same
--- behavior in dlog.setSubsystems() applies here.
-function dlog.setSubsystem(subsystem, state)
-  dlog.subsystems[subsystem] = state
-end
-
+-- FIXME at some point the below should be improved to be more like xprint() (use streams instead of string) #######################################################################
 
 -- dlog.tableToString(t: table): string
 -- 
@@ -290,26 +376,26 @@ end
 --    info in an anonymous function and pass it into dlog.out() to prevent
 --    execution if logging is not enabled.
 function dlog.out(subsystem, ...)
-  if dlog.enableOutput and (dlog.subsystems[subsystem] or (dlog.subsystems["*"] and dlog.subsystems[subsystem] == nil)) then
-    local arg = table.pack(...)
-    for i = 1, arg.n do
-      if type(arg[i]) == "function" then
-        arg[i] = arg[i]()
+  if (dlogFileOutput or dlogStandardOutput) and (dlogSubsystems[subsystem] or (dlogSubsystems["*"] and dlogSubsystems[subsystem] == nil)) then
+    local varargs = table.pack(...)
+    for i = 1, varargs.n do
+      if type(varargs[i]) == "function" then
+        varargs[i] = varargs[i]()
       end
-      if type(arg[i]) == "table" then
-        arg[i] = dlog.tableToString(arg[i])
-      elseif type(arg[i]) ~= "string" then
-        arg[i] = tostring(arg[i])
+      if type(varargs[i]) == "table" then
+        varargs[i] = dlog.tableToString(varargs[i])
+      elseif type(varargs[i]) ~= "string" then
+        varargs[i] = tostring(varargs[i])
       end
     end
-    local message = "dlog:" .. subsystem .. " " .. table.concat(arg)
+    local message = "dlog:" .. subsystem .. " " .. table.concat(varargs)
     if dlog.maxMessageLength and #message > dlog.maxMessageLength then
       message = string.sub(message, 1, dlog.maxMessageLength - 3) .. "..."
     end
-    if dlog.fileOutput then
-      dlog.fileOutput:write(os.date(), " ", message, "\n")
+    if dlogFileOutput then
+      dlogFileOutput:write(os.date(), " ", message, "\n")
     end
-    if dlog.stdOutput then
+    if dlogStandardOutput then
       io.write(message, "\n")
     end
   end
