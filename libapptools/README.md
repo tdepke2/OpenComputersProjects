@@ -12,7 +12,7 @@ Diagnostic logger and debugging utilities.
 
 Allows writing logging data to standard output and/or a file for debugging code. Log messages include a subsystem name and any number of values (preferably including some extra text to identify the values). Outputs to a file also prefix the message with a timestamp, much like how syslog output appears on unix systems.
 
-Subsystem names can be any strings like "storage", "command:info", "main():debug", etc. Note that logging output is only shown for enabled subsystems, see `dlog.setSubsystems()` and `dlog.setSubsystem()`. Also note that through the magic of `require()`, the active subsystems will persist even after a restart of the program that is being tested.
+Subsystem names can be any strings like "storage", "command:info", "main():debug", etc. Note that logging output is only shown for enabled subsystems, see `dlog.subsystems()`. Also note that through the magic of `require()`, the active subsystems will persist even after a restart of the program that is being tested.
 
 ## include.lua
 

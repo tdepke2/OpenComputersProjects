@@ -368,9 +368,9 @@ end
 -- 
 -- Writes a string to active logging outputs (the output is suppressed if the
 -- subsystem is not currently being monitored). To enable monitoring of a
--- subsystem, use dlog.setSubsystems() or dlog.setSubsystem(). The arguments
--- provided after the subsystem can be anything that can be passed through
--- tostring() with a couple exceptions:
+-- subsystem, use dlog.subsystems(). The arguments provided after the subsystem
+-- can be anything that can be passed through tostring() with a couple
+-- exceptions:
 -- 1. Tables will be printed recursively and show key-value pairs.
 -- 2. Functions are evaluated and their return value gets output instead of the
 --    function pointer. This is handy to wrap some potentially slow debugging

@@ -18,13 +18,13 @@ local thread = require("thread")
 -- User libraries.
 local include = require("include")
 local dlog = include("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local dstructs = include("dstructs")
 local packer = include("packer")
 local wnet = include("wnet")
 
 local COMMS_PORT = 0xE298
-local DLOG_FILE_OUT = "/tmp/messages"
 local ROUTING_CONFIG_FILENAME = "routing.config"
 local INPUT_DELAY_SECONDS = 2
 
@@ -165,7 +165,7 @@ local Storage = {}
 -- error or typo).
 setmetatable(Storage, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Storage class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in Storage class.", 2)
   end
 })
 
@@ -1413,23 +1413,23 @@ function Storage:commandThreadFunc(mainContext)
     if input[1] == "dlog" then    -- Command dlog [<subsystem> <0, 1, or nil>]
       if input[2] then
         if input[3] == "0" then
-          dlog.setSubsystem(input[2], false)
+          dlog.subsystems()[input[2]] = false
         elseif input[3] == "1" then
-          dlog.setSubsystem(input[2], true)
+          dlog.subsystems()[input[2]] = true
         else
-          dlog.setSubsystem(input[2], nil)
+          dlog.subsystems()[input[2]] = nil
         end
       else
-        io.write("Outputs: std_out=" .. tostring(dlog.stdOutput) .. ", file_out=" .. tostring(io.type(dlog.fileOutput)) .. "\n")
+        io.write("Outputs: std_out=" .. tostring(dlog.standardOutput()) .. ", file_out=" .. tostring(io.type(dlog.fileOutput())) .. "\n")
         io.write("Monitored subsystems:\n")
         for k, v in pairs(dlog.subsystems) do
           io.write(text.padRight(k, 20) .. (v and "1" or "0") .. "\n")
         end
       end
     elseif input[1] == "dlog_file" then    -- Command dlog_file [<filename>]
-      dlog.setFileOut(input[2] or "")
+      dlog.fileOutput(input[2] or "")
     elseif input[1] == "dlog_std" then    -- Command dlog_std <0 or 1>
-      dlog.setStdOut(input[2] == "1")
+      dlog.standardOutput(input[2] == "1")
     elseif input[1] == "help" then    -- Command help
       io.write("Commands:\n")
       io.write("  dlog [<subsystem> <0, 1, or nil>]\n")
@@ -1489,10 +1489,6 @@ local function main()
       exit()
     end
     mainContext.threadSuccess = false
-  end
-  
-  if DLOG_FILE_OUT ~= "" then
-    dlog.setFileOut(DLOG_FILE_OUT, "w")
   end
   
   -- Check for any command-line arguments passed to the program.

@@ -9,6 +9,7 @@ local thread = require("thread")
 local unicode = require("unicode")
 
 local dlog = require("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local dstructs = require("dstructs")
 
@@ -100,7 +101,7 @@ local CellGrid = {
 -- error or typo).
 setmetatable(CellGrid, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in CellGrid class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in CellGrid class.", 2)
   end
 })
 
@@ -382,7 +383,7 @@ local Game = {}
 -- error or typo).
 setmetatable(Game, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Game class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in Game class.", 2)
   end
 })
 
@@ -506,7 +507,7 @@ split up strings into chunks?
 
 --]]
 
-local function main()
+local function main(...)
   local threadSuccess = false
   -- Captures the interrupt signal to stop program.
   local interruptThread = thread.create(function()
@@ -529,7 +530,6 @@ local function main()
   end
   
   local game
-  --dlog.setFileOut("/tmp/messages", "w")
   
   -- Performs setup and initialization tasks.
   local setupThread = thread.create(function()
@@ -582,5 +582,5 @@ local function main()
   userInputThread:kill()
 end
 
-main()
+dlog.handleError(xpcall(main, debug.traceback, ...))
 dlog.osBlockNewGlobals(false)

@@ -28,6 +28,7 @@ local thread = require("thread")
 
 local include = require("include")
 local dlog = include("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local mnet = include.reload("mnet")
 
@@ -88,7 +89,7 @@ local NetInterface = {}
 -- error or typo).
 setmetatable(NetInterface, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in NetInterface class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in NetInterface class.", 2)
   end
 })
 
@@ -267,10 +268,7 @@ local function randomString(n)
   return string.char(table.unpack(arr))
 end
 
-local function main()
-  --dlog.setFileOut("/tmp/messages", "w")
-  dlog.setSubsystem("mnet", true)
-  
+local function main(...)
   netInterface:setTestingMode(false)
   
   dlog.out("init", "Mesh test ready, press \'s\' to start. I am ", netInterface:getHostname())
@@ -411,5 +409,6 @@ local function main()
   
   listenerThread:kill()
 end
-main()
+
+dlog.handleError(xpcall(main, debug.traceback, ...))
 dlog.osBlockNewGlobals(false)

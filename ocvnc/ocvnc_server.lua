@@ -24,6 +24,7 @@ local unicode = require("unicode")
 local include = require("include")
 local app = include("app"):new()
 local dlog = include("dlog")
+dlog.mode("release")
 
 -- FIXME something bad happened here when running in the daemon, huh #####################################################################
 --app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
@@ -32,8 +33,6 @@ local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
 mrpc_server.addDeclarations(dofile("/home/ocvnc/ocvnc_mrpc.lua"))
 
-local DLOG_FILE_OUT = "/tmp/messages"
-
 -- VncServer class definition.
 local VncServer = {}
 
@@ -41,20 +40,13 @@ local VncServer = {}
 -- error or typo).
 setmetatable(VncServer, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in VncServer class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in VncServer class.", 2)
   end
 })
 
 function VncServer:new()
   self.__index = self
   self = setmetatable({}, self)
-  
-  if DLOG_FILE_OUT ~= "" then
-    dlog.setFileOut(DLOG_FILE_OUT, "w")
-    app:pushCleanupTask(dlog.setFileOut, nil, "")
-  end
-  
-  dlog.setStdOut(false)
   
   self.activeClient = false
   self.gpuRealFuncs = false

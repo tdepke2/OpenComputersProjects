@@ -16,6 +16,7 @@ local thread = require("thread")
 
 local include = require("include")
 local dlog = include("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local mnet = include.reload("mnet")
 
@@ -95,10 +96,7 @@ local function listenerThreadFunc()
 end
 
 
-local function main()
-  dlog.setFileOut("/tmp/messages", "w")
-  dlog.setSubsystem("mnet", true)
-  
+local function main(...)
   mnet.debugEnableLossy(false)
   mnet.debugSetSmallMTU(false)
   
@@ -143,5 +141,6 @@ local function main()
   
   listenerThread:kill()
 end
-main()
+
+dlog.handleError(xpcall(main, debug.traceback, ...))
 dlog.osBlockNewGlobals(false)

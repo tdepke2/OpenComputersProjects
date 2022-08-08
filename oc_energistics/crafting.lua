@@ -18,6 +18,7 @@ local thread = require("thread")
 -- User libraries.
 local include = require("include")
 local dlog = include("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local craft_solver = include("craft_solver")
 local dstructs = include("dstructs")
@@ -25,7 +26,6 @@ local packer = include("packer")
 local wnet = include("wnet")
 
 local COMMS_PORT = 0xE298
-local DLOG_FILE_OUT = "/tmp/messages"
 local ROBOTS_CONFIG_FILENAME = "robots.config"
 
 -- Verify string has item name format "<mod name>:<item name>/<damage>[n]".
@@ -298,7 +298,7 @@ local Crafting = {}
 -- error or typo).
 setmetatable(Crafting, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Crafting class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in Crafting class.", 2)
   end
 })
 
@@ -851,12 +851,12 @@ function Crafting:setupThreadFunc(mainContext)
   os.sleep(1)
   
   -- Send robot code to active robots.
-  local dlogWnetState = dlog.subsystems.wnet
-  dlog.setSubsystem("wnet", false)
+  local dlogWnetState = dlog.subsystems()["wnet"]
+  dlog.subsystems()["wnet"] = false
   for libName, srcCode in include.iterateSrcDependencies("robot_up.lua") do
     wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload(libName, srcCode))
   end
-  dlog.setSubsystem("wnet", dlogWnetState)
+  dlog.subsystems()["wnet"] = dlogWnetState
   
   -- Wait for robots to receive the software update and keep track of their addresses.
   self.workers.totalRobots = 0
@@ -1313,10 +1313,10 @@ function Crafting:commandThreadFunc(mainContext)
       io.write("Broadcasting firmware to active devices...\n")
       local srcFile, errMessage = io.open("robot.lua", "rb")
       xassert(srcFile, "Cannot open source file \"robot.lua\": ", tostring(errMessage))
-      local dlogWnetState = dlog.subsystems.wnet
-      dlog.setSubsystem("wnet", false)
+      local dlogWnetState = dlog.subsystems()["wnet"]
+      dlog.subsystems()["wnet"] = false
       wnet.send(modem, nil, COMMS_PORT, packer.pack.robot_upload_eeprom(srcFile:read("*a")))
-      dlog.setSubsystem("wnet", dlogWnetState)
+      dlog.subsystems()["wnet"] = dlogWnetState
       srcFile:close()
       
       -- Wait a little bit for devices to reprogram themselves and shutdown. Then wake them back up.
@@ -1349,23 +1349,23 @@ function Crafting:commandThreadFunc(mainContext)
     elseif input[1] == "dlog" then    -- Command dlog [<subsystem> <0, 1, or nil>]
       if input[2] then
         if input[3] == "0" then
-          dlog.setSubsystem(input[2], false)
+          dlog.subsystems()[input[2]] = false
         elseif input[3] == "1" then
-          dlog.setSubsystem(input[2], true)
+          dlog.subsystems()[input[2]] = true
         else
-          dlog.setSubsystem(input[2], nil)
+          dlog.subsystems()[input[2]] = nil
         end
       else
-        io.write("Outputs: std_out=" .. tostring(dlog.stdOutput) .. ", file_out=" .. tostring(io.type(dlog.fileOutput)) .. "\n")
+        io.write("Outputs: std_out=" .. tostring(dlog.standardOutput()) .. ", file_out=" .. tostring(io.type(dlog.fileOutput())) .. "\n")
         io.write("Monitored subsystems:\n")
-        for k, v in pairs(dlog.subsystems) do
+        for k, v in pairs(dlog.subsystems()) do
           io.write(text.padRight(k, 20) .. (v and "1" or "0") .. "\n")
         end
       end
     elseif input[1] == "dlog_file" then    -- Command dlog_file [<filename>]
-      dlog.setFileOut(input[2] or "")
+      dlog.fileOutput(input[2] or "")
     elseif input[1] == "dlog_std" then    -- Command dlog_std <0 or 1>
-      dlog.setStdOut(input[2] == "1")
+      dlog.standardOutput(input[2] == "1")
     elseif input[1] == "dbg" then
       dlog.out("dbg", "droneItems:", self.droneItems)
     elseif input[1] == "help" then    -- Command help
@@ -1435,10 +1435,6 @@ local function main()
       exit()
     end
     mainContext.threadSuccess = false
-  end
-  
-  if DLOG_FILE_OUT ~= "" then
-    dlog.setFileOut(DLOG_FILE_OUT, "w")
   end
   
   -- Check for any command-line arguments passed to the program.

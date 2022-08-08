@@ -13,6 +13,7 @@ local thread = require("thread")
 
 local include = require("include")
 local dlog = include("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local mnet = include.reload("mnet")
 local mrpc_server = include("mrpc").newServer(530)
@@ -74,8 +75,7 @@ local function listenerThreadFunc()
   end
 end
 
-local function main()
-  dlog.setFileOut("/tmp/messages", "w")
+local function main(...)
   --mnet.debugEnableLossy(true)
   --mnet.debugSetSmallMTU(true)
   
@@ -138,7 +138,8 @@ local function main()
   
   listenerThread:kill()
 end
-main()
+
+dlog.handleError(xpcall(main, debug.traceback, ...))
 mnet.debugEnableLossy(false)
 mnet.debugSetSmallMTU(false)
 dlog.osBlockNewGlobals(false)

@@ -13,6 +13,7 @@ local thread = require("thread")
 
 local include = require("include")
 local dlog = include("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local mnet = include.reload("mnet")
 
@@ -38,6 +39,7 @@ local function listenerThreadFunc()
     end
     --]]
     
+    -- Calling mnet.receive() like this is a bit overkill, but helps to debug any strange errors.
     local status, host, port, message = xpcall(mnet.receive, debug.traceback, 0.1, connectionLostCallback)
     if not status then
       dlog.out("error", host)
@@ -55,8 +57,7 @@ local function sendPacket(host, port, message, reliable)
   sentData[#sentData + 1] = message
 end
 
-local function main()
-  dlog.setFileOut("/tmp/messages", "w")
+local function main(...)
   --modem.open(PORT)
   --modem.setStrength(12)
   mnet.debugEnableLossy(true)
@@ -65,23 +66,6 @@ local function main()
   dlog.out("init", "Hello, I am ", mnet.hostname, ". Press \'a\' to send a message to myself, \'s\' to send a message to ", HOST1, ", or \'d\' to send a message to ", HOST2)
   
   local listenerThread = thread.create(listenerThreadFunc)
-  
-  mnet.registerDevice("redrs232", {})  --FIXME errors don't look good here, need redesign with xpcall :/
-  
-  mnet.registerDevice("redrs232", {
-    open = function(...)
-      dlog.out("redrs232", "OPEN CALLED: ", ...)
-    end,
-    close = function(...)
-      dlog.out("redrs232", "CLOSE CALLED: ", ...)
-    end,
-    send = function(...)
-      dlog.out("redrs232", "SEND CALLED: ", ...)
-    end,
-    broadcast = function(...)
-      dlog.out("redrs232", "BROADCAST CALLED: ", ...)
-    end
-  })
   
   while true do
     local event = {event.pull(0.1)}
@@ -157,7 +141,8 @@ local function main()
   
   listenerThread:kill()
 end
-main()
+
+dlog.handleError(xpcall(main, debug.traceback, ...))
 mnet.debugEnableLossy(false)
 mnet.debugSetSmallMTU(false)
 --dlog.out("done", "mnet: ", mnet)

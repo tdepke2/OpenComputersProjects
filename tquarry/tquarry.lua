@@ -5,10 +5,9 @@ local icontroller = component.inventory_controller
 local sides = require("sides")
 
 local dlog = require("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local robnav = require("robnav")
-
-local DLOG_FILE_OUT = "/home/messages"
 
 -- Maximum number of attempts for the Quarry:force* functions. If one of these
 -- functions goes over the limit, the operation throws to indicate that the
@@ -107,7 +106,7 @@ local Quarry = {}
 -- Hook up errors to throw on access to nil class members.
 setmetatable(Quarry, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Quarry class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in Quarry class.", 2)
   end
 })
 
@@ -758,13 +757,10 @@ function FillWallQuarry:layerDown()
 end
 
 
--- Get command-line arguments.
-local args = {...}
-
-local function main()
-  if DLOG_FILE_OUT ~= "" then
-    dlog.setFileOut(DLOG_FILE_OUT, "w")
-  end
+local function main(...)
+  -- Get command-line arguments.
+  local args = {...}
+  
   io.write("Starting quarry!\n")
   --local quarry = BasicQuarry:new(6, 6, 8)
   local quarry = BasicQuarry:new(2, 2, 3)
@@ -773,8 +769,5 @@ local function main()
   quarry:run()
 end
 
-local status, err = pcall(main)
+dlog.handleError(xpcall(main, debug.traceback, ...))
 dlog.osBlockNewGlobals(false)
-if not status then
-  error(err)
-end

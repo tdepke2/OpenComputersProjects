@@ -23,12 +23,13 @@ local thread = require("thread")
 local include = require("include")
 local app = include("app"):new()
 local dlog = include("dlog")
+dlog.mode("debug")
+dlog.standardOutput(false)
 app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
 local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(123)
 mrpc_server.addDeclarations(dofile("ocvnc/ocvnc_mrpc.lua"))
 
-local DLOG_FILE_OUT = ""--"/tmp/messages"
 local TARGET_HOST = "1315"
 
 -- VncClient class definition.
@@ -38,7 +39,7 @@ local VncClient = {}
 -- error or typo).
 setmetatable(VncClient, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in VncClient class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in VncClient class.", 2)
   end
 })
 
@@ -186,10 +187,6 @@ local args = {...}
 
 -- Main program starts here.
 local function main()
-  if DLOG_FILE_OUT ~= "" then
-    dlog.setFileOut(DLOG_FILE_OUT, "w")
-  end
-  
   -- Check for any command-line arguments passed to the program.
   if next(args) ~= nil then
     if args[1] == "test" then
@@ -200,8 +197,6 @@ local function main()
       exit()
     end
   end
-  
-  dlog.setStdOut(false)
   
   local vncClient = VncClient:new()
   

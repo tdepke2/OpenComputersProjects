@@ -27,14 +27,14 @@ local function osBlockNewGlobals2(state)
     rawset(environmentMetatable, "__index", function(t, key)
       local v = env2[key]
       if v == nil then
-        --dlog.verboseError("attempt to read from undeclared global variable " .. key, 3)
+        --error("attempt to read from undeclared global variable " .. key, 2)
         print("__index invoked for " .. key)
       end
       return v
     end)
     rawset(environmentMetatable, "__newindex", function(_, key, value)
       if env2[key] == nil then
-        --dlog.verboseError("attempt to write to undeclared global variable " .. key, 4)
+        --error("attempt to write to undeclared global variable " .. key, 3)
         print("__newindex invoked for " .. key)
       end
       env2[key] = value

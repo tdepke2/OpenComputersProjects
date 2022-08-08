@@ -20,12 +20,12 @@ local thread = require("thread")
 -- User libraries.
 local include = require("include")
 local dlog = include("dlog")
+dlog.mode("release")
 dlog.osBlockNewGlobals(true)
 local packer = include("packer")
 local wnet = include("wnet")
 
 local COMMS_PORT = 0xE298
-local DLOG_FILE_OUT = ""
 
 -- Checks if given point lies within the bounds (inclusive).
 local function isPointInRectangle(xPoint, yPoint, x, y, width, height)
@@ -76,7 +76,7 @@ local Gui = {
 -- error or typo).
 setmetatable(Gui, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Gui class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in Gui class.", 2)
   end
 })
 
@@ -1150,7 +1150,7 @@ local Interface = {}
 -- error or typo).
 setmetatable(Interface, {
   __index = function(t, k)
-    dlog.verboseError("Attempt to read undefined member " .. tostring(k) .. " in Interface class.", 4)
+    error("attempt to read undefined member " .. tostring(k) .. " in Interface class.", 2)
   end
 })
 
@@ -1243,7 +1243,6 @@ function Interface:setupThreadFunc(mainContext)
   dlog.out("main", "Setup thread starts.")
   modem.open(COMMS_PORT)
   screen.setPrecise(false)
-  dlog.setStdOut(false)    -- FIXME
   
   -- Contact the storage server.
   local attemptNumber = 1
@@ -1377,10 +1376,6 @@ local function main()
       exit()
     end
     mainContext.threadSuccess = false
-  end
-  
-  if DLOG_FILE_OUT ~= "" then
-    dlog.setFileOut(DLOG_FILE_OUT, "w")
   end
   
   -- Check for any command-line arguments passed to the program.
