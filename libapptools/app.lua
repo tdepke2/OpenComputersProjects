@@ -61,13 +61,10 @@ function app:run(func, ...)
     status, result = dlog.handleError(pcall(func, ...))
   end
   if status then
-    --print("exit ok")
     self:exit()
   elseif type(result) == "table" and result.reason ~= nil then
-    --print("exit with code ", result.code)
     self:exit(result.code)
   else
-    --print("exit with error")
     self:exit(1)
   end
 end

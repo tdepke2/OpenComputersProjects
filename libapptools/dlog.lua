@@ -24,8 +24,8 @@ dlog.maxMessageLength = nil
 
 -- Private data members, no touchy:
 local dlogFileOutput = nil
-local dlogStandardOutput = false
-local dlogSubsystems = {}
+local dlogStandardOutput = true
+local dlogSubsystems = {["error"] = true}
 local dlogEnv2 = nil
 local dlogMode = 2
 local dlogFunctionBackups = {}
@@ -37,10 +37,10 @@ local dlogFunctionBackups = {}
 -- can disable some dlog features completely to increase performance. If newMode
 -- is provided, the mode is set to this value. The valid modes are:
 --   * debug (all subsystems on, logging enabled for stdout and /tmp/messages)
---   * release (default mode, all logging off)
---   * optimize1 (functions dlog.out() and dlog.fileOutput() are disabled)
---   * optimize2 (function dlog.osBlockNewGlobals() is disabled)
---   * optimize3 (function dlog.checkArgs() is disabled)
+--   * release (default mode, only error logging to stdout)
+--   * optimize1 (function dlog.osBlockNewGlobals() is disabled)
+--   * optimize2 (function dlog.checkArgs() is disabled)
+--   * optimize3 (functions dlog.out() and dlog.fileOutput() are disabled)
 --   * optimize4 (function dlog.xassert() is disabled)
 -- 
 -- Each mode includes behavior from the previous modes (optimize4 pretty much
@@ -56,9 +56,10 @@ function dlog.mode(newMode)
   dlogMode = 0
   
   -- debug
-  for k, v in ipairs(dlogFunctionBackups) do
+  for k, v in pairs(dlogFunctionBackups) do
     dlog[k] = v
   end
+  dlogFunctionBackups = {}
   if dlog.defineGlobalXassert then
     xassert = dlog.xassert
   end
@@ -75,24 +76,15 @@ function dlog.mode(newMode)
   end
   
   -- release
+  dlog.subsystems({["error"] = true})
   dlog.fileOutput("")
-  dlog.standardOutput(false)
   dlogMode = dlogMode + 1
   if newMode == modes[dlogMode] then
+    dlog.standardOutput(true)
     return newMode
   end
   
   -- optimize1
-  dlogFunctionBackups["fileOutput"] = dlog.fileOutput
-  dlog.fileOutput = doNothing
-  dlogFunctionBackups["out"] = dlog.out
-  dlog.out = doNothing
-  dlogMode = dlogMode + 1
-  if newMode == modes[dlogMode] then
-    return newMode
-  end
-  
-  -- optimize2
   dlogFunctionBackups["osBlockNewGlobals"] = dlog.osBlockNewGlobals
   dlog.osBlockNewGlobals = doNothing
   dlogMode = dlogMode + 1
@@ -100,9 +92,19 @@ function dlog.mode(newMode)
     return newMode
   end
   
-  -- optimize3
+  -- optimize2
   dlogFunctionBackups["checkArgs"] = dlog.checkArgs
   dlog.checkArgs = doNothing
+  dlogMode = dlogMode + 1
+  if newMode == modes[dlogMode] then
+    return newMode
+  end
+  
+  -- optimize3
+  dlogFunctionBackups["fileOutput"] = dlog.fileOutput
+  dlog.fileOutput = doNothing
+  dlogFunctionBackups["out"] = dlog.out
+  dlog.out = doNothing
   dlogMode = dlogMode + 1
   if newMode == modes[dlogMode] then
     return newMode
@@ -290,13 +292,12 @@ end
 -- (or nil if closed).
 function dlog.fileOutput(filename, mode)
   if filename ~= nil then
-    mode = mode or "a"
     if dlogFileOutput then
       dlogFileOutput:close()
       dlogFileOutput = nil
     end
     if filename ~= "" then
-      dlogFileOutput = io.open(filename, mode)
+      dlogFileOutput = io.open(filename, mode or "a")
     end
   elseif type(dlogFileOutput) == "table" and dlogFileOutput.closed then
     -- File may have been closed by an external method, so delete our copy of the file descriptor.
@@ -376,7 +377,7 @@ end
 --    info in an anonymous function and pass it into dlog.out() to prevent
 --    execution if logging is not enabled.
 function dlog.out(subsystem, ...)
-  if (dlogFileOutput or dlogStandardOutput) and (dlogSubsystems[subsystem] or (dlogSubsystems["*"] and dlogSubsystems[subsystem] == nil)) then
+  if (dlogStandardOutput or dlogFileOutput) and (dlogSubsystems[subsystem] or (dlogSubsystems["*"] and dlogSubsystems[subsystem] == nil)) then
     local varargs = table.pack(...)
     for i = 1, varargs.n do
       if type(varargs[i]) == "function" then
