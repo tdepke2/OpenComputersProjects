@@ -299,9 +299,8 @@ function dlog.fileOutput(filename, mode)
     if filename ~= "" then
       dlogFileOutput = io.open(filename, mode or "a")
     end
-  elseif type(dlogFileOutput) == "table" and dlogFileOutput.closed then
+  elseif io.type(dlogFileOutput) == "closed file" then
     -- File may have been closed by an external method, so delete our copy of the file descriptor.
-    -- This works in OpenOS but may not work with other setups (like regular Lua where files are a FILE* type).
     dlogFileOutput = nil
   end
   return dlogFileOutput
