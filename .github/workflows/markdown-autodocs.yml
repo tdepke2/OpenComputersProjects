@@ -38,3 +38,7 @@ jobs:
           cd simple_doc
           echo "building docs..."
           ./build_docs.sh
+      - name: Git Auto Commit
+        uses: stefanzweifel/git-auto-commit-action@v4.14.1
+        with:
+          commit_message: 'simple_doc: Update documentation'
