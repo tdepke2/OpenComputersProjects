@@ -5,7 +5,7 @@
 -- @author tdepke2
 --------------------------------------------------------------------------------
 
-
+require = require("unix_compatibility")
 local fs = require("filesystem")
 local shell = require("shell")
 
@@ -24,16 +24,19 @@ For more information, run: man simple_doc
 local args, opts = shell.parse(...)
 
 
--- Check if a file was opened successfully, and raise an error if not.
-local function checkFileError(filename, file, err)
-  if not file then
-    if fs.isDirectory(filename) then
-      io.stderr:write("simple_doc " .. filename .. ": is a directory\n")
-    else
-      io.stderr:write("simple_doc " .. filename .. ": " .. tostring(err) .. "\n")
-    end
+-- Wrapper for io.open() to check if the file was opened successfully, and raise
+-- an error if not.
+local function ioOpenSafe(filename, mode)
+  if fs.isDirectory(filename) then
+    io.stderr:write("simple_doc " .. filename .. ": is a directory\n")
     os.exit(2)
   end
+  local file, err = io.open(filename, mode)
+  if not file then
+    io.stderr:write("simple_doc " .. filename .. ": " .. tostring(err) .. "\n")
+    os.exit(2)
+  end
+  return file
 end
 
 
@@ -166,28 +169,26 @@ local function main()
     end
   end
   
-  local inputFile, outputFile, err
+  local inputFile, outputFile
   local outputFileContents
   
   -- Attempt to open input file (or use stdin).
   if inputFilename == "-" then
-    inputFile, err = io.stdin, "missing stdin"
+    inputFile = io.stdin
   else
     inputFilename = shell.resolve(inputFilename)
-    inputFile, err = io.open(inputFilename)
+    inputFile = ioOpenSafe(inputFilename)
   end
-  checkFileError(inputFilename, inputFile, err)
   
   -- Attempt to open output file (or use stdout).
   if outputFilename == "-" then
-    outputFile, err = io.stdout, "missing stdout"
+    outputFile = io.stdout
   else
     outputFilename = shell.resolve(outputFilename)
     
     -- If insert-start/insert-end options are provided, read the output file first and look for the start/end strings.
     if opts["insert-start"] then
-      outputFile, err = io.open(outputFilename)
-      checkFileError(outputFilename, outputFile, err)
+      outputFile = ioOpenSafe(outputFilename)
       
       local startFound, endFound
       outputFileContents = {n = 0, insertIndex = 0}
@@ -223,9 +224,8 @@ local function main()
       end
       outputFile:close()
     end
-    outputFile, err = io.open(outputFilename, "w")
+    outputFile = ioOpenSafe(outputFilename, "w")
   end
-  checkFileError(outputFilename, outputFile, err)
   
   if outputFileContents then
     -- Paste contents of outputFile back in until the start string.
