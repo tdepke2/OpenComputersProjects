@@ -14,24 +14,24 @@ local requireOverride = require
 
 
 if type(_OSVERSION) ~= "string" or not string.find(_OSVERSION, "OpenOS") then
+  --local utf8 = require("utf8")
   
   -- The io.open() function has some slightly different behavior on UNIX. If a directory is opened, this function still returns a file handle, but calling read() on it returns nil plus an error message.
   --io.open = function()
     
   --end
   
-  local openOsApis = {}
-  
-  local filesystem = {}
-  openOsApis.filesystem = filesystem
+  local filesystem, shell, unicode = {}, {}, {}
+  local openOsApis = {
+    filesystem = filesystem,
+    shell = shell,
+    unicode = unicode,
+  }
   
   function filesystem.isDirectory(path)
     assert(type(path) == "string")
     return io.popen("file -b " .. path):read() == "directory"
   end
-  
-  local shell = {}
-  openOsApis.shell = shell
   
   -- Copied from /lib/shell.lua
   function shell.parse(...)
@@ -66,6 +66,15 @@ if type(_OSVERSION) ~= "string" or not string.find(_OSVERSION, "OpenOS") then
   
   function shell.resolve(path, ext)
     return path
+  end
+  
+  function unicode.len(s)
+    --return utf8.len
+    return string.len(s)
+  end
+  
+  function unicode.sub(s, i, j)
+    return string.sub(s, i, j)
   end
   
   -- Modify the behavior of require() to catch any OpenOS modules and return them.
