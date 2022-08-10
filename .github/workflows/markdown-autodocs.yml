@@ -28,3 +28,8 @@ jobs:
           # Categories to automatically sync or transform its contents in the markdown files.
           # Defaults to '[code-block,json-to-html-table,workflow-artifact-table]'
           categories: '[code-block]'
+      - name: Update documentation
+        run: |
+          cd simple_doc
+          echo "building docs..."
+          ./build_docs.sh
