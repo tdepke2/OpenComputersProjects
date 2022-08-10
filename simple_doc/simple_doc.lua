@@ -37,11 +37,15 @@ local function checkFileError(filename, file, err)
 end
 
 
+-- Write a documentation comment block to the output file. Skips any blocks that
+-- are considered boilerplate code, adds a newline to separate blocks, and trims
+-- trailing empty lines.
 local function writeSection(outputFile, docSection)
   if docSection.n == 0 then
     return
   end
   if opts["B"] and docSection.sectionNumber <= opts["B"] then
+    -- Ignore the boilerplate comment.
     for i, v in ipairs(docSection) do
       docSection[i] = nil
     end
@@ -71,6 +75,8 @@ local function writeSection(outputFile, docSection)
 end
 
 
+-- Reads the given input file to look for comment blocks formatted as
+-- documentation. These are appended to the output file.
 local function buildDoc(inputFile, outputFile)
   local state = 0
   local docSection = {sectionNumber = 1, n = 0}
@@ -177,6 +183,8 @@ local function main()
     outputFile, err = io.stdout, "missing stdout"
   else
     outputFilename = shell.resolve(outputFilename)
+    
+    -- If insert-start/insert-end options are provided, read the output file first and look for the start/end strings.
     if opts["insert-start"] then
       outputFile, err = io.open(outputFilename)
       checkFileError(outputFilename, outputFile, err)
@@ -220,6 +228,7 @@ local function main()
   checkFileError(outputFilename, outputFile, err)
   
   if outputFileContents then
+    -- Paste contents of outputFile back in until the start string.
     for i = 1, outputFileContents.insertIndex do
       outputFile:write(outputFileContents[i], "\n")
     end
@@ -229,6 +238,7 @@ local function main()
   inputFile:close()
   
   if outputFileContents then
+    -- Paste remainder of outputFile back in after the end string.
     for i = outputFileContents.insertIndex + 1, outputFileContents.n do
       outputFile:write(outputFileContents[i], "\n")
     end
