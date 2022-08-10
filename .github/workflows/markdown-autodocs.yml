@@ -28,6 +28,11 @@ jobs:
           # Categories to automatically sync or transform its contents in the markdown files.
           # Defaults to '[code-block,json-to-html-table,workflow-artifact-table]'
           categories: '[code-block]'
+
+      - name: Install Lua/LuaJIT
+        uses: leafo/gh-actions-lua@v9.1.0
+        with:
+          luaVersion: "5.3.3"
       - name: Update documentation
         run: |
           cd simple_doc
