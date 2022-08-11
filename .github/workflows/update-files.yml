@@ -1,5 +1,5 @@
-# GitHub action to embed code snippets in markdown files.
-name: markdown-autodocs
+# GitHub action to embed code snippets in markdown files and update documentation for Lua programs.
+name: update-files
 
 on:
   push:
@@ -7,10 +7,12 @@ on:
       - master
 
 jobs:
-  auto-update-readme:
+  update-files:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
+      # Run markdown-autodocs to update README.md files.
       - name: Setup Node.js environment
         uses: actions/setup-node@v3.3.0
       - name: Downgrade doctoc version
@@ -28,15 +30,17 @@ jobs:
           # Categories to automatically sync or transform its contents in the markdown files.
           # Defaults to '[code-block,json-to-html-table,workflow-artifact-table]'
           categories: '[code-block]'
+      - name: Cleanup temporary files
+        run: |
+          rm -f action.py
 
-      - name: Install Lua/LuaJIT
-        uses: leafo/gh-actions-lua@v9.1.0
-        with:
-          luaVersion: "5.3.3"
+      # Run simple_doc to update documentation.
+      - name: Install Lua
+        run: |
+          sudo apt-get install -y lua5.3
       - name: Update documentation
         run: |
           cd simple_doc
-          echo "building docs..."
           ./build_docs.sh
       - name: Git Auto Commit
         uses: stefanzweifel/git-auto-commit-action@v4.14.1
