@@ -11,5 +11,5 @@ declare -a outputs=(
 numInputs=${#inputs[@]}
 
 for (( i = 0; i < ${numInputs}; i++ )); do
-    lua simple_doc.lua "${inputs[$i]}" "${outputs[$i]}" --insert-start="<!-- SIMPLE-DOC:START (FILE:${inputs[$i]}) -->" --insert-end="<!-- SIMPLE-DOC:END -->"
+    lua simple_doc.lua "${inputs[$i]}" "${outputs[$i]}" -B --insert-start="<!-- SIMPLE-DOC:START (FILE:${inputs[$i]}) -->" --insert-end="<!-- SIMPLE-DOC:END -->"
 done

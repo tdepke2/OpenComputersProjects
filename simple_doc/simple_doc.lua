@@ -69,7 +69,7 @@ local function writeSection(outputFile, docSection)
     end
     -- Add remaining lines to output.
     for i, v in ipairs(docSection) do
-      outputFile:write("[" .. v .. "]\n")
+      outputFile:write(v, "\n")
       docSection[i] = nil
     end
   end

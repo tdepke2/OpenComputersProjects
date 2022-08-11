@@ -1,11 +1,11 @@
 --------------------------------------------------------------------------------
 -- Mesh networking protocol with minimalistic API.
 -- 
-##if OPEN_OS then
+--##if OPEN_OS then
 -- Compiled by simple_preprocess. This version runs on OpenOS.
-##else
+--##else
 -- Compiled by simple_preprocess. This version runs on embedded systems.
-##end
+--##end
 -- 
 -- @see file://libmnet/README.md
 -- @author tdepke2
@@ -33,16 +33,33 @@ local mnetStaticRoutes = {}
 setmetatable(mnetRoutingTable, {__index = mnetStaticRoutes})
 ##end
 
+--- `mnet.hostname = <env HOSTNAME or first 8 characters of computer address>`
+-- 
 -- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
 ##spwrite("mnet.hostname = ", OPEN_OS and "os.getenv()[\"HOSTNAME\"] or " or "", "computer.address():sub(1, 8)")
+
+--- `mnet.port = 2048`
+-- 
 -- Common hardware port used by all hosts in this network.
 mnet.port = 2048
+
+--- `mnet.route = true`
+-- 
 -- Enables forwarding of packets to other hosts (packets with a different destination than mnet.hostname). Can be disabled for network nodes that function as endpoints.
 mnet.route = true
+
+--- `mnet.routeTime = 30`
+-- 
 -- Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
 mnet.routeTime = 30
+
+--- `mnet.retransmitTime = 3`
+-- 
 -- Time in seconds for reliable messages to be retransmitted while no "ack" is received.
 mnet.retransmitTime = 3
+
+--- `mnet.dropTime = 12`
+-- 
 -- Time in seconds until packets in the cache are dropped or reliable messages time out.
 mnet.dropTime = 12
 
@@ -83,7 +100,7 @@ mnet.dropTime = 12
 
 
 ##if OPEN_OS then
--- mnet.registerDevice(address: string[, proxy: table]): table|nil
+--- `mnet.registerDevice(address: string[, proxy: table]): table|nil`
 -- 
 -- Adds a device that mnet can use for communication with other hosts in the
 -- network. Usually, the address should be the component address of a modem
@@ -119,7 +136,7 @@ function mnet.registerDevice(address, proxy)
 end
 
 
--- mnet.getDevices(): table
+--- `mnet.getDevices(): table`
 -- 
 -- Returns the table of registered network devices that mnet is using. The keys
 -- in the table are string addresses and values are proxy objects, like in
@@ -179,7 +196,8 @@ end
 
 
 ##if EXPERIMENTAL_DEBUG then
--- Debugging functions. The following should only be used for testing purposes.
+--- **Debugging functions. The following two should only be used for testing
+-- purposes:**
 
 -- Artificial cap on the maximum transmission unit when debugSetSmallMTU() is enabled.
 local SMALL_MTU_SIZE = 10
@@ -190,7 +208,7 @@ local PACKET_SWAP_CHANCE = 0.1
 -- Highest number of packets to come after the swapped one before we finally send it.
 local PACKET_SWAP_MAX_OFFSET = 3
 
--- mnet.debugEnableLossy(lossy: boolean)
+--- `mnet.debugEnableLossy(lossy: boolean)`
 -- 
 -- Sets lossy mode for packet transmission. This hooks into each network
 -- interface in the modems table and overrides modem.send() and
@@ -280,7 +298,7 @@ function mnet.debugEnableLossy(lossy)
   end
 end
 
--- mnet.debugSetSmallMTU(b: boolean)
+--- `mnet.debugSetSmallMTU(b: boolean)`
 -- 
 -- Sets small MTU mode for testing how mnet behaves when a message is fragmented
 -- into many small pieces.
@@ -298,7 +316,7 @@ end
 
 
 ##if ENABLE_STATIC_ROUTES then
--- mnet.getStaticRoutes(): table
+--- `mnet.getStaticRoutes(): table`
 -- 
 -- Returns the static routes table for getting/setting a route. A static route
 -- specifies which network interface on the local and remote sides to use when
@@ -398,8 +416,8 @@ local function sendFragment(sequence, flags, host, port, fragment, requireAck)
 end
 
 
--- mnet.send(host: string, port: number, message: string, reliable: boolean[,
---   waitForAck: boolean]): string|nil
+--- `mnet.send(host: string, port: number, message: string, reliable: boolean[,
+--   waitForAck: boolean]): string|nil`
 -- 
 -- Sends a message with a virtual port number to another host in the network.
 -- The message can be any length and contain binary data. The host "*" can be
@@ -521,12 +539,11 @@ local function nextMessage(hostSeq, currentPacket)
 end
 
 
--- mnet.receive(timeout: number[, connectionLostCallback: function]): nil |
---   (string, number, string)
--- 
--- On embedded systems, pass an event (in a table) instead of timeout:
--- mnet.receive(ev: table[, connectionLostCallback: function]): nil |
---   (string, number, string)
+--- `mnet.receive(timeout: number[, connectionLostCallback: function]): nil |
+--   (string, number, string)`<br>
+-- On embedded systems, pass an event (in a table) instead of timeout:<br>
+-- `mnet.receive(ev: table[, connectionLostCallback: function]): nil |
+--   (string, number, string)`
 -- 
 -- Pulls events up to the timeout duration and returns the sender host, virtual
 -- port, and message if any data destined for this host was received. The
