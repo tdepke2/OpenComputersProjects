@@ -48,6 +48,11 @@ Routing in mnet is very simple and in practice roughly mimics shortest path firs
 
 Note that there are significant differences between the version of mnet that runs on OpenOS and the minified version for embedded systems. Specifically, only `mnet.send()` and `mnet.receive()` are available for the latter. This is because the minified version is designed to fit onto a tiny 4KB EEPROM, so a lot of optional features are stripped out. Since mnet is compiled into these different versions using [simple_preprocess](../simple_preprocess), it's very easy to build your own version by setting the preprocessor flags for only the features you need. These are the available flags: `OPEN_OS`, `USE_DLOG`, `EXPERIMENTAL_DEBUG`, `ENABLE_LINK_CARD`, `ENABLE_LOOPBACK`, `ENABLE_STATIC_ROUTES`. See the Bakefile for an example.
 
+### API
+
+<!-- SIMPLE-DOC:START (FILE:../libmnet/mnet_src.lua) -->
+<!-- SIMPLE-DOC:END -->
+
 ### Example usage
 
 ```lua
