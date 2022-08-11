@@ -51,6 +51,7 @@ Note that there are significant differences between the version of mnet that run
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libmnet/mnet_src.lua) -->
+[Mesh networking protocol with minimalistic API.]
 <!-- SIMPLE-DOC:END -->
 
 ### Example usage
