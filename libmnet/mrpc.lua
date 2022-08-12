@@ -194,10 +194,10 @@ MrpcServer.async = setmetatable({}, {
 --- `MrpcServer.unpack.<call name>(message: string): ...`
 -- 
 -- Helper function that deserializes the given RPC formatted message to extract
--- the arguments. The message format is "<type>,<call name>{<packed table>}"
--- where type is either 's', 'a', or 'r' (for sync, async, and results), call
+-- the arguments. The message format is `<type>,<call name>{<packed table>}`
+-- where type is either `s`, `a`, or `r` (for sync, async, and results), call
 -- name is the name bound to the function call, and packed table is a serialized
--- table of the arguments with key 'n' storing the total.
+-- table of the arguments with key `n` storing the total.
 MrpcServer.unpack = setmetatable({}, {
   __index = function(t, k)
     cachedCallName = k
@@ -216,7 +216,7 @@ MrpcServer.unpack = setmetatable({}, {
 -- provided, they should each be a sequence with the format {name1: string,
 -- types1: string, ...} where name1 is the first parameter name (purely for
 -- making it clear what the value represents) and types1 is a comma-separated
--- list of accepted types (or the string "any").
+-- list of accepted types (or the string `any`).
 function MrpcServer.declareFunction(callName, arguments, results)
   dlog.checkArgs(callName, "string", arguments, "table,nil", results, "table,nil")
   local self = cachedObj

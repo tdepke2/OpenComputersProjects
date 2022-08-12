@@ -17,13 +17,13 @@ local dlog = include("dlog")
 local app = {}
 
 
--- app:new([mainThread: table]): table
+--- `app:new([mainThread: table]): table`
 -- 
 -- Creates a new application context for tracking threads and cleanup tasks. If
 -- mainThread is not provided, it defaults to the current execution context (the
 -- thread running this function if any). If this function is run inside a thread
 -- where the system process should be used as the main "thread", a value of
--- false can be passed to mainThread. Returns the new app object.
+-- false can be passed to mainThread. Returns the new `app` object.
 function app:new(mainThread)
   self.__index = self
   self = setmetatable({}, self)
@@ -46,12 +46,12 @@ function app:new(mainThread)
 end
 
 
--- app:run(func: function, ...)
+--- `app:run(func: function, ...)`
 -- 
 -- Starts the application with body function func in a protected call. Any
 -- additional provided arguments are passed to func (when called from the main
--- thread, use "..." to pass all arguments sent to the program). After func
--- completes or returns an error, app:exit() is called to run cleanup and end
+-- thread, use `...` to pass all arguments sent to the program). After func
+-- completes or returns an error, `app:exit()` is called to run cleanup and end
 -- the program.
 function app:run(func, ...)
   local status, result
@@ -70,10 +70,10 @@ function app:run(func, ...)
 end
 
 
--- app:pushCleanupTask(func: function, startArgs: any, endArgs: any)
+--- `app:pushCleanupTask(func: function, startArgs: any, endArgs: any)`
 -- 
 -- Adds a function to the top of the cleanup stack. This function will be popped
--- off the stack and run when app:doCleanup() or app:exit() is called or a
+-- off the stack and run when `app:doCleanup()` or `app:exit()` is called or a
 -- thread exits unexpectedly. If startArgs is not a table or nil, the function
 -- will be called immediately with this argument. If endArgs is not a table or
 -- nil, the function is called during cleanup with this argument. If either one
@@ -95,7 +95,7 @@ function app:pushCleanupTask(func, startArgs, endArgs)
 end
 
 
--- app:doCleanup(): number
+--- `app:doCleanup(): number`
 -- 
 -- Starts the cleanup tasks early, the tasks run in first-in-last-out order.
 -- This function is called automatically and generally doesn't need to be
@@ -119,12 +119,13 @@ function app:doCleanup()
 end
 
 
--- app:createThread(name: string, threadProc: function, ...): table
+--- `app:createThread(name: string, threadProc: function, ...): table`
 -- 
 -- Creates a new thread executing the function threadProc and registers it to
 -- the app. Any additional provided arguments are passed to threadProc. If
--- dlog.logErrorsToOutput is enabled, threadProc is wrapped inside an xpcall()
--- to capture exceptions with a stack trace. Returns the thread handle.
+-- `dlog.logErrorsToOutput` is enabled, threadProc is wrapped inside an
+-- `xpcall()` to capture exceptions with a stack trace. Returns the thread
+-- handle.
 function app:createThread(name, threadProc, ...)
   dlog.checkArgs(name, "string", threadProc, "function")
   local i = #self.threads + 1
@@ -147,7 +148,7 @@ function app:createThread(name, threadProc, ...)
 end
 
 
--- app:registerThread(name: string, t: table): number, string|nil
+--- `app:registerThread(name: string, t: table): number, string|nil`
 -- 
 -- Registers an existing thread to the app. Returns the index and name if the
 -- thread has already been registered, or just an index if the thread was added
@@ -167,12 +168,12 @@ function app:registerThread(name, t)
 end
 
 
--- app:unregisterThread(t: table): boolean
+--- `app:unregisterThread(t: table): boolean`
 -- 
 -- Unregisters a thread from the app. The app will not consider this thread in
--- app:waitAnyThreads() or app:waitAllThreads() and the thread will no longer
--- stop the application if an error occurs. Returns true if thread was removed,
--- or false if thread is not currently registered.
+-- `app:waitAnyThreads()` or `app:waitAllThreads()` and the thread will no
+-- longer stop the application if an error occurs. Returns true if thread was
+-- removed, or false if thread is not currently registered.
 function app:unregisterThread(t)
   dlog.checkArgs(t, "table")
   for i, v in ipairs(self.threads) do
@@ -205,13 +206,13 @@ local function exitProgram(self, code)
 end
 
 
--- app:exit([code: boolean|number])
+--- `app:exit([code: boolean|number])`
 -- 
 -- Stops the app and ends the program, this kills any active threads and runs
 -- cleanup tasks. This must be explicitly called before exiting the program to
 -- run the cleanup (but it is implicitly called when a registered thread throws
--- an exception). This is designed to replace calls to os.exit() and can be used
--- inside or outside of a thread.
+-- an exception). This is designed to replace calls to `os.exit()` and can be
+-- used inside or outside of a thread.
 function app:exit(code)
   self.killProgram = true
   self.exitCode = code
@@ -221,15 +222,16 @@ function app:exit(code)
 end
 
 
--- app:threadDone(): boolean
+--- `app:threadDone(): boolean`
 -- 
 -- Kills the current thread and reports successful execution. If a thread
 -- becomes dead in any other way then this is considered an error and the app
--- will stop. A thread can end up dead if the function body ends, os.exit() is
+-- will stop. A thread can end up dead if the function body ends, `os.exit()` is
 -- called, exception is thrown, or thread is suspended while a call to
--- app:waitAnyThreads() or app:waitAllThreads() is running. This function does
--- nothing if called outside of a thread (or within mainThread). Returns true if
--- thread was killed (but the thread will end execution before that anyways).
+-- `app:waitAnyThreads()` or `app:waitAllThreads()` is running. This function
+-- does nothing if called outside of a thread (or within mainThread). Returns
+-- true if thread was killed (but the thread will end execution before that
+-- anyways).
 function app:threadDone()
   local t = thread.current()
   if t and t ~= self.mainThread then
@@ -271,7 +273,7 @@ local function cleanDeadThreads(self)
 end
 
 
--- app:waitAnyThreads([timeout: number])
+--- `app:waitAnyThreads([timeout: number])`
 -- 
 -- Waits for any of the registered threads to complete or for timeout (seconds)
 -- to pass. A thread completes if it dies or is suspended.
@@ -281,7 +283,7 @@ function app:waitAnyThreads(timeout)
 end
 
 
--- app:waitAllThreads([timeout: number])
+--- `app:waitAllThreads([timeout: number])`
 -- 
 -- Waits for all of the registered threads to complete or for timeout (seconds)
 -- to pass. A thread completes if it dies or is suspended.

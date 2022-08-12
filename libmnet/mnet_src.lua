@@ -36,7 +36,7 @@ setmetatable(mnetRoutingTable, {__index = mnetStaticRoutes})
 --- `mnet.hostname = <env HOSTNAME or first 8 characters of computer address>`
 -- 
 -- Unique address for the machine running this instance of mnet. Do not set this
--- to the string "*" (asterisk is the broadcast address).
+-- to the string `*` (asterisk is the broadcast address).
 ##spwrite("mnet.hostname = ", OPEN_OS and "os.getenv()[\"HOSTNAME\"] or " or "", "computer.address():sub(1, 8)")
 
 --- `mnet.port = 2048`
@@ -115,7 +115,7 @@ mnet.dropTime = 12
 -- proxy table should be provided (must implement the functions `open()`,
 -- `close()`, `send()`, and `broadcast()` much like the modem component) with an
 -- address that is not currently in use. The custom communication device must
--- also push a "modem_message" signal when data is received. Returns the proxy
+-- also push a `modem_message` signal when data is received. Returns the proxy
 -- object for the device, or nil if the address does not point to a valid
 -- network device.
 function mnet.registerDevice(address, proxy)
@@ -151,8 +151,8 @@ end
 -- with all wired/wireless/linked cards plugged in to the machine.
 -- 
 -- To allow hot swapping network cards while mnet is running, make a call to
--- `mnet.getDevices()[address] = nil` on "component_removed" signals and call
--- `mnet.registerDevice(address)` on "component_added" signals.
+-- `mnet.getDevices()[address] = nil` on `component_removed` signals and call
+-- `mnet.registerDevice(address)` on `component_added` signals.
 function mnet.getDevices()
   return modems
 end
@@ -328,9 +328,9 @@ end
 -- sending a packet to a specific host. Each entry in the static routes table
 -- has a hostname key and table value, where the value stores the network
 -- interface address for the local and remote devices (keys 1 and 2
--- respectively). The special hostname "\*" can be used to route all packets
+-- respectively). The special hostname `*` can be used to route all packets
 -- through a specific network interface (other static routes will still take
--- priority). The "\*" static route will disable automatic routing behavior and
+-- priority). The `*` static route will disable automatic routing behavior and
 -- broadcast messages will be sent only to the specified interface.
 -- 
 -- Example:
@@ -427,14 +427,14 @@ end
 --   waitForAck: boolean]): string|nil`
 -- 
 -- Sends a message with a virtual port number to another host in the network.
--- The message can be any length and contain binary data. The host "*" can be
+-- The message can be any length and contain binary data. The host `*` can be
 -- used to broadcast the message to all other hosts (reliable must be set to
--- false in this case). The host "localhost" or `mnet.hostname` allow the
+-- false in this case). The host `localhost` or `mnet.hostname` allow the
 -- machine to send a message to itself (loopback interface).
 -- 
 -- When reliable is true, this function returns a string concatenating the host
 -- and last used sequence number separated by a comma (the host also begins with
--- an 'r' or 'u' character indicating reliability, like "rHOST,SEQUENCE"). The
+-- an `r` or `u` character indicating reliability, like `rHOST,SEQUENCE`). The
 -- sent message is expected to be acknowledged in this case (think TCP). When
 -- reliable is false, nil is returned and no "ack" is expected (think UDP). If
 -- reliable and waitForAck are true, this function will block until the "ack" is
@@ -558,7 +558,7 @@ end
 -- from this host. If provided, the function is called with a string
 -- host-sequence pair, a virtual port number, and string fragment. The
 -- host-sequence pair corresponds to the return values from `mnet.send()`. Note
--- that the host in this pair has an 'r' character prefix, and the sequence
+-- that the host in this pair has an `r` character prefix, and the sequence
 -- number will only match a previous return value from `mnet.send()` if it
 -- corresponds to the last fragment of the original message.
 ##if OPEN_OS then

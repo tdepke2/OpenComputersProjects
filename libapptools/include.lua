@@ -31,10 +31,10 @@ include.moduleDependencies = nil
 include.scannedModules = nil
 
 
--- include.requireWithMemCheck(moduleName: string): table
+--- `include.requireWithMemCheck(moduleName: string): table`
 -- 
--- Simple wrapper for the require() function that suppresses errors about memory
--- allocation while loading a module. Memory allocation errors can happen
+-- Simple wrapper for the `require()` function that suppresses errors about
+-- memory allocation while loading a module. Memory allocation errors can happen
 -- occasionally even if a given system has sufficient RAM. Up to three attempts
 -- are made, then the error is just passed along.
 function include.requireWithMemCheck(moduleName)
@@ -97,16 +97,16 @@ local function unloadChangedModules(moduleName)
 end
 
 
--- include.load(moduleName: string): table
+--- `include.load(moduleName: string): table`
 -- 
--- Loads a module just like require() does. The difference is that the module
+-- Loads a module just like `require()` does. The difference is that the module
 -- will be removed from the internal cache and loaded again if the file
 -- modification timestamp changes. This helps resolve the annoying problem where
--- a change is made in a module, the module is included with require() in a
+-- a change is made in a module, the module is included with `require()` in a
 -- source file, and the changes made do not show up during testing (because the
 -- module has been cached). Normally you would have to either reboot the machine
--- to force the module to reload, or remove the entry in package.loaded
--- manually. The include.load() function fixes this problem.
+-- to force the module to reload, or remove the entry in `package.loaded`
+-- manually. The `include.load()` function fixes this problem.
 function include.load(moduleName)
   local atTopLevel = (include.moduleDepth == 0)
   if atTopLevel then
@@ -174,7 +174,7 @@ function include.load(moduleName)
 end
 
 
--- include.isLoaded(moduleName: string): boolean
+--- `include.isLoaded(moduleName: string): boolean`
 -- 
 -- Check if a module is currently loaded (already in cache).
 function include.isLoaded(moduleName)
@@ -182,7 +182,7 @@ function include.isLoaded(moduleName)
 end
 
 
--- include.reload(moduleName: string): table
+--- `include.reload(moduleName: string): table`
 -- 
 -- Forces a module to load/reload, regardless of the file modification
 -- timestamp. Be careful not to use this with system libraries!
@@ -192,7 +192,7 @@ function include.reload(moduleName)
 end
 
 
--- include.unload(moduleName: string)
+--- `include.unload(moduleName: string)`
 -- 
 -- Unloads the given module (removes it from the internal cache). Be careful not
 -- to use this with system libraries!
@@ -214,11 +214,11 @@ function include.unload(moduleName)
 end
 
 
--- include.unloadAll()
+--- `include.unloadAll()`
 -- 
--- Unloads all modules that have been loaded with include(), include.load(),
--- include.reload(), etc. System libraries will not be touched as long as they
--- were loaded through other means, like require().
+-- Unloads all modules that have been loaded with `include()`, `include.load()`,
+-- `include.reload()`, etc. System libraries will not be touched as long as they
+-- were loaded through other means, like `require()`.
 function include.unloadAll()
   for k, v in pairs(include.loaded) do
     package.loaded[k] = nil
@@ -229,8 +229,8 @@ end
 
 -- FIXME below should be moved into a separate file, can we please not force literally everything to depend on a source tree walker? #########################################################################################
 
--- include.iterateSrcDependencies(sourceFilename: string[, modPattern: string]):
---   function
+--- `include.iterateSrcDependencies(sourceFilename: string[,
+--   modPattern: string]): function`
 -- 
 -- Gets an iterator to walk through the library dependencies for a source code
 -- file. This is designed to help with sending source code over network
@@ -241,8 +241,8 @@ end
 -- previous returned files or itself.
 -- 
 -- The sourceFilename is the path to the source code file, modPattern is a
--- pattern for the require() function equivalent. With the default value for
--- modPattern, the strings 'require("")' and 'include("")' will be scanned for
+-- pattern for the `require()` function equivalent. With the default value for
+-- modPattern, the strings `require("")` and `include("")` will be scanned for
 -- to find nested libraries in source code. Note that the nested libraries will
 -- be searched by package name, not by file path. Also, the include module
 -- itself is blacklisted from getting picked up as a dependency (to prevent some
