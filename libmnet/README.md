@@ -53,7 +53,8 @@ Note that there are significant differences between the version of mnet that run
 <!-- SIMPLE-DOC:START (FILE:../libmnet/mnet_src.lua) -->
 `mnet.hostname = <env HOSTNAME or first 8 characters of computer address>`
 
-Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
+Unique address for the machine running this instance of mnet. Do not set this
+to the string "*" (asterisk is the broadcast address).
 
 `mnet.port = 2048`
 
@@ -61,19 +62,24 @@ Common hardware port used by all hosts in this network.
 
 `mnet.route = true`
 
-Enables forwarding of packets to other hosts (packets with a different destination than mnet.hostname). Can be disabled for network nodes that function as endpoints.
+Enables forwarding of packets to other hosts (packets with a different
+destination than `mnet.hostname`). Can be disabled for network nodes that
+function as endpoints.
 
 `mnet.routeTime = 30`
 
-Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
+Time in seconds for entries in the routing cache to persist (set this longer
+for static networks and shorter for dynamically changing ones).
 
 `mnet.retransmitTime = 3`
 
-Time in seconds for reliable messages to be retransmitted while no "ack" is received.
+Time in seconds for reliable messages to be retransmitted while no "ack" is
+received.
 
 `mnet.dropTime = 12`
 
-Time in seconds until packets in the cache are dropped or reliable messages time out.
+Time in seconds until packets in the cache are dropped or reliable messages
+time out.
 
 `mnet.registerDevice(address: string[, proxy: table]): table|nil`
 
@@ -81,40 +87,39 @@ Adds a device that mnet can use for communication with other hosts in the
 network. Usually, the address should be the component address of a modem
 (wired/wireless card) or tunnel (linked card) plugged into the machine and
 proxy should be left as nil. To add a custom device for communication, a
-proxy table should be provided (must implement the functions open(), close(),
-send(), and broadcast() much like the modem component) with an address that
-is not currently in use. The custom communication device must also push a
-"modem_message" signal when data is received. Returns the proxy object for
-the device, or nil if the address does not point to a valid network device.
+proxy table should be provided (must implement the functions `open()`,
+`close()`, `send()`, and `broadcast()` much like the modem component) with an
+address that is not currently in use. The custom communication device must
+also push a "modem_message" signal when data is received. Returns the proxy
+object for the device, or nil if the address does not point to a valid
+network device.
 
 `mnet.getDevices(): table`
 
 Returns the table of registered network devices that mnet is using. The keys
 in the table are string addresses and values are proxy objects, like in
-mnet.registerDevice(). When mnet first loads, this table is initialized with
-all wired/wireless/linked cards plugged in to the machine.
+`mnet.registerDevice()`. When mnet first loads, this table is initialized
+with all wired/wireless/linked cards plugged in to the machine.
 
 To allow hot swapping network cards while mnet is running, make a call to
-"mnet.getDevices()[address] = nil" on "component_removed" signals and call
-mnet.registerDevice(address) on "component_added" signals.
-
-**Debugging functions. The following two should only be used for testing
-purposes:**
+`mnet.getDevices()[address] = nil` on "component_removed" signals and call
+`mnet.registerDevice(address)` on "component_added" signals.
 
 `mnet.debugEnableLossy(lossy: boolean)`
 
+**For debugging usage only.**<br>
 Sets lossy mode for packet transmission. This hooks into each network
-interface in the modems table and overrides modem.send() and
-modem.broadcast() to have a percent chance to drop (delete) or swap the
+interface in the modems table and overrides `modem.send()` and
+`modem.broadcast()` to have a percent chance to drop (delete) or swap the
 ordering of a packet during transmit. This mimics real behavior of wireless
 packet transfer when the receiver is close to the maximum range of the
 wireless transmitter. Packets can also arrive in a different order than the
 order they are sent in large networks where routing paths are frequently
-changing. This is purely for debugging the performance and correctness of
-mnet.
+changing. This is purely for testing the performance and correctness of mnet.
 
 `mnet.debugSetSmallMTU(b: boolean)`
 
+**For debugging usage only.**<br>
 Sets small MTU mode for testing how mnet behaves when a message is fragmented
 into many small pieces.
 
@@ -125,15 +130,17 @@ specifies which network interface on the local and remote sides to use when
 sending a packet to a specific host. Each entry in the static routes table
 has a hostname key and table value, where the value stores the network
 interface address for the local and remote devices (keys 1 and 2
-respectively). The special hostname "*" can be used to route all packets
+respectively). The special hostname "\*" can be used to route all packets
 through a specific network interface (other static routes will still take
-priority). The "*" static route will disable automatic routing behavior and
+priority). The "\*" static route will disable automatic routing behavior and
 broadcast messages will be sent only to the specified interface.
 
 Example:
-  -- Route all packets (besides broadcast) going to host123 through modem at
-  -- "0a19..." to remote "d2c6..." (need to use the full address).
-  mnet.getStaticRoutes()["host123"] = {"0a19...", "d2c6..."}
+```lua
+-- Route all packets (besides broadcast) going to host123 through modem at
+-- "0a19..." to remote "d2c6..." (need to use the full address).
+mnet.getStaticRoutes()["host123"] = {"0a19...", "d2c6..."}
+```
 
 `mnet.send(host: string, port: number, message: string, reliable: boolean[,
   waitForAck: boolean]): string|nil`
@@ -141,8 +148,8 @@ Example:
 Sends a message with a virtual port number to another host in the network.
 The message can be any length and contain binary data. The host "*" can be
 used to broadcast the message to all other hosts (reliable must be set to
-false in this case). The host "localhost" or mnet.hostname allow the machine
-to send a message to itself (loopback interface).
+false in this case). The host "localhost" or `mnet.hostname` allow the
+machine to send a message to itself (loopback interface).
 
 When reliable is true, this function returns a string concatenating the host
 and last used sequence number separated by a comma (the host also begins with
@@ -163,9 +170,9 @@ port, and message if any data destined for this host was received. The
 connectionLostCallback is used to catch reliable messages that failed to send
 from this host. If provided, the function is called with a string
 host-sequence pair, a virtual port number, and string fragment. The
-host-sequence pair corresponds to the return values from mnet.send(). Note
+host-sequence pair corresponds to the return values from `mnet.send()`. Note
 that the host in this pair has an 'r' character prefix, and the sequence
-number will only match a previous return value from mnet.send() if it
+number will only match a previous return value from `mnet.send()` if it
 corresponds to the last fragment of the original message.
 <!-- SIMPLE-DOC:END -->
 
@@ -209,6 +216,81 @@ Most of this code was adapted from the old packer.lua module. The packer module 
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libmnet/mrpc.lua) -->
+`mrpc.newServer(port: number): table`
+
+Creates a new instance of an RPC server with a given port number. This server
+is used for both requesting functions to run on a remote machine (and
+optionally get return values back), and handling function call requests from
+other machines. Once a server has been created on the sender and receiver
+(with same port number), a remote call defined on both sides, and a function
+bound on the receiving end, the sender can start sending requests to the
+receiver.
+
+Note that the object this function returns is an instance of `MrpcServer`,
+and unlike most class designs the methods are invoked with a dot instead of
+colon operator (this enables the syntax with the sync and async methods).
+
+`MrpcServer.sync.<call name>(host: string, ...): ...`
+
+Requests the given host to run a function call with the given arguments. The
+host must not be the broadcast address. As this is the synchronous version,
+the function will block the current process until return values are received
+from the remote host or the request times out. Any other synchronous calls
+made to this `MrpcServer` instance in other threads will wait their turn to
+run. Returns the results from the remote function call, or throws an error if
+request timed out (or other error occurred).
+
+`MrpcServer.async.<call name>(host: string, ...): string`
+
+Similar to `MrpcServer.sync`, requests the given host(s) to run a function
+call with the given arguments. The host can be the broadcast address. This
+asynchronous version will not block the current process but also does not
+return the results of the remote call. This internally uses the reliable
+message protocol in mnet, so async calls are guaranteed to arrive in the same
+order they were sent (even alternating sync and async calls guarantees
+in-order delivery). Returns the host-sequence pair of the sent message (can
+be used to check for connection failure, see mnet for details).
+
+`MrpcServer.unpack.<call name>(message: string): ...`
+
+Helper function that deserializes the given RPC formatted message to extract
+the arguments. The message format is "<type>,<call name>{<packed table>}"
+where type is either 's', 'a', or 'r' (for sync, async, and results), call
+name is the name bound to the function call, and packed table is a serialized
+table of the arguments with key 'n' storing the total.
+
+`MrpcServer.declareFunction(callName: string, arguments: table|nil,
+  results: table|nil)`
+
+Specifies a function declaration and optionally the expected data types for
+arguments and return values. A function needs to be declared the same way on
+two machines before one can call the function on the other. The callName
+specifies the name bound to the function. If the arguments and results are
+provided, they should each be a sequence with the format {name1: string,
+types1: string, ...} where name1 is the first parameter name (purely for
+making it clear what the value represents) and types1 is a comma-separated
+list of accepted types (or the string "any").
+
+`MrpcServer.addDeclarations(declarationMap: table)`
+
+Iterates a table and calls `MrpcServer.declareFunction()` for each entry.
+Each key in declarationMap should be the call name of the function to declare
+and the value should be another table containing the same arguments and
+results tables that would be passed to `MrpcServer.declareFunction()`. The
+intended way to use this is create a Lua script that returns the
+declarationMap table, then use `dofile()` to pass it into this function.
+
+`MrpcServer.handleMessage(obj: any[, host: string, port: number,
+  message: string]): boolean`
+
+When called with the results of `mnet.receive()`, checks if the port and
+message match an incoming request to run a function (or results from a sent
+request). If the message is requesting to run a function and the matching
+function has been assigned to `MrpcServer.functions.<call name>`, it is
+called with obj, host, and all of the sent arguments. The obj argument should
+be used if the bound function is a class member. Otherwise, nil can be passed
+for obj and the first argument in the function can be ignored. Returns true
+if the message was handled by this server, or false if not.
 <!-- SIMPLE-DOC:END -->
 
 ### Example usage
