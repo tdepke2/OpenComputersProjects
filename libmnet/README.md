@@ -206,6 +206,11 @@ When setting up the RPC server, function declarations must be given before a rem
 
 Most of this code was adapted from the old packer.lua module. The packer module was an early RPC prototype and was independent from the underlying network protocol (wnet at the time). This was great for modularity, but packer also had functions registered in a global table and an ugly call syntax.
 
+### API
+
+<!-- SIMPLE-DOC:START (FILE:../libmnet/mrpc.lua) -->
+<!-- SIMPLE-DOC:END -->
+
 ### Example usage
 
 ```lua

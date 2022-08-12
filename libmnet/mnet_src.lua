@@ -35,7 +35,8 @@ setmetatable(mnetRoutingTable, {__index = mnetStaticRoutes})
 
 --- `mnet.hostname = <env HOSTNAME or first 8 characters of computer address>`
 -- 
--- Unique address for the machine running this instance of mnet. Do not set this to the string "*" (asterisk is the broadcast address).
+-- Unique address for the machine running this instance of mnet. Do not set this
+-- to the string "*" (asterisk is the broadcast address).
 ##spwrite("mnet.hostname = ", OPEN_OS and "os.getenv()[\"HOSTNAME\"] or " or "", "computer.address():sub(1, 8)")
 
 --- `mnet.port = 2048`
@@ -45,22 +46,27 @@ mnet.port = 2048
 
 --- `mnet.route = true`
 -- 
--- Enables forwarding of packets to other hosts (packets with a different destination than mnet.hostname). Can be disabled for network nodes that function as endpoints.
+-- Enables forwarding of packets to other hosts (packets with a different
+-- destination than `mnet.hostname`). Can be disabled for network nodes that
+-- function as endpoints.
 mnet.route = true
 
 --- `mnet.routeTime = 30`
 -- 
--- Time in seconds for entries in the routing cache to persist (set this longer for static networks and shorter for dynamically changing ones).
+-- Time in seconds for entries in the routing cache to persist (set this longer
+-- for static networks and shorter for dynamically changing ones).
 mnet.routeTime = 30
 
 --- `mnet.retransmitTime = 3`
 -- 
--- Time in seconds for reliable messages to be retransmitted while no "ack" is received.
+-- Time in seconds for reliable messages to be retransmitted while no "ack" is
+-- received.
 mnet.retransmitTime = 3
 
 --- `mnet.dropTime = 12`
 -- 
--- Time in seconds until packets in the cache are dropped or reliable messages time out.
+-- Time in seconds until packets in the cache are dropped or reliable messages
+-- time out.
 mnet.dropTime = 12
 
 
@@ -106,11 +112,12 @@ mnet.dropTime = 12
 -- network. Usually, the address should be the component address of a modem
 -- (wired/wireless card) or tunnel (linked card) plugged into the machine and
 -- proxy should be left as nil. To add a custom device for communication, a
--- proxy table should be provided (must implement the functions open(), close(),
--- send(), and broadcast() much like the modem component) with an address that
--- is not currently in use. The custom communication device must also push a
--- "modem_message" signal when data is received. Returns the proxy object for
--- the device, or nil if the address does not point to a valid network device.
+-- proxy table should be provided (must implement the functions `open()`,
+-- `close()`, `send()`, and `broadcast()` much like the modem component) with an
+-- address that is not currently in use. The custom communication device must
+-- also push a "modem_message" signal when data is received. Returns the proxy
+-- object for the device, or nil if the address does not point to a valid
+-- network device.
 function mnet.registerDevice(address, proxy)
   ##spwrite(USE_DLOG and "xassert" or "assert", "(proxy == nil or (proxy.open and proxy.close and proxy.send and proxy.broadcast), \"provided proxy for device must implement open(), close(), send(), and broadcast().\")")
   modems[address] = proxy
@@ -140,12 +147,12 @@ end
 -- 
 -- Returns the table of registered network devices that mnet is using. The keys
 -- in the table are string addresses and values are proxy objects, like in
--- mnet.registerDevice(). When mnet first loads, this table is initialized with
--- all wired/wireless/linked cards plugged in to the machine.
+-- `mnet.registerDevice()`. When mnet first loads, this table is initialized
+-- with all wired/wireless/linked cards plugged in to the machine.
 -- 
 -- To allow hot swapping network cards while mnet is running, make a call to
--- "mnet.getDevices()[address] = nil" on "component_removed" signals and call
--- mnet.registerDevice(address) on "component_added" signals.
+-- `mnet.getDevices()[address] = nil` on "component_removed" signals and call
+-- `mnet.registerDevice(address)` on "component_added" signals.
 function mnet.getDevices()
   return modems
 end
@@ -196,9 +203,6 @@ end
 
 
 ##if EXPERIMENTAL_DEBUG then
---- **Debugging functions. The following two should only be used for testing
--- purposes:**
-
 -- Artificial cap on the maximum transmission unit when debugSetSmallMTU() is enabled.
 local SMALL_MTU_SIZE = 10
 -- Probability to intentionally drop a packet [0, 1].
@@ -210,15 +214,15 @@ local PACKET_SWAP_MAX_OFFSET = 3
 
 --- `mnet.debugEnableLossy(lossy: boolean)`
 -- 
+-- **For debugging usage only.**<br>
 -- Sets lossy mode for packet transmission. This hooks into each network
--- interface in the modems table and overrides modem.send() and
--- modem.broadcast() to have a percent chance to drop (delete) or swap the
+-- interface in the modems table and overrides `modem.send()` and
+-- `modem.broadcast()` to have a percent chance to drop (delete) or swap the
 -- ordering of a packet during transmit. This mimics real behavior of wireless
 -- packet transfer when the receiver is close to the maximum range of the
 -- wireless transmitter. Packets can also arrive in a different order than the
 -- order they are sent in large networks where routing paths are frequently
--- changing. This is purely for debugging the performance and correctness of
--- mnet.
+-- changing. This is purely for testing the performance and correctness of mnet.
 function mnet.debugEnableLossy(lossy)
   local function buildTransmitWrapper(modem, func)
     local bufferedPackets, dropSeq, swapSeq = {}, {}, {}
@@ -300,6 +304,7 @@ end
 
 --- `mnet.debugSetSmallMTU(b: boolean)`
 -- 
+-- **For debugging usage only.**<br>
 -- Sets small MTU mode for testing how mnet behaves when a message is fragmented
 -- into many small pieces.
 local mtuAdjustedReal
@@ -323,15 +328,17 @@ end
 -- sending a packet to a specific host. Each entry in the static routes table
 -- has a hostname key and table value, where the value stores the network
 -- interface address for the local and remote devices (keys 1 and 2
--- respectively). The special hostname "*" can be used to route all packets
+-- respectively). The special hostname "\*" can be used to route all packets
 -- through a specific network interface (other static routes will still take
--- priority). The "*" static route will disable automatic routing behavior and
+-- priority). The "\*" static route will disable automatic routing behavior and
 -- broadcast messages will be sent only to the specified interface.
 -- 
 -- Example:
---   -- Route all packets (besides broadcast) going to host123 through modem at
---   -- "0a19..." to remote "d2c6..." (need to use the full address).
---   mnet.getStaticRoutes()["host123"] = {"0a19...", "d2c6..."}
+-- ```lua
+-- -- Route all packets (besides broadcast) going to host123 through modem at
+-- -- "0a19..." to remote "d2c6..." (need to use the full address).
+-- mnet.getStaticRoutes()["host123"] = {"0a19...", "d2c6..."}
+-- ```
 function mnet.getStaticRoutes()
   return mnetStaticRoutes
 end
@@ -422,8 +429,8 @@ end
 -- Sends a message with a virtual port number to another host in the network.
 -- The message can be any length and contain binary data. The host "*" can be
 -- used to broadcast the message to all other hosts (reliable must be set to
--- false in this case). The host "localhost" or mnet.hostname allow the machine
--- to send a message to itself (loopback interface).
+-- false in this case). The host "localhost" or `mnet.hostname` allow the
+-- machine to send a message to itself (loopback interface).
 -- 
 -- When reliable is true, this function returns a string concatenating the host
 -- and last used sequence number separated by a comma (the host also begins with
@@ -550,9 +557,9 @@ end
 -- connectionLostCallback is used to catch reliable messages that failed to send
 -- from this host. If provided, the function is called with a string
 -- host-sequence pair, a virtual port number, and string fragment. The
--- host-sequence pair corresponds to the return values from mnet.send(). Note
+-- host-sequence pair corresponds to the return values from `mnet.send()`. Note
 -- that the host in this pair has an 'r' character prefix, and the sequence
--- number will only match a previous return value from mnet.send() if it
+-- number will only match a previous return value from `mnet.send()` if it
 -- corresponds to the last fragment of the original message.
 ##if OPEN_OS then
 function mnet.receive(timeout, connectionLostCallback)

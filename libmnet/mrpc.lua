@@ -28,7 +28,7 @@ MrpcServer.__index = function(t, k)
 end
 
 
--- mrpc.newServer(port: number): table
+--- `mrpc.newServer(port: number): table`
 -- 
 -- Creates a new instance of an RPC server with a given port number. This server
 -- is used for both requesting functions to run on a remote machine (and
@@ -37,9 +37,10 @@ end
 -- (with same port number), a remote call defined on both sides, and a function
 -- bound on the receiving end, the sender can start sending requests to the
 -- receiver.
--- Note that the object this function returns is an instance of MrpcServer, and
--- unlike most class designs the methods are invoked with a dot instead of colon
--- operator (this enables the syntax with the sync and async methods).
+-- 
+-- Note that the object this function returns is an instance of `MrpcServer`,
+-- and unlike most class designs the methods are invoked with a dot instead of
+-- colon operator (this enables the syntax with the sync and async methods).
 function mrpc.newServer(port)
   local self = setmetatable({}, MrpcServer)
   
@@ -155,13 +156,13 @@ local function doUnpack(message)
 end
 
 
--- MrpcServer.sync.<call name>(host: string, ...): ...
+--- `MrpcServer.sync.<call name>(host: string, ...): ...`
 -- 
 -- Requests the given host to run a function call with the given arguments. The
 -- host must not be the broadcast address. As this is the synchronous version,
 -- the function will block the current process until return values are received
 -- from the remote host or the request times out. Any other synchronous calls
--- made to this MrpcServer instance in other threads will wait their turn to
+-- made to this `MrpcServer` instance in other threads will wait their turn to
 -- run. Returns the results from the remote function call, or throws an error if
 -- request timed out (or other error occurred).
 MrpcServer.sync = setmetatable({}, {
@@ -172,10 +173,10 @@ MrpcServer.sync = setmetatable({}, {
 })
 
 
--- MrpcServer.async.<call name>(host: string, ...): string
+--- `MrpcServer.async.<call name>(host: string, ...): string`
 -- 
--- Similar to MrpcServer.sync, requests the given host(s) to run a function call
--- with the given arguments. The host can be the broadcast address. This
+-- Similar to `MrpcServer.sync`, requests the given host(s) to run a function
+-- call with the given arguments. The host can be the broadcast address. This
 -- asynchronous version will not block the current process but also does not
 -- return the results of the remote call. This internally uses the reliable
 -- message protocol in mnet, so async calls are guaranteed to arrive in the same
@@ -190,7 +191,7 @@ MrpcServer.async = setmetatable({}, {
 })
 
 
--- MrpcServer.unpack.<call name>(message: string): ...
+--- `MrpcServer.unpack.<call name>(message: string): ...`
 -- 
 -- Helper function that deserializes the given RPC formatted message to extract
 -- the arguments. The message format is "<type>,<call name>{<packed table>}"
@@ -205,8 +206,8 @@ MrpcServer.unpack = setmetatable({}, {
 })
 
 
--- MrpcServer.declareFunction(callName: string, arguments: table|nil,
---   results: table|nil)
+--- `MrpcServer.declareFunction(callName: string, arguments: table|nil,
+--   results: table|nil)`
 -- 
 -- Specifies a function declaration and optionally the expected data types for
 -- arguments and return values. A function needs to be declared the same way on
@@ -240,14 +241,14 @@ function MrpcServer.declareFunction(callName, arguments, results)
 end
 
 
--- MrpcServer.addDeclarations(declarationMap: table)
+--- `MrpcServer.addDeclarations(declarationMap: table)`
 -- 
--- Iterates a table and calls MrpcServer.declareFunction() for each entry. Each
--- key in declarationMap should be the call name of the function to declare and
--- the value should be another table containing the same arguments and results
--- tables that would be passed to MrpcServer.declareFunction(). The intended way
--- to use this is create a Lua script that returns the declarationMap table,
--- then use dofile() to pass it into this function.
+-- Iterates a table and calls `MrpcServer.declareFunction()` for each entry.
+-- Each key in declarationMap should be the call name of the function to declare
+-- and the value should be another table containing the same arguments and
+-- results tables that would be passed to `MrpcServer.declareFunction()`. The
+-- intended way to use this is create a Lua script that returns the
+-- declarationMap table, then use `dofile()` to pass it into this function.
 function MrpcServer.addDeclarations(declarationMap)
   for callName, v in pairs(declarationMap) do
     MrpcServer.declareFunction(callName, v[1], v[2])
@@ -255,17 +256,17 @@ function MrpcServer.addDeclarations(declarationMap)
 end
 
 
--- MrpcServer.handleMessage(obj: any[, host: string, port: number,
---   message: string]): boolean
+--- `MrpcServer.handleMessage(obj: any[, host: string, port: number,
+--   message: string]): boolean`
 -- 
--- When called with the results of mnet.receive(), checks if the port and
+-- When called with the results of `mnet.receive()`, checks if the port and
 -- message match an incoming request to run a function (or results from a sent
--- request). If the message is requesting to run a function and the
--- corresponding function has been assigned to MrpcServer.functions.<call name>,
--- it is called with obj, host, and all of the sent arguments. The obj argument
--- should be used if the bound function is a class member. Otherwise, nil can be
--- passed for obj and the first argument in the function can be ignored. Returns
--- true if the message was handled by this server, or false if not.
+-- request). If the message is requesting to run a function and the matching
+-- function has been assigned to `MrpcServer.functions.<call name>`, it is
+-- called with obj, host, and all of the sent arguments. The obj argument should
+-- be used if the bound function is a class member. Otherwise, nil can be passed
+-- for obj and the first argument in the function can be ignored. Returns true
+-- if the message was handled by this server, or false if not.
 function MrpcServer.handleMessage(obj, host, port, message)
   local self = cachedObj
   if port ~= self.port then
