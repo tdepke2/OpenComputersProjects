@@ -54,7 +54,7 @@ Note that there are significant differences between the version of mnet that run
 `mnet.hostname = <env HOSTNAME or first 8 characters of computer address>`
 
 Unique address for the machine running this instance of mnet. Do not set this
-to the string "*" (asterisk is the broadcast address).
+to the string `*` (asterisk is the broadcast address).
 
 `mnet.port = 2048`
 
@@ -90,7 +90,7 @@ proxy should be left as nil. To add a custom device for communication, a
 proxy table should be provided (must implement the functions `open()`,
 `close()`, `send()`, and `broadcast()` much like the modem component) with an
 address that is not currently in use. The custom communication device must
-also push a "modem_message" signal when data is received. Returns the proxy
+also push a `modem_message` signal when data is received. Returns the proxy
 object for the device, or nil if the address does not point to a valid
 network device.
 
@@ -102,8 +102,8 @@ in the table are string addresses and values are proxy objects, like in
 with all wired/wireless/linked cards plugged in to the machine.
 
 To allow hot swapping network cards while mnet is running, make a call to
-`mnet.getDevices()[address] = nil` on "component_removed" signals and call
-`mnet.registerDevice(address)` on "component_added" signals.
+`mnet.getDevices()[address] = nil` on `component_removed` signals and call
+`mnet.registerDevice(address)` on `component_added` signals.
 
 `mnet.debugEnableLossy(lossy: boolean)`
 
@@ -130,9 +130,9 @@ specifies which network interface on the local and remote sides to use when
 sending a packet to a specific host. Each entry in the static routes table
 has a hostname key and table value, where the value stores the network
 interface address for the local and remote devices (keys 1 and 2
-respectively). The special hostname "\*" can be used to route all packets
+respectively). The special hostname `*` can be used to route all packets
 through a specific network interface (other static routes will still take
-priority). The "\*" static route will disable automatic routing behavior and
+priority). The `*` static route will disable automatic routing behavior and
 broadcast messages will be sent only to the specified interface.
 
 Example:
@@ -146,14 +146,14 @@ mnet.getStaticRoutes()["host123"] = {"0a19...", "d2c6..."}
   waitForAck: boolean]): string|nil`
 
 Sends a message with a virtual port number to another host in the network.
-The message can be any length and contain binary data. The host "*" can be
+The message can be any length and contain binary data. The host `*` can be
 used to broadcast the message to all other hosts (reliable must be set to
-false in this case). The host "localhost" or `mnet.hostname` allow the
+false in this case). The host `localhost` or `mnet.hostname` allow the
 machine to send a message to itself (loopback interface).
 
 When reliable is true, this function returns a string concatenating the host
 and last used sequence number separated by a comma (the host also begins with
-an 'r' or 'u' character indicating reliability, like "rHOST,SEQUENCE"). The
+an `r` or `u` character indicating reliability, like `rHOST,SEQUENCE`). The
 sent message is expected to be acknowledged in this case (think TCP). When
 reliable is false, nil is returned and no "ack" is expected (think UDP). If
 reliable and waitForAck are true, this function will block until the "ack" is
@@ -171,7 +171,7 @@ connectionLostCallback is used to catch reliable messages that failed to send
 from this host. If provided, the function is called with a string
 host-sequence pair, a virtual port number, and string fragment. The
 host-sequence pair corresponds to the return values from `mnet.send()`. Note
-that the host in this pair has an 'r' character prefix, and the sequence
+that the host in this pair has an `r` character prefix, and the sequence
 number will only match a previous return value from `mnet.send()` if it
 corresponds to the last fragment of the original message.
 <!-- SIMPLE-DOC:END -->
@@ -254,10 +254,10 @@ be used to check for connection failure, see mnet for details).
 `MrpcServer.unpack.<call name>(message: string): ...`
 
 Helper function that deserializes the given RPC formatted message to extract
-the arguments. The message format is "<type>,<call name>{<packed table>}"
-where type is either 's', 'a', or 'r' (for sync, async, and results), call
+the arguments. The message format is `<type>,<call name>{<packed table>}`
+where type is either `s`, `a`, or `r` (for sync, async, and results), call
 name is the name bound to the function call, and packed table is a serialized
-table of the arguments with key 'n' storing the total.
+table of the arguments with key `n` storing the total.
 
 `MrpcServer.declareFunction(callName: string, arguments: table|nil,
   results: table|nil)`
@@ -269,7 +269,7 @@ specifies the name bound to the function. If the arguments and results are
 provided, they should each be a sequence with the format {name1: string,
 types1: string, ...} where name1 is the first parameter name (purely for
 making it clear what the value represents) and types1 is a comma-separated
-list of accepted types (or the string "any").
+list of accepted types (or the string `any`).
 
 `MrpcServer.addDeclarations(declarationMap: table)`
 
