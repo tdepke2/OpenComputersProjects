@@ -1,3 +1,11 @@
+--------------------------------------------------------------------------------
+-- Just like hexdump command in UNIX. Currently only supports canonical
+-- hex+ASCII display.
+-- 
+-- @author tdepke2
+--------------------------------------------------------------------------------
+
+
 local xprint = require("xprint")
 
 local args = {...}

@@ -1,12 +1,22 @@
-
--- cool idea, what if we had a tool that could print almost anything? binary floats, _ENV, and even process.info() vals (with metatables?).
--- hmm, how to save output? maybe use dlog idk
--- xprint() is like print() but better
--- xprint.table() can do depth limiting
--- xprint.hex() can do hex dump on number or string (or file?)
+--------------------------------------------------------------------------------
+-- Extended print function, can be used to recursively print tables, format
+-- numbers/strings in hexadecimal, and more.
+-- 
+-- The main function here, xprint.print() (or just xprint()), will accept a
+-- configuration table and any number of arguments to format as strings and
+-- print these to stdout (or custom stream). The function supports cyclic
+-- tables, tables with metatables, depth-limiting, raw iteration, and more. See
+-- the comments for xprint.print() for full details.
+-- 
+-- Another available utility is xprint.hexdump(). It behaves just like the UNIX
+-- hexdump command, but currently only supports canonical hex+ASCII display.
+-- 
+-- @author tdepke2
+--------------------------------------------------------------------------------
 
 
 local xprint = {}
+
 
 -- Enables xprint() function call as a shortcut to xprint.print().
 setmetatable(xprint, {
@@ -15,6 +25,8 @@ setmetatable(xprint, {
   end
 })
 
+
+-- Outputs a single value v to the stream. Does not recurse on table values.
 local function writeValueToStream(config, v, stream, endOfLine)
   local typeV = type(v)
   if not config.formatHex then
@@ -29,12 +41,12 @@ local function writeValueToStream(config, v, stream, endOfLine)
     else
       v = string.pack(">n", v)
     end
-    stream:write("0x", string.format(string.rep("%.2X", #v), string.byte(v, 1, #v)), endOfLine)
+    stream:write("0x", string.format(string.rep("%.2x", #v), string.byte(v, 1, #v)), endOfLine)
   elseif not config.rawString and typeV == "string" then
     stream:write("0x")
     for i = 1, #v, 100 do
       local endIndex = math.min(i + 99, #v)
-      stream:write(string.format(string.rep("%.2X ", endIndex - i + 1), string.byte(v, i, endIndex)))
+      stream:write(string.format(string.rep("%.2x ", endIndex - i + 1), string.byte(v, i, endIndex)))
     end
     stream:write(endOfLine)
   else
@@ -42,19 +54,24 @@ local function writeValueToStream(config, v, stream, endOfLine)
   end
 end
 
+
+-- Recursively prints the contents of table t. Keys are sorted such that numbers
+-- appear first, then strings, then other types. The metatable is recursively
+-- printed at the end (if enabled).
 local function writeTableToStream(config, t, stream, spacing, depth)
-  if config[t] then
+  if config.traversedTables[t] then
     stream:write(tostring(t), " (duplicate)\n")
     return
   end
   stream:write(tostring(t), " {\n")
-  config[t] = true
+  config.traversedTables[t] = true
   
   local function rawPairs(t)
     return next, t
   end
   
-  if depth <= config.maxDepth then
+  if not config.maxDepth or depth <= config.maxDepth then
+    -- Collect all table keys and sort them (the iteration order of pairs() is undefined). This make the data more human-readable.
     local sortedKeys, stringKeys, otherKeys = {}, {}, {}
     local iterationMethod = config.rawAccess and rawPairs or pairs
     for k, v in iterationMethod(t) do
@@ -77,10 +94,11 @@ local function writeTableToStream(config, t, stream, spacing, depth)
       sortedKeys[sortedKeysSize + i] = v
     end
     
+    -- Write each value to the stream.
     for _, k in ipairs(sortedKeys) do
       stream:write(spacing, "  ")
       writeValueToStream(config, k, stream, "")
-      stream:write(": ")
+      stream:write(" = ")
       if type(t[k]) == "table" then
         writeTableToStream(config, t[k], stream, spacing .. "  ", depth + 1)
       else
@@ -91,6 +109,7 @@ local function writeTableToStream(config, t, stream, spacing, depth)
     stream:write(spacing, "  ...\n")
   end
   
+  -- Write ending brace, and metatable if enabled.
   if config.hideMeta or not getmetatable(t) then
     stream:write(spacing, "}\n")
   else
@@ -104,17 +123,31 @@ local function writeTableToStream(config, t, stream, spacing, depth)
   end
 end
 
--- config[t] hides table t
--- config.stream sends output to stream
--- config.hideMeta hides metatable data
--- config.maxDepth sets max table depth level [0, inf)
--- config.rawAccess enables raw table iteration
--- config.rawString disables string escaping
--- config.formatHex shows values in hex
+
+--- `xprint.print(config: table, ...)`
+-- 
+-- Prints the given arguments to stdout or other stream. A newline is added
+-- between each value instead of a tab (like the print() function). Tables are
+-- displayed in an expanded format, but any that have already been expanded
+-- within the current call just show the table address (prevents duplicate table
+-- display and allows cyclic tables). The config parameter allows setting the
+-- output format, the supported options are below:
+--   * `config[t] = true` prevents expansion of table t
+--   * `config.stream = s` sends output to stream s (default is stdout, can be
+--     any regular files opened in write/append mode)
+--   * `config.hideMeta = true` hides display of metatable data on tables
+--   * `config.maxDepth = n` sets max table depth level to n in range [0, inf)
+--   * `config.rawAccess = true` enables raw table iteration without pairs()
+--   * `config.rawString = true` disables string escaping
+--   * `config.formatHex = true` displays number/string values in hexadecimal
+-- 
+-- The config can be an empty table to use the default settings.
 function xprint.print(config, ...)
   assert(type(config) == "table", "config table must be first argument to xprint()")
   local stream = config.stream or io.stdout
-  config.maxDepth = config.maxDepth or math.huge
+  config.traversedTables = setmetatable({}, {
+    __index = config
+  })
   
   local arg = table.pack(...)
   for i = 1, arg.n do
@@ -127,9 +160,15 @@ function xprint.print(config, ...)
   if arg.n == 0 then
     stream:write("\n")
   end
+  config.traversedTables = nil
 end
 
--- The hexdump format uses the "canonical hex+ASCII display".
+
+--- `xprint.hexdump(istream: table)`
+-- 
+-- Reads in bytes from the input stream and prints the hexadecimal values to
+-- stdout. The offset address of the first byte in a row is shown in the left
+-- column, and the ASCII data is shown in the right column.
 function xprint.hexdump(istream)
   local address = 0
   local bytes = istream:read(16)
@@ -150,44 +189,5 @@ function xprint.hexdump(istream)
     io.write(string.format("%.8x  ", address), "\n")
   end
 end
-
-
-local t1 = {
-  abc = 123,
-  [1] = "first",
-  [2] = "sec",
-  [3] = "third",
-  my = -1,
-  sample = -2,
-  text = -3,
-  here = -4,
-  [{}] = -5,
-  [function() end] = "cooler",
-  [ [["! level2
-    ]] ] = setmetatable({
-    "a",
-    "b",
-    "c",
-    thing = "cool",
-    [function() end] = {
-      __index = " ",
-      __metatable = 123.456,
-    },
-  }, {__index = function() print("ok") end, [3] = "test"}),
-  hidden = setmetatable({
-    "not here",
-    123,
-    function() return 6 end,
-    "secret ",
-  }, {__pairs = function() return function() end end, __metatable = "you can\'t see my secret pairs func!"}),
-}
-t1[11] = t1
-setmetatable(t1, getmetatable(t1[ [["! level2
-    ]] ]))
-
-
---xprint({}, nil, 12.345, "test\ncool  ", t1, t1, function() end)
---xprint({rawAccess = true}, t1)
---print("(END)")
 
 return xprint

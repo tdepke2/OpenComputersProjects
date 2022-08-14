@@ -347,29 +347,49 @@ function dlog.subsystems(subsystems)
 end
 
 
--- FIXME at some point the below should be improved to be more like xprint() (use streams instead of string) #######################################################################
-
 --- `dlog.tableToString(t: table): string`
 -- 
--- Serializes a table to a string using a user-facing format. Handles nested
--- tables, but doesn't currently behave with cycles. This is just a helper
--- function for `dlog.out()`.
+-- Serializes a table to a string using a user-facing format. String keys/values
+-- in the table are escaped and enclosed in double quotes. Handles nested tables
+-- and tables with cycles. This is just a helper function for `dlog.out()`.
+local tableToStringHelper
 function dlog.tableToString(t)
-  local str = "\n" .. tostring(t) .. " {\n"
-  local function tableToStringHelper(t, spacing)
-    for k, v in pairs(t) do
-      if type(v) == "table" then
-        str = str .. spacing .. tostring(k) .. ": " .. tostring(v) .. " {\n"
-        tableToStringHelper(v, spacing .. "  ")
-        str = str .. spacing .. "}\n"
-      else
-        str = str .. spacing .. tostring(k) .. ": " .. tostring(v) .. "\n"
-      end
+  local tableData = {"\n", n = 1}
+  tableToStringHelper(tableData, t, "")
+  return table.concat(tableData, "", 1, tableData.n)
+end
+tableToStringHelper = function(tableData, t, spacing)
+  -- Check if table already expanded.
+  if tableData[t] then
+    tableData.n = tableData.n + 1
+    tableData[tableData.n] = tostring(t) .. " (duplicate)\n"
+    return
+  end
+  tableData.n = tableData.n + 1
+  tableData[tableData.n] = tostring(t) .. " {\n"
+  tableData[t] = true
+  
+  -- Step through table keys/values (raw iteration) and add to tableData.
+  for k, v in next, t do
+    if type(k) == "string" then
+      k = string.format("%q", k):gsub("\\\n","\\n")
+    else
+      k = tostring(k)
+    end
+    if type(v) == "table" then
+      tableData.n = tableData.n + 1
+      tableData[tableData.n] = spacing .. "  " .. k .. " = "
+      tableToStringHelper(tableData, v, spacing .. "  ")
+    elseif type(v) == "string" then
+      tableData.n = tableData.n + 1
+      tableData[tableData.n] = spacing .. "  " .. k .. " = " .. string.format("%q", v):gsub("\\\n","\\n") .. "\n"
+    else
+      tableData.n = tableData.n + 1
+      tableData[tableData.n] = spacing .. "  " .. k .. " = " .. tostring(v) .. "\n"
     end
   end
-  
-  tableToStringHelper(t, "  ")
-  return str .. "}"
+  tableData.n = tableData.n + 1
+  tableData[tableData.n] = spacing .. "}\n"
 end
 
 
@@ -398,7 +418,7 @@ function dlog.out(subsystem, ...)
         varargs[i] = tostring(varargs[i])
       end
     end
-    local message = "dlog:" .. subsystem .. " " .. table.concat(varargs)
+    local message = "dlog:" .. subsystem .. " " .. table.concat(varargs, "", 1, varargs.n)
     if dlog.maxMessageLength and #message > dlog.maxMessageLength then
       message = string.sub(message, 1, dlog.maxMessageLength - 3) .. "..."
     end

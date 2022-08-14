@@ -548,7 +548,7 @@ end
 
 --- `mnet.receive(timeout: number[, connectionLostCallback: function]): nil |
 --   (string, number, string)`<br>
--- On embedded systems, pass an event (in a table) instead of timeout:<br>
+-- *On embedded systems, pass an event (in a table) instead of timeout:*<br>
 -- `mnet.receive(ev: table[, connectionLostCallback: function]): nil |
 --   (string, number, string)`
 -- 
