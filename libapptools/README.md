@@ -209,9 +209,9 @@ current subsystems table.
 
 `dlog.tableToString(t: table): string`
 
-Serializes a table to a string using a user-facing format. Handles nested
-tables, but doesn't currently behave with cycles. This is just a helper
-function for `dlog.out()`.
+Serializes a table to a string using a user-facing format. String keys/values
+in the table are escaped and enclosed in double quotes. Handles nested tables
+and tables with cycles. This is just a helper function for `dlog.out()`.
 
 `dlog.out(subsystem: string, ...)`
 
