@@ -138,6 +138,9 @@ disables everything). The mode is intended to be set once right after dlog is
 loaded in the main program, it can be changed at any time though. Returns the
 current mode.
 
+Note: when using debug mode with multiple threads, be careful to call this
+function in the right place (see warnings in `dlog.fileOutput()`).
+
 `dlog.xassert(v: boolean, ...): ...`<br>
 `xassert(v: boolean, ...): ...`
 
@@ -190,6 +193,10 @@ Open/close a file to output logging data to. If filename is provided then
 this file is opened (an empty string will close any opened one instead).
 Default mode is `a` to append to end of file. Returns the currently open file
 (or nil if closed).
+
+Note: keep in mind that Lua will close files automatically as part of garbage
+collection. If working with detached threads or processes, make sure your log
+file is open in the correct thread/process or it might close suddenly!
 
 `dlog.standardOutput([state: boolean]): boolean`
 
