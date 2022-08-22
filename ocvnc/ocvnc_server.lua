@@ -17,21 +17,24 @@ local event = require("event")
 local gpu = component.gpu
 local keyboard_c = component.keyboard
 local screen_c = component.screen
+local term = require("term")
 local thread = require("thread")
-local unicode = require("unicode")
 
 -- User libraries.
 local include = require("include")
-local app = include("app"):new()
 local dlog = include("dlog")
 dlog.mode("release")
+local app = include("app"):new()
 
 -- FIXME something bad happened here when running in the daemon, huh #####################################################################
 --app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
 
+local dcap = include("dcap")
 local mnet = include("mnet")
-local mrpc_server = include("mrpc").newServer(123)
+local mrpc_server = include("mrpc").newServer(530)
 mrpc_server.addDeclarations(dofile("/home/ocvnc/ocvnc_mrpc.lua"))
+
+local KEEPALIVE_INTERVAL = 35
 
 -- VncServer class definition.
 local VncServer = {}
@@ -51,11 +54,20 @@ function VncServer:new()
   self.activeClient = false
   self.gpuRealFuncs = false
   
-  self.bufferedCallQueue = {}
+  self.bufferedCallQueue = false
+  
+  --self.scheduleCursorDraw = false
   
   self.running = true
+  --term.setCursorBlink(false)
   
-  app:pushCleanupTask(VncServer.restoreOverrides, nil, {self})
+  app:pushCleanupTask(function()
+    if self.activeClient then
+      mrpc_server.async.server_disconnect(self.activeClient)
+    end
+    term.setCursorBlink(true)
+    self:restoreOverrides()
+  end)
   
   return self
 end
@@ -114,192 +126,199 @@ local gpuIgnoredCalls = {
 }
 
 
-function VncServer:onConnect(host)
+function VncServer:onClientConnect(host)
   
   assert(not self.activeClient)
   
   self.activeClient = host
+  self.bufferedCallQueue = {}
+  -- Disable cursor blinking. The blinking doesn't work very well because the constant network events reset blink timer.
   
   
   
-  local displayState = {}
-  displayState.depth = gpu.getDepth()
-  displayState.res = {gpu.getResolution()}
-  displayState.view = {gpu.getViewport()}
-  local palette = {}
-  for i = 1, 16 do
-    palette[i] = gpu.getPaletteColor(i - 1)
+  
+  
+  
+  
+  mrpc_server.async.redraw_display(host, dcap.captureDisplayState())
+  
+  local lastBg, lastBgPalette = gpu.getBackground()
+  local lastFg, lastFgPalette = gpu.getForeground()
+  local currentBg, currentBgPalette = gpu.getBackground()
+  local currentFg, currentFgPalette = gpu.getForeground()
+  
+  do
+    --local cx, cy = term.getCursor()
+    --local char, fg, bg, fgIndex, bgIndex = gpu.get(cx, cy)
+    --[[local lastCursor = false--[[{cx, cy, char,
+      bgIndex or bg, bgIndex and true or false,
+      fgIndex or fg, fgIndex and true or false
+    }--]]
   end
-  displayState.palette = palette
   
-  -- capture screen contents, maybe store in something like:
-  --[[
-  textTable: {
-    <bg>: {
-      <fg>: {
-        1: {
-          1: <x>
-          2: <y>
-          3: <string>
-        }
-        2: {
-          1: <x>
-          2: <y>
-          3: <string>
-        }
-        ...
-      }
-      ...
+  local lastCursor, cursorSuppressed
+  do
+    local cx, cy = term.getCursor()
+    local char, fg, bg, fgIndex, bgIndex = gpu.get(cx, cy)
+    lastCursor = {cx, cy, char,
+      bgIndex or bg, not not bgIndex,
+      fgIndex or fg, not not fgIndex
     }
-    ...
+    cursorSuppressed = false
+  end
+  
+  --[[
+  lastCursor = {
+    1: <x (number)>
+    2: <y (number)>
+    3: <char (string)>
+    4: <bg (number)>
+    5: <bgPalette (boolean)>
+    6: <fg (number)>
+    7: <fgPalette (boolean)>
   }
   --]]
   
-  
-  
-  -- alternative single array design for textBuffer:
-  -- {<entry>, ...}
-  -- entry types:
-  -- x: number[, y: number[, fg: number[, bg: number]]], str: string
-  -- ordered to minimize state changes of fg and bg
-  -- for fg and bg, negative values means palette index
-  
-  --[[
-  textBufferInflated: {
-    <bg>: {
-      <fg>: {
-        1: <x>
-        2: <y>
-        3: <line>
-        4: <x>
-        5: <y>
-        6: <line>
-        ...
-      }
-      ...
-    }
-    ...
-  }
-  
-  textBuffer: {
-    1: <x>
-    2: [<y>]
-    3: [<fg>]
-    4: [<bg>]
-    5: <line>
-    ...
-  }
-  --]]
-  
-  local textBufferInflated = setmetatable({}, {
-    __index = function(t, k)
-      t[k] = setmetatable({}, {
-        __index = function(t2, k2)
-          t2[k2] = {}
-          return t2[k2]
-        end
-      })
-      return t[k]
+  local function addCursorDraw(x, y, str, bg, bgPalette, fg, fgPalette)
+    if lastBg ~= bg or lastBgPalette ~= bgPalette then
+      self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setBackground", bg, bgPalette, n = 3}
+      lastBg = bg
+      lastBgPalette = bgPalette
     end
-  })
+    if lastFg ~= fg or lastFgPalette ~= fgPalette then
+      self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setForeground", fg, fgPalette, n = 3}
+      lastFg = fg
+      lastFgPalette = fgPalette
+    end
+    self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"set", x, y, str, n = 4}
+  end
   
-  -- Scan each character in the screen buffer row-by-row, and insert them into the textBufferInflated. Any white-on-black text that is a contiguous line of spaces is simply discarded to optimize.
-  local foundWBNonSpace = false
-  local width, height = gpu.getResolution()
-  for y = 1, height do
-    local x = 1
-    while x <= width do
-      local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
-      fg = math.floor(fgIndex and -fgIndex - 1 or fg)
-      bg = math.floor(bgIndex and -bgIndex - 1 or bg)
+  -- FIXME rename to cursor flush or something? #######################################
+  local function scheduleCursorDraw()
+    --[[local char, fg, bg, fgIndex, bgIndex = gpu.get(lastCursor[1], lastCursor[2])
+    bg = bgIndex or bg
+    bgIndex = bgIndex and true or false
+    fg = fgIndex or fg
+    fgIndex = fgIndex and true or false
+    
+    -- Return early if no change to cursor.
+    if char == lastCursor[3] and bg == lastCursor[4] and bgIndex == lastCursor[5] and fg == lastCursor[6] and fgIndex == lastCursor[7] then
+      return
+    end
+    
+    -- Add calls to set background, foreground, and cursor character to the queue.
+    if lastBg ~= bg or lastBgPalette ~= bgIndex then
+      self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setBackground", bg, bgIndex, n = 3}
+      lastBg = bg
+      lastBgPalette = bgIndex
+    end
+    if lastFg ~= fg or lastFgPalette ~= fgIndex then
+      self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setForeground", fg, fgIndex, n = 3}
+      lastFg = fg
+      lastFgPalette = fgIndex
+    end
+    self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"set", lastCursor[1], lastCursor[2], char, n = 4}
+    lastCursor[3] = char
+    lastCursor[4] = bg
+    lastCursor[5] = bgIndex
+    lastCursor[6] = fg
+    lastCursor[7] = fgIndex--]]
+    
+    if cursorSuppressed then
+      local char, fg, bg, fgIndex, bgIndex = gpu.get(lastCursor[1], lastCursor[2])
+      bg = bgIndex or bg
+      bgIndex = not not bgIndex
+      fg = fgIndex or fg
+      fgIndex = not not fgIndex
       
-      local colorWB = (fg == 0xFFFFFF and bg == 0x0)
-      
-      if not colorWB or char ~= " " or foundWBNonSpace then
-        local lineGroup = textBufferInflated[bg][fg]
-        local lineGroupSize = #lineGroup
-        
-        -- Add the character to the last line if the y and x position line up (considering the true length in characters in case we have unicode ones).
-        if lineGroup[lineGroupSize - 1] == y and lineGroup[lineGroupSize - 2] + unicode.wlen(lineGroup[lineGroupSize]) == x then
-          if char ~= " " and colorWB then
-            foundWBNonSpace = true
-          end
-          lineGroup[lineGroupSize] = lineGroup[lineGroupSize] .. char
-        else
-          if foundWBNonSpace then
-            local lineGroupWB = textBufferInflated[0x0][0xFFFFFF]
-            lineGroupWB[#lineGroupWB] = string.match(lineGroupWB[#lineGroupWB], "(.-) *$")
-            foundWBNonSpace = false
-          end
-          if char ~= " " or not colorWB then
-            lineGroup[lineGroupSize + 1] = x
-            lineGroup[lineGroupSize + 2] = y
-            lineGroup[lineGroupSize + 3] = char
-          end
-        end
-        x = x + unicode.wlen(char)
-      else
-        x = x + 1
+      if char ~= lastCursor[3] or bg ~= lastCursor[4] or bgIndex ~= lastCursor[5] or fg ~= lastCursor[6] or fgIndex ~= lastCursor[7] then
+        addCursorDraw(lastCursor[1], lastCursor[2], char, bg, bgIndex, fg, fgIndex)
+        lastCursor[3] = char
+        lastCursor[4] = bg
+        lastCursor[5] = bgIndex
+        lastCursor[6] = fg
+        lastCursor[7] = fgIndex
       end
+      cursorSuppressed = false
     end
   end
-  if foundWBNonSpace then
-    local lineGroupWB = textBufferInflated[0x0][0xFFFFFF]
-    lineGroupWB[#lineGroupWB] = string.match(lineGroupWB[#lineGroupWB], "(.-) *$")
-  end
-  
-  local textBuffer = {}
-  local textBufferSize = 0
-  local lineOffset
-  for bg, fgGroup in pairs(textBufferInflated) do
-    -- Add bg color (color changed).
-    textBuffer[textBufferSize + 4] = bg
-    lineOffset = 5
-    for fg, lineGroup in pairs(fgGroup) do
-      -- Add fg color (color changed).
-      textBuffer[textBufferSize + 3] = fg
-      lineOffset = math.max(lineOffset, 4)
-      
-      local lastY
-      
-      for i = 1, #lineGroup, 3 do
-        -- Add x position.
-        textBuffer[textBufferSize + 1] = lineGroup[i]
-        -- Add y position if it changed.
-        if lineGroup[i + 1] ~= lastY then
-          lastY = lineGroup[i + 1]
-          textBuffer[textBufferSize + 2] = lastY
-          lineOffset = math.max(lineOffset, 3)
-        end
-        -- Add the line to the end.
-        textBufferSize = textBufferSize + lineOffset
-        textBuffer[textBufferSize] = lineGroup[i + 2]
-        lineOffset = 2
-      end
-    end
-  end
-  
-  
-  displayState.textBufferInflated = textBufferInflated
-  displayState.textBuffer = textBuffer
-  
-  
-  local c, i = gpu.getBackground()
-  displayState.bg = i and -c - 1 or c
-  c, i = gpu.getForeground()
-  displayState.fg = i and -c - 1 or c
-  
-  
-  mrpc_server.async.redraw_display(host, displayState)
+  self.scheduleCursorDraw = scheduleCursorDraw
   
   local gpuRealFuncs = {}
   self.gpuRealFuncs = gpuRealFuncs
   for k, v in pairs(gpu) do
     if gpuTrackedCalls[k] then
       gpuRealFuncs[k] = v
-      gpu[k] = function(...)
-        self.bufferedCallQueue[#self.bufferedCallQueue + 1] = table.pack(k, ...)
-        return v(...)
+      if k == "setBackground" then
+        gpu[k] = function(...)
+          currentBg, currentBgPalette = ...
+          return v(...)
+        end
+      elseif k == "setForeground" then
+        gpu[k] = function(...)
+          currentFg, currentFgPalette = ...
+          return v(...)
+        end
+      else
+        gpu[k] = function(...)
+          if k == "set" then
+            local x, y, str = ...
+            local cx, cy = term.getCursor()
+            if x == cx and y == cy and #str == 1 then
+              --[[
+              -- Redraw the cursor if it moved, then capture the new cursor state.
+              if lastCursor[1] ~= x or lastCursor[2] ~= y then
+                scheduleCursorDraw()
+                local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
+                lastCursor = {x, y, char,
+                  bgIndex or bg, bgIndex and true or false,
+                  fgIndex or fg, fgIndex and true or false
+                }
+              end
+              --currentCursor = {x, y, str,
+                --currentBg, currentBgPalette,
+                --currentFg, currentFgPalette
+              --}
+              --]]
+              
+              if lastCursor[1] ~= x or lastCursor[2] ~= y then
+                if cursorSuppressed then
+                  local char, fg, bg, fgIndex, bgIndex = gpu.get(lastCursor[1], lastCursor[2])
+                  addCursorDraw(lastCursor[1], lastCursor[2], char, bgIndex or bg, not not bgIndex, fgIndex or fg, not not fgIndex)
+                end
+                local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
+                lastCursor = {x, y, char,
+                  bgIndex or bg, not not bgIndex,
+                  fgIndex or fg, not not fgIndex
+                }
+              end
+              cursorSuppressed = true
+              
+              return v(...)
+            end
+          end
+          --[[if k == "set" and #select(3, ...) == 1 then
+            -- Ignore a call to gpu.set() that would write a single character where the character and colors at that position on screen are the exact same.
+            -- This fixes some problems with the cursor spamming draw calls every time an event is pulled.
+            local x, y, str = ...
+            local lastStr, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
+            if str == lastStr and currentBg == (bgIndex or bg) and currentBgPalette == (not not bgIndex) and currentFg == (fgIndex or fg) and currentFgPalette == (not not fgIndex) then
+              return v(...)
+            end
+          end--]]
+          if currentBg ~= lastBg or currentBgPalette ~= lastBgPalette then
+            self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setBackground", currentBg, currentBgPalette, n = 3}
+            lastBg = currentBg
+            lastBgPalette = currentBgPalette
+          end
+          if currentFg ~= lastFg or currentFgPalette ~= lastFgPalette then
+            self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setForeground", currentFg, currentFgPalette, n = 3}
+            lastFg = currentFg
+            lastFgPalette = currentFgPalette
+          end
+          self.bufferedCallQueue[#self.bufferedCallQueue + 1] = table.pack(k, ...)
+          return v(...)
+        end
       end
     elseif not gpuIgnoredCalls[k] then
       --print("unknown gpu key ", k)
@@ -312,7 +331,7 @@ function VncServer:onConnect(host)
   --gpu.setForeground(8, true)
   --print("two")
 end
-mrpc_server.functions.connect = VncServer.onConnect
+mrpc_server.functions.client_connect = VncServer.onClientConnect
 
 
 local trackedScreenEvents = {
@@ -328,7 +347,7 @@ local trackedKeyboardEvents = {
   clipboard = true
 }
 
-function VncServer:onClientEvent(host, bufferedEvents)
+function VncServer:onClientEvents(host, bufferedEvents)
   for i, v in ipairs(bufferedEvents) do
     --print(i, table.unpack(v))
     if trackedScreenEvents[v[1]] then
@@ -339,7 +358,15 @@ function VncServer:onClientEvent(host, bufferedEvents)
     computer.pushSignal(table.unpack(v))
   end
 end
-mrpc_server.functions.client_event = VncServer.onClientEvent
+mrpc_server.functions.client_events = VncServer.onClientEvents
+
+
+function VncServer:onClientDisconnect(host)
+  mrpc_server.async.server_disconnect(self.activeClient)
+  self.activeClient = false
+  self:restoreOverrides()
+end
+mrpc_server.functions.client_disconnect = VncServer.onClientDisconnect
 
 
 function VncServer:mainThreadFunc()
@@ -347,11 +374,20 @@ function VncServer:mainThreadFunc()
   while self.running do
     local host, port, message = mnet.receive(0.1)
     mrpc_server.handleMessage(self, host, port, message)
-    if self.activeClient and self.bufferedCallQueue[1] and computer.uptime() >= nextBufferedCallTime then
-      nextBufferedCallTime = computer.uptime() + 0.2
-      local bufferedCalls = self.bufferedCallQueue
-      self.bufferedCallQueue = {}
-      mrpc_server.async.update_display(self.activeClient, bufferedCalls)
+    
+    if self.activeClient then
+      --term.setCursorBlink(false)
+      if computer.uptime() >= nextBufferedCallTime then
+        self.scheduleCursorDraw()
+        if self.bufferedCallQueue[1] then
+          nextBufferedCallTime = computer.uptime() + 0.2
+          local bufferedCalls = self.bufferedCallQueue
+          self.bufferedCallQueue = {}
+          mrpc_server.async.update_display(self.activeClient, bufferedCalls)
+        end
+      end
+    else
+      --term.setCursorBlink(true)
     end
   end
   app:threadDone()
@@ -359,9 +395,17 @@ end
 
 
 function VncServer:start()
+  term.setCursorBlink(false)
+  
+  
+  
+  
+  
   app:createThread("Main", VncServer.mainThreadFunc, self)
   app:waitAnyThreads()
   app:exit()
+  
+  -- FIXME should this use app:run() instead? why even bother to run main in another thread ######################################################################
 end
 
 

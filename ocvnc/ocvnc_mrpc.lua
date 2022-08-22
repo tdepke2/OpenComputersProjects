@@ -4,7 +4,7 @@ Function declarations for ocvnc remote procedure calls.
 
 return {
   -- Client request to start VNC session with a server.
-  connect = {
+  client_connect = {
   },
   -- 
   redraw_display = {
@@ -12,6 +12,12 @@ return {
   -- 
   update_display = {
   },
-  client_event = {
+  client_events = {
+  },
+  client_disconnect = {
+  },
+  server_disconnect = {
+  },
+  keepalive = {
   },
 }
