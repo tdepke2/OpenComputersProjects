@@ -414,3 +414,15 @@ function VncServer:stop()
 end
 
 return VncServer
+
+--[[
+
+cursor stuff not going to work (try `man man`, the less preview throws set and fill calls which have no effect)
+new idea: passive double buffer
+this also needs to be an option feature, maybe just enabled with a constant in the code
+
+create two screen buffers (3 tables each), init with calls from dcap.capture
+gpu calls write to the top buffer, we track the largest rectangular area that the calls modify?
+when ready to send, check if changes actually happened. if not then clear all buffered calls. swap buffers
+
+--]]
