@@ -34,6 +34,8 @@ local mnet = include("mnet")
 local mrpc_server = include("mrpc").newServer(530)
 mrpc_server.addDeclarations(dofile("/home/ocvnc/ocvnc_mrpc.lua"))
 
+local PREVENT_CURSOR_BLINK = true
+local ENABLE_PASSIVE_BUFFER = true
 local KEEPALIVE_INTERVAL = 35
 
 -- VncServer class definition.
@@ -56,16 +58,21 @@ function VncServer:new()
   
   self.bufferedCallQueue = false
   
-  --self.scheduleCursorDraw = false
-  
   self.running = true
-  --term.setCursorBlink(false)
+  
+  -- Disable cursor blinking. The blinking doesn't work very well because the constant network events reset blink timer.
+  -- It would be ideal to only turn off blinking when a client connects, but it seems like term.setCursorBlink() only has an effect when run in a foreground process.
+  if PREVENT_CURSOR_BLINK then
+    term.setCursorBlink(false)
+  end
   
   app:pushCleanupTask(function()
     if self.activeClient then
       mrpc_server.async.server_disconnect(self.activeClient)
     end
-    term.setCursorBlink(true)
+    if PREVENT_CURSOR_BLINK then
+      term.setCursorBlink(true)
+    end
     self:restoreOverrides()
   end)
   
@@ -132,190 +139,30 @@ function VncServer:onClientConnect(host)
   
   self.activeClient = host
   self.bufferedCallQueue = {}
-  -- Disable cursor blinking. The blinking doesn't work very well because the constant network events reset blink timer.
-  
-  
-  
-  
-  
-  
   
   mrpc_server.async.redraw_display(host, dcap.captureDisplayState())
   
-  local lastBg, lastBgPalette = gpu.getBackground()
-  local lastFg, lastFgPalette = gpu.getForeground()
-  local currentBg, currentBgPalette = gpu.getBackground()
-  local currentFg, currentFgPalette = gpu.getForeground()
-  
-  do
-    --local cx, cy = term.getCursor()
-    --local char, fg, bg, fgIndex, bgIndex = gpu.get(cx, cy)
-    --[[local lastCursor = false--[[{cx, cy, char,
-      bgIndex or bg, bgIndex and true or false,
-      fgIndex or fg, fgIndex and true or false
-    }--]]
+  local gpuPreCallbacks
+  if ENABLE_PASSIVE_BUFFER then
+    gpuPreCallbacks = dcap.setupFramebuffers()
+  else
+    gpuPreCallbacks = {}
   end
-  
-  local lastCursor, cursorSuppressed
-  do
-    local cx, cy = term.getCursor()
-    local char, fg, bg, fgIndex, bgIndex = gpu.get(cx, cy)
-    lastCursor = {cx, cy, char,
-      bgIndex or bg, not not bgIndex,
-      fgIndex or fg, not not fgIndex
-    }
-    cursorSuppressed = false
-  end
-  
-  --[[
-  lastCursor = {
-    1: <x (number)>
-    2: <y (number)>
-    3: <char (string)>
-    4: <bg (number)>
-    5: <bgPalette (boolean)>
-    6: <fg (number)>
-    7: <fgPalette (boolean)>
-  }
-  --]]
-  
-  local function addCursorDraw(x, y, str, bg, bgPalette, fg, fgPalette)
-    if lastBg ~= bg or lastBgPalette ~= bgPalette then
-      self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setBackground", bg, bgPalette, n = 3}
-      lastBg = bg
-      lastBgPalette = bgPalette
-    end
-    if lastFg ~= fg or lastFgPalette ~= fgPalette then
-      self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setForeground", fg, fgPalette, n = 3}
-      lastFg = fg
-      lastFgPalette = fgPalette
-    end
-    self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"set", x, y, str, n = 4}
-  end
-  
-  -- FIXME rename to cursor flush or something? #######################################
-  local function scheduleCursorDraw()
-    --[[local char, fg, bg, fgIndex, bgIndex = gpu.get(lastCursor[1], lastCursor[2])
-    bg = bgIndex or bg
-    bgIndex = bgIndex and true or false
-    fg = fgIndex or fg
-    fgIndex = fgIndex and true or false
-    
-    -- Return early if no change to cursor.
-    if char == lastCursor[3] and bg == lastCursor[4] and bgIndex == lastCursor[5] and fg == lastCursor[6] and fgIndex == lastCursor[7] then
-      return
-    end
-    
-    -- Add calls to set background, foreground, and cursor character to the queue.
-    if lastBg ~= bg or lastBgPalette ~= bgIndex then
-      self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setBackground", bg, bgIndex, n = 3}
-      lastBg = bg
-      lastBgPalette = bgIndex
-    end
-    if lastFg ~= fg or lastFgPalette ~= fgIndex then
-      self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setForeground", fg, fgIndex, n = 3}
-      lastFg = fg
-      lastFgPalette = fgIndex
-    end
-    self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"set", lastCursor[1], lastCursor[2], char, n = 4}
-    lastCursor[3] = char
-    lastCursor[4] = bg
-    lastCursor[5] = bgIndex
-    lastCursor[6] = fg
-    lastCursor[7] = fgIndex--]]
-    
-    if cursorSuppressed then
-      local char, fg, bg, fgIndex, bgIndex = gpu.get(lastCursor[1], lastCursor[2])
-      bg = bgIndex or bg
-      bgIndex = not not bgIndex
-      fg = fgIndex or fg
-      fgIndex = not not fgIndex
-      
-      if char ~= lastCursor[3] or bg ~= lastCursor[4] or bgIndex ~= lastCursor[5] or fg ~= lastCursor[6] or fgIndex ~= lastCursor[7] then
-        addCursorDraw(lastCursor[1], lastCursor[2], char, bg, bgIndex, fg, fgIndex)
-        lastCursor[3] = char
-        lastCursor[4] = bg
-        lastCursor[5] = bgIndex
-        lastCursor[6] = fg
-        lastCursor[7] = fgIndex
-      end
-      cursorSuppressed = false
-    end
-  end
-  self.scheduleCursorDraw = scheduleCursorDraw
   
   local gpuRealFuncs = {}
   self.gpuRealFuncs = gpuRealFuncs
   for k, v in pairs(gpu) do
     if gpuTrackedCalls[k] then
       gpuRealFuncs[k] = v
-      if k == "setBackground" then
+      local preCallback = gpuPreCallbacks[k]
+      if preCallback then
         gpu[k] = function(...)
-          currentBg, currentBgPalette = ...
-          return v(...)
-        end
-      elseif k == "setForeground" then
-        gpu[k] = function(...)
-          currentFg, currentFgPalette = ...
+          preCallback(...)
+          self.bufferedCallQueue[#self.bufferedCallQueue + 1] = table.pack(k, ...)
           return v(...)
         end
       else
         gpu[k] = function(...)
-          if k == "set" then
-            local x, y, str = ...
-            local cx, cy = term.getCursor()
-            if x == cx and y == cy and #str == 1 then
-              --[[
-              -- Redraw the cursor if it moved, then capture the new cursor state.
-              if lastCursor[1] ~= x or lastCursor[2] ~= y then
-                scheduleCursorDraw()
-                local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
-                lastCursor = {x, y, char,
-                  bgIndex or bg, bgIndex and true or false,
-                  fgIndex or fg, fgIndex and true or false
-                }
-              end
-              --currentCursor = {x, y, str,
-                --currentBg, currentBgPalette,
-                --currentFg, currentFgPalette
-              --}
-              --]]
-              
-              if lastCursor[1] ~= x or lastCursor[2] ~= y then
-                if cursorSuppressed then
-                  local char, fg, bg, fgIndex, bgIndex = gpu.get(lastCursor[1], lastCursor[2])
-                  addCursorDraw(lastCursor[1], lastCursor[2], char, bgIndex or bg, not not bgIndex, fgIndex or fg, not not fgIndex)
-                end
-                local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
-                lastCursor = {x, y, char,
-                  bgIndex or bg, not not bgIndex,
-                  fgIndex or fg, not not fgIndex
-                }
-              end
-              cursorSuppressed = true
-              
-              return v(...)
-            end
-          end
-          --[[if k == "set" and #select(3, ...) == 1 then
-            -- Ignore a call to gpu.set() that would write a single character where the character and colors at that position on screen are the exact same.
-            -- This fixes some problems with the cursor spamming draw calls every time an event is pulled.
-            local x, y, str = ...
-            local lastStr, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
-            if str == lastStr and currentBg == (bgIndex or bg) and currentBgPalette == (not not bgIndex) and currentFg == (fgIndex or fg) and currentFgPalette == (not not fgIndex) then
-              return v(...)
-            end
-          end--]]
-          if currentBg ~= lastBg or currentBgPalette ~= lastBgPalette then
-            self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setBackground", currentBg, currentBgPalette, n = 3}
-            lastBg = currentBg
-            lastBgPalette = currentBgPalette
-          end
-          if currentFg ~= lastFg or currentFgPalette ~= lastFgPalette then
-            self.bufferedCallQueue[#self.bufferedCallQueue + 1] = {"setForeground", currentFg, currentFgPalette, n = 3}
-            lastFg = currentFg
-            lastFgPalette = currentFgPalette
-          end
           self.bufferedCallQueue[#self.bufferedCallQueue + 1] = table.pack(k, ...)
           return v(...)
         end
@@ -376,18 +223,20 @@ function VncServer:mainThreadFunc()
     mrpc_server.handleMessage(self, host, port, message)
     
     if self.activeClient then
-      --term.setCursorBlink(false)
-      if computer.uptime() >= nextBufferedCallTime then
-        self.scheduleCursorDraw()
-        if self.bufferedCallQueue[1] then
+      if computer.uptime() >= nextBufferedCallTime and self.bufferedCallQueue[1] then
+        if not ENABLE_PASSIVE_BUFFER or dcap.checkFramebufferUpdate() then
           nextBufferedCallTime = computer.uptime() + 0.2
           local bufferedCalls = self.bufferedCallQueue
           self.bufferedCallQueue = {}
           mrpc_server.async.update_display(self.activeClient, bufferedCalls)
+        else
+          nextBufferedCallTime = computer.uptime() + 0.2
+          self.bufferedCallQueue = {}
+        end
+        if ENABLE_PASSIVE_BUFFER then
+          dcap.swapFramebuffers()
         end
       end
-    else
-      --term.setCursorBlink(true)
     end
   end
   app:threadDone()
@@ -395,12 +244,6 @@ end
 
 
 function VncServer:start()
-  term.setCursorBlink(false)
-  
-  
-  
-  
-  
   app:createThread("Main", VncServer.mainThreadFunc, self)
   app:waitAnyThreads()
   app:exit()
@@ -414,15 +257,3 @@ function VncServer:stop()
 end
 
 return VncServer
-
---[[
-
-cursor stuff not going to work (try `man man`, the less preview throws set and fill calls which have no effect)
-new idea: passive double buffer
-this also needs to be an option feature, maybe just enabled with a constant in the code
-
-create two screen buffers (3 tables each), init with calls from dcap.capture
-gpu calls write to the top buffer, we track the largest rectangular area that the calls modify?
-when ready to send, check if changes actually happened. if not then clear all buffered calls. swap buffers
-
---]]

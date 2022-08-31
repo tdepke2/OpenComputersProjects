@@ -6,12 +6,12 @@ local term = require("term")
 local unicode = require("unicode")
 
 local dcap = {}
-
+--[[
 local dlog = require("dlog")
 dlog.fileOutput("/home/messages", "w")
 dlog.mode("debug")
 dlog.standardOutput(false)
-
+--]]
 
 -- 
 function dcap.onComponentRemoved()
@@ -205,10 +205,8 @@ function dcap.captureDisplayState()
   displayState.textBuffer = textBuffer
   
   displayState.cursor = {term.getCursor()}
-  local c, i = gpu.getBackground()
-  displayState.bg = i and -c - 1 or c
-  c, i = gpu.getForeground()
-  displayState.fg = i and -c - 1 or c
+  displayState.bg = dcap.getBackground()
+  displayState.fg = dcap.getForeground()
   
   return displayState
 end
@@ -265,85 +263,10 @@ local currentBg, currentFg
 local lastFrameChars, lastFrameBgs, lastFrameFgs
 local currentFrameChars, currentFrameBgs, currentFrameFgs
 local minBoundsX, minBoundsY, maxBoundsX, maxBoundsY
+local forceUpdated
 
 
--- component.gpu.setForeground(5, true) component.gpu.set(4, 1, "@") component.gpu.setBackground(0, true) component.gpu.set(9, 2, "#")
-function dcap.syncFramebuffers()
-  lastFrameChars = {}
-  lastFrameBgs = {}
-  lastFrameFgs = {}
-  currentFrameChars = {}
-  currentFrameBgs = {}
-  currentFrameFgs = {}
-  
-  for y = 1, resolutionY do
-    for x = 1, resolutionX do
-      local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
-      local i = (y - 1) * resolutionX + x
-      lastFrameChars[i] = char
-      currentFrameChars[i] = char
-      lastFrameBgs[i] = bgIndex and -bgIndex - 1 or bg
-      currentFrameBgs[i] = bgIndex and -bgIndex - 1 or bg
-      lastFrameFgs[i] = fgIndex and -fgIndex - 1 or fg
-      currentFrameFgs[i] = fgIndex and -fgIndex - 1 or fg
-    end
-  end
-  
-  --dlog.out("deez", "nuts")
-  --dlog.out("stuff1", lastFrameChars)
-  --dlog.out("stuff2", lastFrameBgs)
-  --dlog.out("stuff3", lastFrameFgs)
-  
-  -- idea: what if we skip capturing the whole frame and only capture parts on screen before they get drawn?
-  -- the current frame is created as a new table each time, last frame has a metatable to lookup old pixels, we still swap at the end.
-  -- also still store the bounding rectangle area.
-end
---dcap.syncFramebuffers()
-
-function dcap.setupFramebuffers()
-  resolutionX, resolutionY = gpu.getResolution()
-  currentBg = dcap.getBackground()
-  currentFg = dcap.getForeground()
-  
-  minBoundsX = resolutionX + 1
-  minBoundsY = resolutionY + 1
-  maxBoundsX = 0
-  maxBoundsY = 0
-  
-  lastFrameChars = setmetatable({}, {
-    __index = function(t, k)
-      local y = math.floor((k - 1) / resolutionX) + 1
-      local x = k - (y - 1) * resolutionX
-      local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
-      t[k] = char
-      lastFrameBgs[k] = bgIndex and -bgIndex - 1 or bg
-      lastFrameFgs[k] = fgIndex and -fgIndex - 1 or fg
-    end
-  })
-  lastFrameBgs = {}
-  lastFrameFgs = {}
-  
-  currentFrameChars = {}
-  currentFrameBgs = {}
-  currentFrameFgs = {}
-end
-
-function dcap.scanFramebufferChanges()
-  for y = minBoundsY, maxBoundsY do
-    local i = (y - 1) * resolutionX + minBoundsX
-    for x = minBoundsX, maxBoundsX do
-      if currentFrameChars[i] and (currentFrameChars[i] ~= lastFrameChars[i] or currentFrameBgs[i] ~= lastFrameBgs[i] or currentFrameFgs[i] ~= lastFrameFgs[i]) then
-        return x, y
-      end
-      i = i + 1
-    end
-  end
-end
-
-function dcap.logState()
-  local outFile = io.open("/home/dcap_state.txt", "w")
-  assert(outFile)
-  
+function dcap.logState(outFile)
   local function drawCharGrid(arr)
     outFile:write("    ")
     for x = 1, resolutionX do
@@ -369,44 +292,83 @@ function dcap.logState()
     end
   end
   
+  local function drawColorGrid(arr)
+    outFile:write("    ")
+    for x = 1, resolutionX do
+      outFile:write(x > 9 and tostring(math.floor(x / 10) % 10) or " ")
+    end
+    outFile:write("\n    ")
+    for x = 1, resolutionX do
+      outFile:write(string.format("%d", x % 10))
+    end
+    outFile:write("\n")
+    local i = 1
+    for y = 1, resolutionY do
+      outFile:write(string.format("%3d ", y))
+      for x = 1, resolutionX do
+        if arr[i] and arr[i] < 0 then
+          outFile:write(math.floor(-arr[i]) % 10)
+        elseif arr[i] == 0x000000 then
+          outFile:write("b")
+        elseif arr[i] == 0xFFFFFF then
+          outFile:write("w")
+        else
+          outFile:write(arr[i] and "x" or ".")
+        end
+        i = i + 1
+      end
+      outFile:write("\n")
+    end
+  end
+  
   outFile:write("lastFrameChars:\n")
+  local cachedMeta = getmetatable(lastFrameChars)
   setmetatable(lastFrameChars, nil)
   drawCharGrid(lastFrameChars)
-  
-  outFile:write("\ncurrentFrameChars:\n")
+  drawColorGrid(lastFrameBgs)
+  drawColorGrid(lastFrameFgs)
+  outFile:write("\n\ncurrentFrameChars:\n")
   drawCharGrid(currentFrameChars)
+  drawColorGrid(currentFrameBgs)
+  drawColorGrid(currentFrameFgs)
+  setmetatable(lastFrameChars, cachedMeta)
   
   outFile:write("\nminBounds (", minBoundsX, ", ", minBoundsY, ")\n")
   outFile:write("\nmaxBounds (", maxBoundsX, ", ", maxBoundsY, ")\n")
-  local x, y = dcap.scanFramebufferChanges()
-  outFile:write("\nscanFramebufferChanges() = ", tostring(x), ", ", tostring(y), "\n")
-  
-  outFile:close()
+  local x, y = dcap.checkFramebufferUpdate()
+  outFile:write("\ncheckFramebufferUpdate() = ", tostring(x), ", ", tostring(y), "\n")
 end
 
 
 
 
-
-
-
+local function forceFramebufferUpdate()
+  if next(lastFrameChars) ~= nil then
+    lastFrameChars = setmetatable({}, getmetatable(lastFrameChars))
+    lastFrameBgs = {}
+    lastFrameFgs = {}
+  end
+  if next(currentFrameChars) ~= nil then
+    currentFrameChars = {}
+    currentFrameBgs = {}
+    currentFrameFgs = {}
+  end
+  
+  forceUpdated = true
+end
 local function onGpuSetBackground(color, isPaletteIndex)
   currentBg = isPaletteIndex and -color - 1 or color
 end
 local function onGpuSetForeground(color, isPaletteIndex)
   currentFg = isPaletteIndex and -color - 1 or color
 end
---local function onGpuSetPaletteColor()
-
---end
-local function onGpuSetDepth()
-
-end
-local function onGpuSetResolution()
-
-end
-local function onGpuSetViewport()
-
+local function onGpuSetResolution(width, height)
+  local maxWidth, maxHeight = gpu.maxResolution()
+  if width > 0 and width < maxWidth and height > 0 and height < maxHeight and (width ~= resolutionX or height ~= resolutionY) then
+    resolutionX = width
+    resolutionY = height
+    forceFramebufferUpdate()
+  end
 end
 local function onGpuSet(x, y, value, vertical)
   --[[if 
@@ -594,23 +556,91 @@ local function onGpuFill(x, y, width, height, char)
 end
 
 
-local gpuRealFuncs
-function dcap.debugBind()
-  dcap.setupFramebuffers()
-  local gpuCallbacks = {
+function dcap.setupFramebuffers()
+  resolutionX, resolutionY = gpu.getResolution()
+  currentBg = dcap.getBackground()
+  currentFg = dcap.getForeground()
+  
+  lastFrameChars = setmetatable({}, {
+    __index = function(t, k)
+      local y = math.floor((k - 1) / resolutionX) + 1
+      local x = k - (y - 1) * resolutionX
+      local char, fg, bg, fgIndex, bgIndex = gpu.get(x, y)
+      t[k] = char
+      lastFrameBgs[k] = bgIndex and -bgIndex - 1 or bg
+      lastFrameFgs[k] = fgIndex and -fgIndex - 1 or fg
+    end
+  })
+  lastFrameBgs = {}
+  lastFrameFgs = {}
+  
+  currentFrameChars = {}
+  currentFrameBgs = {}
+  currentFrameFgs = {}
+  
+  minBoundsX = resolutionX + 1
+  minBoundsY = resolutionY + 1
+  maxBoundsX = 0
+  maxBoundsY = 0
+  
+  forceUpdated = false
+  
+  local gpuPreCallbacks = {
     setBackground = onGpuSetBackground,
     setForeground = onGpuSetForeground,
-    setDepth = onGpuSetDepth,
+    setPaletteColor = forceFramebufferUpdate,
+    setDepth = forceFramebufferUpdate,
     setResolution = onGpuSetResolution,
-    setViewport = onGpuSetViewport,
+    setViewport = forceFramebufferUpdate,
     set = onGpuSet,
     copy = onGpuCopy,
     fill = onGpuFill,
   }
+  return gpuPreCallbacks
+end
+
+function dcap.checkFramebufferUpdate()
+  if forceUpdated then
+    return true
+  end
+  for y = minBoundsY, maxBoundsY do
+    local i = (y - 1) * resolutionX + minBoundsX
+    for x = minBoundsX, maxBoundsX do
+      if currentFrameChars[i] and (currentFrameChars[i] ~= lastFrameChars[i] or currentFrameBgs[i] ~= lastFrameBgs[i] or currentFrameFgs[i] ~= lastFrameFgs[i]) then
+        return x, y
+      end
+      i = i + 1
+    end
+  end
+end
+
+function dcap.swapFramebuffers()
+  if next(currentFrameChars) ~= nil or next(lastFrameChars) ~= nil then
+    lastFrameChars = setmetatable(currentFrameChars, getmetatable(lastFrameChars))
+    lastFrameBgs = currentFrameBgs
+    lastFrameFgs = currentFrameFgs
+    
+    currentFrameChars = {}
+    currentFrameBgs = {}
+    currentFrameFgs = {}
+  end
+  
+  minBoundsX = resolutionX + 1
+  minBoundsY = resolutionY + 1
+  maxBoundsX = 0
+  maxBoundsY = 0
+  
+  forceUpdated = false
+end
+
+
+local gpuRealFuncs
+function dcap.debugBind()
+  local gpuPreCallbacks = dcap.setupFramebuffers()
   
   gpuRealFuncs = {}
   for k, v in pairs(gpu) do
-    local gpuCallback = gpuCallbacks[k]
+    local gpuCallback = gpuPreCallbacks[k]
     if gpuCallback then
       gpuRealFuncs[k] = v
       gpu[k] = function(...)
@@ -629,6 +659,17 @@ function dcap.debugUnbind()
   gpuRealFuncs = nil
 end
 
+
+
+-- left to test:
+-- swapping buffers - done
+-- color change - done
+-- depth/viewport change - done
+
+
+--[[
+local outFile = io.open("/home/dcap_state.txt", "w")
+assert(outFile)
 dlog.out("start")
 dcap.debugBind()
 --gpu.set(1, 1, "hello world!")
@@ -643,9 +684,23 @@ gpu.set(4, 7, "EFGHIJKLMN")
 gpu.set(4, 8, "OPQRSTUVWX")
 --gpu.copy(4, 3, 10, 6, 47, 155)
 --gpu.copy(4, 3, 10, 6, 150, 45)
-gpu.fill(160, 50, 1, 0, "x")
-dcap.logState()
+gpu.setForeground(0, true)
+gpu.setBackground(7, true)
+gpu.fill(159, 49, 3, 4, "x")
+gpu.setBackground(0)
+gpu.setForeground(0xFFFFFF)
+dcap.logState(outFile)
+dcap.swapFramebuffers()
+gpu.copy(4, 3, 10, 6, 150, 45)
+dcap.logState(outFile)
+dcap.swapFramebuffers()
+gpu.setForeground(0xFF0000)
+gpu.set(4, 3, "ab")
+--gpu.setViewport(160, 50)
+dcap.logState(outFile)
+dcap.swapFramebuffers()
 dcap.debugUnbind()
 dlog.out("end")
-
+outFile:close()
+--]]
 return dcap
