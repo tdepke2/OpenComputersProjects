@@ -20,6 +20,51 @@ b1:clear(false)
 assert(b1:test(0) == false)
 assert(b1:count() == 0)
 
+local b2 = bitset:new(8, 0x76)
+local b3 = bitset:new(8, 0x93)
+local b4 = bitset:new(8, -1)
+local b5 = bitset:new(8, 0xff)
+
+assert(b4 == b5)
+assert(b2:band(b3):tostring() == "00010010")
+assert(b2:bor(b3):tostring() == "11110111")
+assert(b2:bxor(b3):tostring() == "11100101")
+assert(b2:band(b3) == bitset:new(8, 0x12))
+assert(b2:bor(b3) == bitset:new(8, 0xf7))
+assert(b2:bxor(b3) == bitset:new(8, 0xe5))
+assert(b2:band(b4) == b2)
+assert(b2:bor(b4) == b4)
+assert(b2 ~= b4)
+assert(b2:bnot() == bitset:new(8, 0x89))
+assert(b4:bnot() == bitset:new(8))
+assert(b2:lshift(1) == bitset:new(8, 0xec))
+assert(b3:lshift(1) == bitset:new(8, 0x26))
+assert(b4:lshift(1) == bitset:new(8, 0xfe))
+assert(b2:rshift(1) == bitset:new(8, 0x3b))
+assert(b3:rshift(1) == bitset:new(8, 0x49))
+assert(b4:rshift(1) == bitset:new(8, 0x7f))
+assert(b2:lshift(-1) == b2:rshift(1))
+assert(b3:lshift(-1) == b3:rshift(1))
+assert(b4:lshift(-1) == b4:rshift(1))
+assert(b2:rshift(-1) == b2:lshift(1))
+assert(b3:rshift(-1) == b3:lshift(1))
+assert(b4:rshift(-1) == b4:lshift(1))
+
+local b6 = bitset:new(70, 0x01, 0x23456789, 0xabcdefed)
+
+assert(b6:tostring() == "0000010010001101000101011001111000100110101011110011011110111111101101")
+assert(b6:lshift(1)  == bitset:new(70, 0x02, 0x468acf13, 0x579bdfda))
+assert(b6:lshift(32) == bitset:new(70, 0x09, 0xabcdefed, 0x00000000))
+assert(b6:lshift(33) == bitset:new(70, 0x13, 0x579bdfda, 0x00000000))
+assert(b6:lshift(66) == bitset:new(70, 0x34, 0x00000000, 0x00000000))
+assert(b6:rshift(1)  == bitset:new(70, 0x00, 0x91a2b3c4, 0xd5e6f7f6))
+assert(b6:rshift(32) == bitset:new(70,  0x1, 0x23456789))
+assert(b6:rshift(33) == bitset:new(70, 0x91a2b3c4))
+assert(b6:rshift(63) == bitset:new(70, 2))
+assert(b6:rshift(66) == bitset:new(70, 0))
+assert(b6:bxor(b6:lshift(5))        == bitset:new(70, 0x25, 0x4be996bc, 0xd270124d))
+assert(b6:bxor(b6:lshift(5)):bnot() == bitset:new(70, 0x1a, 0xb4166943, 0x2d8fedb2))
+
 local function testN(size)
   local arr = {}
   for i = 0, size - 1 do
@@ -30,7 +75,7 @@ local function testN(size)
   -- Fill b and arr with random bits.
   for _ = 1, size do
     local index = math.random(0, size - 1)
-    local value = math.random() < 0.1
+    local value = math.random() < 0.5
     b:set(index, value)
     arr[index] = value
   end

@@ -24,24 +24,51 @@ local MOD_37_BIT_POSITIONS = {
 
 local Bitset = {}
 
--- Bitset:new(size: number): table
+-- Bitset:new(size: number[, value1: number, ...]): table
 -- Bitset:new(bitset: table): table
 -- 
+-- Creates a new bitset. This functions similar to a table sequence of boolean
+-- values, but is much more memory efficient and supports bitwise operations.
+-- There are also fast operations to count the number of true bits, and iterate
+-- through the true bits. Bits are indexed from 0 to bitset.size - 1.
 -- 
-function Bitset:new(size)
+-- If size is given, this must be a positive integer. If value1, value2, etc.
+-- are provided to initialize the bitset, they must be provided with
+-- most-significant value first and least-significant value last (think
+-- big-endian). The values will also be truncated to 32 bits. If another bitset
+-- object is provided, a copy is returned.
+function Bitset:new(size, ...)
   self.__index = self
   self = setmetatable({}, self)
   
   if type(size) == "number" then
+    assert(size > 0 and floor(size) == size, "bitset size must be positive integer.")
     self.size = size
+    -- Stores the 32-bit "blocks" that make up the bitset.
     self.arr = {}
-    self:clear()
+    -- Mask for the last block in the bitset.
+    self.lastBlockMask = rshift(0xffffffff, 31 - (size - 1) % 32)
+    
+    -- If numeric values are provided to initialize, add each one to arr. Otherwise just fill with zero bits.
+    local argc = select("#", ...)
+    if argc > 0 then
+      local varargs = {...}
+      local arrIndex = 1
+      for i = size, 33, -32 do
+        self.arr[arrIndex] = band(varargs[argc - arrIndex + 1] or 0, 0xffffffff)
+        arrIndex = arrIndex + 1
+      end
+      self.arr[arrIndex] = band(varargs[argc - arrIndex + 1] or 0, self.lastBlockMask)
+    else
+      self:clear()
+    end
   elseif type(size) == "table" then
     self.size = size.size
     self.arr = {}
     for i, v in ipairs(size.arr) do
       self.arr[i] = v
     end
+    self.lastBlockMask = size.lastBlockMask
   end
   
   return self
@@ -71,14 +98,12 @@ end
 -- 
 function Bitset:clear(value)
   value = (value and 0xffffffff or 0)
-  local size = self.size
   local arrIndex = 1
-  while size > 32 do
+  for i = self.size, 33, -32 do
     self.arr[arrIndex] = value
-    size = size - 32
     arrIndex = arrIndex + 1
   end
-  self.arr[arrIndex] = band(value, rshift(0xffffffff, 32 - size))
+  self.arr[arrIndex] = band(value, self.lastBlockMask)
 end
 
 -- Bitset:count(): number
@@ -89,9 +114,8 @@ end
 -- https://stackoverflow.com/questions/9949935/calculate-number-of-bits-set-in-byte
 function Bitset:count()
   local count = 0
-  local size = self.size
   local arrIndex = 1
-  while size > 0 do
+  for i = self.size, 1, -32 do
     local block = self.arr[arrIndex]
     count = count + NIBBLE_BIT_COUNTS[band(block, 0xf)]
                   + NIBBLE_BIT_COUNTS[band(rshift(block,  4), 0xf)]
@@ -101,11 +125,118 @@ function Bitset:count()
                   + NIBBLE_BIT_COUNTS[band(rshift(block, 20), 0xf)]
                   + NIBBLE_BIT_COUNTS[band(rshift(block, 24), 0xf)]
                   + NIBBLE_BIT_COUNTS[band(rshift(block, 28), 0xf)]
-    size = size - 32
     arrIndex = arrIndex + 1
   end
   return count
 end
+
+-- Bitset:band(rhs: table): table
+-- 
+-- 
+function Bitset:band(rhs)
+  local resultArr = {}
+  local arrIndex = 1
+  for i = self.size, 1, -32 do
+    resultArr[arrIndex] = band(self.arr[arrIndex], rhs.arr[arrIndex])
+    arrIndex = arrIndex + 1
+  end
+  return setmetatable({size = self.size, arr = resultArr, lastBlockMask = self.lastBlockMask}, Bitset)
+end
+
+-- Bitset:bor(rhs: table): table
+-- 
+-- 
+function Bitset:bor(rhs)
+  local resultArr = {}
+  local arrIndex = 1
+  for i = self.size, 1, -32 do
+    resultArr[arrIndex] = bor(self.arr[arrIndex], rhs.arr[arrIndex])
+    arrIndex = arrIndex + 1
+  end
+  return setmetatable({size = self.size, arr = resultArr, lastBlockMask = self.lastBlockMask}, Bitset)
+end
+
+-- Bitset:bxor(rhs: table): table
+-- 
+-- 
+function Bitset:bxor(rhs)
+  local resultArr = {}
+  local arrIndex = 1
+  for i = self.size, 1, -32 do
+    resultArr[arrIndex] = bxor(self.arr[arrIndex], rhs.arr[arrIndex])
+    arrIndex = arrIndex + 1
+  end
+  return setmetatable({size = self.size, arr = resultArr, lastBlockMask = self.lastBlockMask}, Bitset)
+end
+
+-- Bitset:bnot(): table
+-- 
+-- 
+function Bitset:bnot()
+  local resultArr = {}
+  local arrIndex = 1
+  for i = self.size, 33, -32 do
+    resultArr[arrIndex] = band(bnot(self.arr[arrIndex]), 0xffffffff)
+    arrIndex = arrIndex + 1
+  end
+  resultArr[arrIndex] = band(bnot(self.arr[arrIndex]), self.lastBlockMask)
+  return setmetatable({size = self.size, arr = resultArr, lastBlockMask = self.lastBlockMask}, Bitset)
+end
+
+-- Bitset:lshift(disp: number): table
+-- 
+-- 
+function Bitset:lshift(disp)
+  if disp < 0 then
+    return self:rshift(-disp)
+  end
+  local resultArr = {}
+  local arrIndexMax = floor((self.size - 1) / 32) + 1
+  local srcIndex = -floor(disp / 32) + 1
+  disp = disp % 32
+  for arrIndex = 1, arrIndexMax do
+    local a = (srcIndex > 0 and lshift(self.arr[srcIndex], disp) or 0)
+    local b = (srcIndex - 1 > 0 and rshift(self.arr[srcIndex - 1], 32 - disp) or 0)
+    resultArr[arrIndex] = band(bor(a, b), arrIndex ~= arrIndexMax and 0xffffffff or self.lastBlockMask)
+    srcIndex = srcIndex + 1
+  end
+  return setmetatable({size = self.size, arr = resultArr, lastBlockMask = self.lastBlockMask}, Bitset)
+end
+
+-- Bitset:rshift(disp: number): table
+-- 
+-- 
+function Bitset:rshift(disp)
+  if disp < 0 then
+    return self:lshift(-disp)
+  end
+  local resultArr = {}
+  local arrIndexMax = floor((self.size - 1) / 32) + 1
+  local srcIndex = floor(disp / 32) + 1
+  disp = disp % 32
+  for arrIndex = 1, arrIndexMax do
+    local a = (srcIndex <= arrIndexMax and rshift(self.arr[srcIndex], disp) or 0)
+    local b = (srcIndex + 1 <= arrIndexMax and lshift(self.arr[srcIndex + 1], 32 - disp) or 0)
+    resultArr[arrIndex] = band(bor(a, b), arrIndex ~= arrIndexMax and 0xffffffff or self.lastBlockMask)
+    srcIndex = srcIndex + 1
+  end
+  return setmetatable({size = self.size, arr = resultArr, lastBlockMask = self.lastBlockMask}, Bitset)
+end
+
+-- Bitset:equals(rhs: table): boolean
+-- 
+-- 
+function Bitset:equals(rhs)
+  local arrIndex = 1
+  for i = self.size, 1, -32 do
+    if self.arr[arrIndex] ~= rhs.arr[arrIndex] then
+      return false
+    end
+    arrIndex = arrIndex + 1
+  end
+  return true
+end
+Bitset.__eq = Bitset.equals
 
 -- Bitset:tostring(): string
 -- 
