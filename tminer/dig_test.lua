@@ -727,8 +727,8 @@ end
 
 -- FIXME we can remove the silly asserts ###############
 
--- Initialization step for solveTSP().
-local function initTSP(tspPoints, tspPointsSize, candidateListSize)
+-- Initialization step for solveTourACS().
+local function initACS(tspPoints, tspPointsSize, candidateListSize)
   -- Computes an array index corresponding to the top-right triangular region of a matrix.
   -- The diagonal of the matrix is excluded (so a must not equal b).
   -- This implementation assumes the matrix is symmetrical across the diagonal (as in the case of a distance matrix for nodes in TSP), and sorts the a and b arguments.
@@ -755,7 +755,8 @@ local function initTSP(tspPoints, tspPointsSize, candidateListSize)
   end
   distanceAverage = distanceAverage / triangularMatrixSize
   
-  
+  -- Compute a candidate list. This stores the top n closest cities for each city.
+  -- A heap is used to build this list in O(n^2) time.
   local candidateList = {}
   for i = 1, tspPointsSize do
     local neighbors = {}
@@ -778,7 +779,6 @@ local function initTSP(tspPoints, tspPointsSize, candidateListSize)
     end
     --io.write("\n")
   end
-  
   
   -- Estimate the solution with nearest-neighbor algorithm, and initialize pheromone constants.
   local function findDistance(a, b)
@@ -805,40 +805,68 @@ local function initTSP(tspPoints, tspPointsSize, candidateListSize)
   return distanceMat, pheromoneMat, triangularMatrixIndex, triangularMatrixSize, basePheromone, maxPheromone, minPheromone, candidateList
 end
 
--- Finds optimal TSP tour using ACS-MMAS hybrid.
--- Ant Colony System: A Cooperative Learning Approach To The Traveling Salesman Problem
--- https://people.idsia.ch/~luca/acs-ec97.pdf
+-- solveTourACS(tspPoints: table[, tspPointsSize: number]): number, table
+-- 
+-- Finds an estimate to the optimal TSP tour using ACS-MMAS hybrid method. The
+-- tspPoints is a sequence of 3D Cartesian coordinates (each one a table with x,
+-- y, and z in indices 1, 2, and 3 respectively) corresponding to the positions
+-- of cities. Returns the length of the found tour (Hamiltonian cycle), and a
+-- table sequence that stores the tour as indices of elements in tspPoints. This
+-- resulting tour visits every city once and minimizes the Euclidean distance
+-- along the path. The resulting tour is not guaranteed to be optimal, however
+-- the solution will converge to the optimal tour based on the number of
+-- iterations run and random chance.
+-- 
+-- In a nutshell, ACS works by creating virtual ants to explore the graph of
+-- cities and find a complete tour. Ants check pheromone levels at each edge and
+-- the length of the edge to determine the next city to move to. The ant that
+-- finds the shortest tour is allowed to deposit pheromone along the edges in
+-- that tour (so that more ants choose that edge). In MMAS, we bound the
+-- pheromone levels to prevent stagnation of exploration due to extremely
+-- low/high pheromone levels.
+-- 
+-- See the following research papers for details.
+-- Ant Colony System: A Cooperative Learning Approach To The Traveling Salesman
+-- Problem
+--   https://people.idsia.ch/~luca/acs-ec97.pdf
 -- Improvements on the Ant-System: Introducing the MAX-MIN Ant System
--- https://link.springer.com/chapter/10.1007/978-3-7091-6492-1_54
-local function solveTSP(tspPoints, tspPointsSize)
-  timer("solveTSP()")
+--   https://link.springer.com/chapter/10.1007/978-3-7091-6492-1_54
+local function solveTourACS(tspPoints, tspPointsSize)
+  timer("solveTourACS()")
   tspPointsSize = tspPointsSize or #tspPoints
+  
+  -- Constant parameters for ACS.
   local distanceExponent = -2
   local pheromoneDecay = 0.1
-  local localPheromoneDecay = 0.1
-  local exploitationChance = 0.9
-  local candidateListSize = 20
+  local exploitationChance = 0.8
+  local candidateListSize = math.min(15, tspPointsSize - 1)
   
   if tspPointsSize <= 1 then
     return 0, {1}
   end
   
-  local distanceMat, pheromoneMat, triangularMatrixIndex, triangularMatrixSize, basePheromone, maxPheromone, minPheromone, candidateList = initTSP(tspPoints, tspPointsSize, candidateListSize)
+  local distanceMat, pheromoneMat, triangularMatrixIndex, triangularMatrixSize, basePheromone, maxPheromone, minPheromone, candidateList = initACS(tspPoints, tspPointsSize, candidateListSize)
   timer("init ends")
   
   local globalBestLength = math.huge
   local globalBestTour = {}
+  local invPheromoneDecay = 1 - pheromoneDecay
+  local basePheromoneDecayed = pheromoneDecay * basePheromone
   
-  local numIterations = math.min(200, math.floor(200 * 30 / tspPointsSize))
+  -- Begin iterations of the simulation.
+  -- The number of iterations is scaled down as the total cities increases. This helps performance by sacrificing the quality of the solution.
+  -- In the OpenComputers configs, the "timeout" parameter controls the max number of seconds a chunk of non-blocking code can run for.
+  -- The default value is 5, so we target about a maximum of 2.5 seconds for the simulation here to avoid a crash.
+  -- With 32 cities, numIterations = 400 (average about 2.61s).
+  -- With 64 cities, numIterations = 200 (average about 2.68s).
+  -- With 128 cities, numIterations = 100 (average about 2.88s).
+  local numIterations = math.max(math.min(math.floor(400 * 32 / tspPointsSize), 400), 100)
   print("numIterations = ", numIterations)
+  
   for iteration = 1, numIterations do
-    --[[local startPositions = {}
-    for ant = 1, 10 do    -- FIXME need to be random positions such that ants don't choose the same start
-      startPositions[ant] = math.random(1, tspPointsSize)
-    end--]]
-    
+    -- Each ant starts at a random city such that there is at most one ant in every city. If there are more ants than cities, the remaining ants are assigned randomly.
     local startPositions, startPositionsSize = {}, tspPointsSize
-    for i = 1, startPositionsSize do
+    for i = 1, tspPointsSize do
       startPositions[i] = i
     end
     
@@ -855,29 +883,22 @@ local function solveTSP(tspPoints, tspPointsSize)
       else
         start = math.random(1, tspPointsSize)
       end
-      --io.write(" " .. start)
+      
       local visited, visitedSize = {start}, 1
       local unvisited = {}
       for i = 1, tspPointsSize do
-        unvisited[i] = true
+        unvisited[i] = i
       end
       unvisited[start] = nil
       
+      -- For each of the remaining cities, choose which one to move to next based on ACS state transition rule and move there.
       local current = start
-      while next(unvisited) ~= nil do
+      for _ = 1, tspPointsSize - 1 do
         local target
         local candidates = candidateList[current]
         if math.random() < exploitationChance then
-          -- Find the edge with the largest pheromone-closeness product.
+          -- Find the best edge with the largest pheromone-closeness product (exploitation). Search the candidate list first.
           local bestPcp = -math.huge
-          --[[for i = 1, unvisitedSize do
-            local tmi = triangularMatrixIndex(current, unvisited[i])
-            local pcp = pheromoneMat[tmi] * distanceMat[tmi] ^ distanceExponent
-            if pcp > bestPcp then
-              bestPcp = pcp
-              target = i
-            end
-          end--]]
           for _, city in ipairs(candidates) do
             if unvisited[city] then
               local tmi = triangularMatrixIndex(current, city)
@@ -889,19 +910,18 @@ local function solveTSP(tspPoints, tspPointsSize)
             end
           end
           if not target then
-            --print("oof")
-            for i = 1, tspPointsSize do
-              if unvisited[i] then
-                local tmi = triangularMatrixIndex(current, i)
-                local pcp = pheromoneMat[tmi] * distanceMat[tmi] ^ distanceExponent
-                if pcp > bestPcp then
-                  bestPcp = pcp
-                  target = i
-                end
+            -- No options in candidate list, search all of the unvisited cities.
+            for city in pairs(unvisited) do
+              local tmi = triangularMatrixIndex(current, city)
+              local pcp = pheromoneMat[tmi] * distanceMat[tmi] ^ distanceExponent
+              if pcp > bestPcp then
+                bestPcp = pcp
+                target = city
               end
             end
           end
         else
+          -- Pick an edge by sampling from a non-uniform discrete distribution. Search the candidate list first.
           local weights, weightCities, weightsSize = {}, {}, 0
           for _, city in ipairs(candidates) do
             if unvisited[city] then
@@ -912,31 +932,31 @@ local function solveTSP(tspPoints, tspPointsSize)
             end
           end
           if weightsSize == 0 then
-            --print("oof2")
-            for i = 1, tspPointsSize do
-              if unvisited[i] then
-                local tmi = triangularMatrixIndex(current, i)
-                weightsSize = weightsSize + 1
-                weights[weightsSize] = pheromoneMat[tmi] * distanceMat[tmi] ^ distanceExponent
-                weightCities[weightsSize] = i
-              end
+            -- No options in candidate list, search all of the unvisited cities.
+            for city in pairs(unvisited) do
+              local tmi = triangularMatrixIndex(current, city)
+              weightsSize = weightsSize + 1
+              weights[weightsSize] = pheromoneMat[tmi] * distanceMat[tmi] ^ distanceExponent
+              weightCities[weightsSize] = city
             end
           end
           target = weightCities[rand.discreteDistribution(weights, weightsSize)(math.random)]
         end
         
+        -- Add the chosen city to visited, and apply ACS local updating rule to decay the pheromone levels on the corresponding edge to the chosen city.
         visitedSize = visitedSize + 1
         visited[visitedSize] = target
         local tmi = triangularMatrixIndex(current, target)
         pathLength = pathLength + distanceMat[tmi]
-        pheromoneMat[tmi] = pheromoneMat[tmi] * (1 - localPheromoneDecay) + localPheromoneDecay * basePheromone
+        pheromoneMat[tmi] = pheromoneMat[tmi] * invPheromoneDecay + basePheromoneDecayed
         
         current = target
         unvisited[target] = nil
       end
+      -- Apply ACS local updating rule for edge back to the start.
       local tmi = triangularMatrixIndex(current, start)
       pathLength = pathLength + distanceMat[tmi]
-      pheromoneMat[tmi] = pheromoneMat[tmi] * (1 - localPheromoneDecay) + localPheromoneDecay * basePheromone
+      pheromoneMat[tmi] = pheromoneMat[tmi] * invPheromoneDecay + basePheromoneDecayed
       
       --[[
       for i, v in ipairs(visited) do
@@ -950,17 +970,23 @@ local function solveTSP(tspPoints, tspPointsSize)
       end
     end
     
-    --timer("global update")
+    -- After each ant has finished a tour, apply ACS global updating rule. All pheromone decays, and pheromone levels that are part of the global best tour are increased.
+    -- The pheromone levels are also loosely bounded by a min and max amount to prevent limits on path exploration (as per MMAS).
     for i = 1, triangularMatrixSize do
-      pheromoneMat[i] = math.min(math.max(pheromoneMat[i] * (1 - pheromoneDecay), minPheromone), maxPheromone)
+      local newPheromone = pheromoneMat[i] * invPheromoneDecay
+      if newPheromone < minPheromone then
+        newPheromone = minPheromone
+      elseif newPheromone > maxPheromone then
+        newPheromone = maxPheromone
+      end
+      pheromoneMat[i] = newPheromone
     end
     --print("best edges visited:")
+    local globalBestPheromone = pheromoneDecay / globalBestLength
     for i = 1, tspPointsSize do
       --print(globalBestTour[i], globalBestTour[i % tspPointsSize + 1])
-      local a = globalBestTour[i]
-      local b = globalBestTour[i % tspPointsSize + 1]
-      local tmi = triangularMatrixIndex(a, b)
-      pheromoneMat[tmi] = pheromoneMat[tmi] + pheromoneDecay / globalBestLength
+      local tmi = triangularMatrixIndex(globalBestTour[i], globalBestTour[i % tspPointsSize + 1])
+      pheromoneMat[tmi] = pheromoneMat[tmi] + globalBestPheromone
     end
   end
   
@@ -972,7 +998,7 @@ local function solveTSP(tspPoints, tspPointsSize)
     end
   end
   --]]
-  timer("solveTSP() ends")
+  timer("solveTourACS() ends")
   return globalBestLength, globalBestTour
 end
 
@@ -1002,10 +1028,10 @@ local function generateRandomTSP(n)
 end
 
 --[
-math.randomseed(123)
-tspPoints = generateRandomTSP(128)
+--math.randomseed(123)
+tspPoints = generateRandomTSP(99)
 
-local bestLength, bestTour = solveTSP(tspPoints)
+local bestLength, bestTour = solveTourACS(tspPoints)
 print("bestTour")
 for i, v in ipairs(bestTour) do
   io.write(tostring(v) .. " ")
