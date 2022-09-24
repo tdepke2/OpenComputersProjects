@@ -106,7 +106,7 @@ function dstructs.PriorityQueue:updateKey(oldVal, newVal, compResult)
   end
   reprioritizeCounterAvgIndex = reprioritizeCounterAvgIndex + i
   if i > self.length then
-    print("updateKey() false")
+    --print("updateKey() false")
     reprioritizeCounterFalse = reprioritizeCounterFalse + 1
     return false
   end
@@ -221,63 +221,91 @@ end
 
 local checkNeighborCounter = 0
 
-local function findPath(grid, paths, pathChar, start, stop, heuristicBias)
-  local function heuristicFunc(node)
-    local x1 = (node - 1) % grid.xMax + 1
-    local y1 = math.floor((node - 1) / grid.xMax) + 1
-    
-    local x2 = (stop - 1) % grid.xMax + 1
-    local y2 = math.floor((stop - 1) / grid.xMax) + 1
-    
-    return (math.abs(x1 - x2) + math.abs(y1 - y2)) * heuristicBias
+local findPathPriv
+
+-- findPath(grid: table, start: table, stop: table[, turnCost: number]): number, table|nil, number
+-- 
+-- A* with modifications for straight-path bias
+-- https://en.wikipedia.org/wiki/A*_search_algorithm
+-- https://www.redblobgames.com/pathfinding/a-star/implementation.html
+local function findPath(grid, start, stop, turnCost)
+  local function pathCostHeuristicSum(pathCost, x, y, z)
+    return pathCost + math.abs(x - stop[1]) + math.abs(y - stop[2]) + math.abs(z - stop[3])
   end
   
+  return findPathPriv(grid, start, stop, turnCost, pathCostHeuristicSum)
+end
+
+-- Weighted A*
+-- 
+-- http://theory.stanford.edu/~amitp/GameProgramming/Variations.html
+local function findPathWeighted(grid, start, stop, turnCost, suboptimalityBound)
+  local function pathCostHeuristicSum(pathCost, x, y, z)
+    return pathCost + (math.abs(x - stop[1]) + math.abs(y - stop[2]) + math.abs(z - stop[3])) * suboptimalityBound
+  end
+  
+  return findPathPriv(grid, start, stop, turnCost, pathCostHeuristicSum)
+end
+
+-- Weighted A* (piecewise Convex Downward)
+-- 
+-- https://www.movingai.com/SAS/SUB/
+-- https://webdocs.cs.ualberta.ca/~nathanst/papers/chen2021general.pdf
+local function findPathPWXD(grid, start, stop, turnCost, suboptimalityBound)
+  local function pathCostHeuristicSum(pathCost, x, y, z)
+    local h = math.abs(x - stop[1]) + math.abs(y - stop[2]) + math.abs(z - stop[3])
+    if h > pathCost then
+      return pathCost + h
+    else
+      return (pathCost + (2 * suboptimalityBound - 1) * h) / suboptimalityBound
+    end
+  end
+  
+  return findPathPriv(grid, start, stop, turnCost, pathCostHeuristicSum)
+end
+
+findPathPriv = function(grid, start, stop, turnCost, pathCostHeuristicSum)
+  turnCost = turnCost or 1.0001
+  
+  local startNode = (start[2] * grid.zSize + start[3]) * grid.xSize + start[1] + 1
+  local stopNode = (stop[2] * grid.zSize + stop[3]) * grid.xSize + stop[1] + 1
+  
   local cameFrom = {}
-  local gScore = setmetatable({[start] = 0}, {
+  local gScore = setmetatable({[startNode] = 0}, {
     __index = function()
       return math.huge
     end
   })
-  local fScore = setmetatable({[start] = 0--[[could also use: heuristicFunc(start)]]}, {
+  local fScore = setmetatable({[startNode] = 0--[[could also use: heuristicFunc(x, y, z)]]}, {
     __index = function()
       return math.huge
     end
   })
   
   local function reconstructPath()
-    local node = stop
+    local pathReversed, pathReversedSize = {}, 0
+    local node = stopNode
     while node do
-      local x = (node - 1) % grid.xMax + 1
-      local y = math.floor((node - 1) / grid.xMax) + 1
-      --print("(" .. x .. ", " .. y .. ")")
-      assert(grid[node] >= 0 and grid[node] < 10 and not paths[node])
-      paths[node] = pathChar
+      pathReversedSize = pathReversedSize + 1
+      pathReversed[pathReversedSize] = node
       node = cameFrom[node]
     end
-    print("gScore[stop] = " .. gScore[stop])
-    print("fScore[stop] = " .. fScore[stop])
-    assert(paths[start] == pathChar and paths[stop] == pathChar)
-    paths[start] = "A"
-    paths[stop] = "B"
-    print()
-    return true
+    --assert(gScore[stopNode] == fScore[stopNode])
+    return gScore[stopNode], pathReversed, pathReversedSize
   end
   
-  local fringeNodes = dstructs.PriorityQueue:new({start}, function(a, b) return fScore[a] > fScore[b] end)
-  --local fringeSet = {[start] = true}
+  local fringeNodes = dstructs.PriorityQueue:new({startNode}, function(a, b) return fScore[a] > fScore[b] end)
+  --local fringeSet = {[startNode] = true}
   
-  local function checkNeighbor(current, x, y, baseMovementCost)
+  local function checkNeighbor(current, x, y, z, baseMovementCost)
+    local neighbor = (y * grid.zSize + z) * grid.xSize + x + 1
+    if grid[neighbor] == -1 or neighbor == cameFrom[current] then
+      return
+    end
     checkNeighborCounter = checkNeighborCounter + 1
-    if x < 1 or x > grid.xMax or y < 1 or y > grid.yMax then
-      return
-    end
-    local neighbor = (y - 1) * grid.xMax + x
-    if grid[neighbor] == 100 then
-      return
-    end
     local oldGScore = gScore[neighbor]
     local newGScore = gScore[current] + baseMovementCost + grid[neighbor]
-    --io.write("checkNeighbor(" .. current .. ", " .. x .. ", " .. y .. "), newGScore = " .. newGScore .. ", oldGScore = " .. gScore[neighbor])
+    --io.write("  checkNeighbor(" .. current .. ", " .. x .. ", " .. y .. ", " .. z .. "), newGScore = " .. newGScore .. ", oldGScore = " .. gScore[neighbor])
     if newGScore < oldGScore then
       --io.write(" (greater)\n")
       if oldGScore ~= math.huge then
@@ -285,7 +313,7 @@ local function findPath(grid, paths, pathChar, start, stop, heuristicBias)
       end
       cameFrom[neighbor] = current
       gScore[neighbor] = newGScore
-      fScore[neighbor] = newGScore + heuristicFunc(neighbor)
+      fScore[neighbor] = pathCostHeuristicSum(newGScore, x, y, z)
       -- The neighbor is added to fringe if it hasn't been found before, or it has and is not currently in the fringe.
       -- Another way to do this is to always add it (allow duplicates), but this doesn't work so well when we store the priorities outside of the queue (the heap can get invalidated).
       if oldGScore == math.huge or not fringeNodes:updateKey(neighbor, neighbor, true) then
@@ -317,74 +345,117 @@ local function findPath(grid, paths, pathChar, start, stop, heuristicBias)
     local current = fringeNodes:pop()
     --fringeSet[current] = nil
     assert(minValue == fScore[current], "minNode = " .. minNode .. ", current = " .. current)
-    if current == stop then
+    if current == stopNode then
       return reconstructPath()
     end
-    local x = (current - 1) % grid.xMax + 1
-    local y = math.floor((current - 1) / grid.xMax) + 1
-    --io.write("current = " .. current .. ", (" .. x .. ", " .. y .. ")\n")
+    local divisor = (current - 1) / grid.xSize
+    local x = (current - 1) % grid.xSize
+    local z = math.floor(divisor) % grid.zSize
+    local y = math.floor(divisor / grid.zSize)
+    
+    
+    --io.write("current = " .. current .. ", (" .. x .. ", " .. y .. ", " .. z .. "), g = " .. gScore[current] .. ", f = " .. fScore[current] .. "\n")
     
     -- Prefer straight line paths by adding a small cost when turning.
-    local xMovementCost, yMovementCost
-    if cameFrom[current] and math.abs(current - cameFrom[current]) == 1 then
-      xMovementCost = 1
-      yMovementCost = 1.001
-    else
-      xMovementCost = 1.001
-      yMovementCost = 1
+    local xMovementCost, yMovementCost, zMovementCost = turnCost, 1, turnCost
+    if cameFrom[current] then
+      if math.abs(current - cameFrom[current]) == 1 then
+        xMovementCost = 1
+        yMovementCost = turnCost
+      elseif math.abs(current - cameFrom[current]) == grid.xSize then
+        yMovementCost = turnCost
+        zMovementCost = 1
+      end
     end
     
-    checkNeighbor(current, x, y + 1, yMovementCost)
-    checkNeighbor(current, x + 1, y, xMovementCost)
-    checkNeighbor(current, x, y - 1, yMovementCost)
-    checkNeighbor(current, x - 1, y, xMovementCost)
+    if x < grid.xSize - 1 then
+      checkNeighbor(current, x + 1, y, z, xMovementCost)
+    end
+    if x > 0 then
+      checkNeighbor(current, x - 1, y, z, xMovementCost)
+    end
+    if y < grid.ySize - 1 then
+      checkNeighbor(current, x, y + 1, z, yMovementCost)
+    end
+    if y > 0 then
+      checkNeighbor(current, x, y - 1, z, yMovementCost)
+    end
+    if z < grid.zSize - 1 then
+      checkNeighbor(current, x, y, z + 1, zMovementCost)
+    end
+    if z > 0 then
+      checkNeighbor(current, x, y, z - 1, zMovementCost)
+    end
   end
-  
-  paths[start] = "A"
-  paths[stop] = "B"
-  print("no path!\n")
-  return false
+  return math.huge, nil, 0
 end
 
 local function printGrid(grid, paths)
-  io.write("grid.xMax = ", tostring(grid.xMax), ", grid.yMax = ", tostring(grid.yMax), "\n")
+  io.write("grid.xSize = ", tostring(grid.xSize), ", grid.ySize = ", tostring(grid.ySize), ", grid.zSize = ", tostring(grid.zSize), "\n")
   local i = 1
-  for y = 1, grid.yMax do
-    for x = 1, grid.xMax do
-      if grid[i] == 100 then
-        io.write("██")
-      else
-        io.write(tostring(grid[i]))
-        io.write(paths[i] or " ")
+  for y = 0, grid.ySize - 1 do
+    for z = 0, grid.zSize - 1 do
+      for x = 0, grid.xSize - 1 do
+        if grid[i] == -1 then
+          io.write("██")
+        else
+          io.write(paths[i] or " ")
+          io.write(tostring(grid[i]))
+        end
+        i = i + 1
       end
-      i = i + 1
+      io.write("\n")
     end
     io.write("\n")
   end
   io.write("\n")
 end
 
---[=[
+--[=
 local grid = {}
-grid.xMax = 10--40--9
-grid.yMax = 10--40--12
+grid.xSize = 32--40--9
+grid.ySize = 4--40--12
+grid.zSize = 16
 local paths = {}
 
---math.randomseed(10)
-math.randomseed(436758)
-for i = 1, grid.xMax * grid.yMax do
+math.randomseed(10)
+--math.randomseed(436758)
+for i = 1, grid.xSize * grid.ySize * grid.zSize do
   local num = math.random()
-  grid[i] = num < 0.0 and 100 or math.floor((num - 0.0) * 10)
+  grid[i] = num < 0.3 and -1 or math.random(0, 5)
 end
 
---[[
-findPath(grid, paths, "#", 1, grid.xMax * grid.yMax, 1)--1.1)
+--[
+local start = {0, 0, 0}
+local stop = {grid.xSize-1, grid.ySize-1, grid.zSize-1}
+local w = 1.5
+local pathCost, pathReversed, pathReversedSize = findPath(grid, start, stop)
+--local pathCost, pathReversed, pathReversedSize = findPathWeighted(grid, start, stop, 1.0001, w)
+--local pathCost, pathReversed, pathReversedSize = findPathPWXD(grid, start, stop, 1.0001, w)
+print("pathCost = ", pathCost)
+if pathReversed then
+  io.write("pathReversed:\n")
+  for i, node in ipairs(pathReversed) do
+    io.write(node .. "  ")
+    assert(grid[node] >= 0 and grid[node] < 10 and not paths[node])
+    paths[node] = "#"
+  end
+  assert(paths[pathReversed[pathReversedSize]] == "#" and paths[pathReversed[1]] == "#")
+  paths[pathReversed[pathReversedSize]] = "A"
+  paths[pathReversed[1]] = "B"
+  io.write("\n")
+else
+  paths[(start[2] * grid.zSize + start[3]) * grid.xSize + start[1] + 1] = "A"
+  paths[(stop[2] * grid.zSize + stop[3]) * grid.xSize + stop[1] + 1] = "B"
+  print("no path!\n")
+end
 reprioritizeCounterAvgIndex = reprioritizeCounterAvgIndex / reprioritizeCounter
 print("reprioritizeCounter = " .. reprioritizeCounter .. ", reprioritizeCounterFalse = " .. reprioritizeCounterFalse .. ", reprioritizeCounterAvgIndex = " .. reprioritizeCounterAvgIndex)
 print("checkNeighborCounter = " .. checkNeighborCounter .. "\n")
 printGrid(grid, paths)
 --]]
 
+--[[
 local pos = 1
 while true do
   local i = 1
@@ -408,6 +479,8 @@ while true do
   end
   pos = i
 end
+--]]
+os.exit()
 --]=]
 
 -- https://www.redblobgames.com/pathfinding/a-star/implementation.html
@@ -748,7 +821,9 @@ local function initACS(tspPoints, tspPointsSize, candidateListSize)
   local i = 1
   for a = 1, tspPointsSize - 1 do
     for b = a + 1, tspPointsSize do
-      distanceMat[i] = math.sqrt((tspPoints[a][1] - tspPoints[b][1]) ^ 2 + (tspPoints[a][2] - tspPoints[b][2]) ^ 2)
+      local p1 = tspPoints[a]
+      local p2 = tspPoints[b]
+      distanceMat[i] = math.sqrt((p1[1] - p2[1]) ^ 2 + (p1[2] - p2[2]) ^ 2 + (p1[3] - p2[3]) ^ 2)
       distanceAverage = distanceAverage + distanceMat[i]
       i = i + 1
     end
@@ -1021,13 +1096,13 @@ end
 local function generateRandomTSP(n)
   local tspPoints = {}
   for i = 1, n do
-    tspPoints[i] = {math.random() * 100, math.random() * 100}
+    tspPoints[i] = {math.random() * 100, math.random() * 100, 0}
     --print("(" .. tspPoints[i][1] .. ", " .. tspPoints[i][2] .. ")")
   end
   return tspPoints
 end
 
---[
+--[[
 --math.randomseed(123)
 tspPoints = generateRandomTSP(99)
 
@@ -1053,7 +1128,7 @@ os.exit()
 local world = {
   xSize = 16,
   ySize = 4,
-  zSize = 4
+  zSize = 8
 }
 local decoration = {}
 local function getBlock(x, y, z)
@@ -1062,16 +1137,29 @@ end
 local function setBlock(x, y, z, val)
   world[(y * world.zSize + z) * world.xSize + x + 1] = val
 end
+local function getDeco(x, y, z)
+  return decoration[(y * world.zSize + z) * world.xSize + x + 1]
+end
+local function setDeco(x, y, z, val)
+  decoration[(y * world.zSize + z) * world.xSize + x + 1] = val
+end
 --for i = 1, world.xMax * world.yMax * world.zMax do
   --world[i] = i
   --i = i + 1
 --end
-local i = 1
 for y = 0, world.ySize - 1 do
   for z = 0, world.zSize - 1 do
     for x = 0, world.xSize - 1 do
-      setBlock(x, y, z, math.random(0, 9))
-      i = i + 1
+      local val = math.random()
+      local block
+      if val < 0.1 then
+        block = 0
+      elseif val < 0.2 then
+        block = 3
+      else
+        block = math.random(4, 7)
+      end
+      setBlock(x, y, z, block)
     end
   end
 end
@@ -1082,7 +1170,9 @@ local function drawWorld(world, decoration, robot)
     io.write("layer y" .. y .. (y == 0 and " (x increases right, z increases down)\n" or "\n"))
     for z = 0, world.zSize - 1 do
       for x = 0, world.xSize - 1 do
-        if world[i] == 0 then
+        if decoration[i] then
+          io.write(string.format("%2d", decoration[i]))
+        elseif world[i] == 0 then
           if x == robot.x and y == robot.y and z == robot.z then
             io.write(" @")
           else
@@ -1090,8 +1180,16 @@ local function drawWorld(world, decoration, robot)
           end
         elseif world[i] == 3 then
           io.write(" ▄")
+        elseif world[i] == 4 then
+          io.write("()")
+        elseif world[i] == 5 then
+          io.write("{}")
+        elseif world[i] == 6 then
+          io.write("[]")
+        elseif world[i] == 7 then
+          io.write("<>")
         else
-          io.write(string.format("%2x", world[i]))
+          io.write("//")--string.format("%2d", world[i]))
         end
         i = i + 1
       end
@@ -1141,4 +1239,30 @@ end
 
 local robot = Robot:new(7, 1, 0)
 robot:digScanTunnel()
+-- Selecting targets can be done during scan steps! Below just for demo.
+local targetBlocks, targetBlocksSize = {{robot.x, robot.y, robot.z}}, 1
+for y = 0, world.ySize - 1 do
+  for z = 0, world.zSize - 1 do
+    for x = 0, world.xSize - 1 do
+      if getBlock(x, y, z) == 3 and targetBlocksSize <= 128 then
+        targetBlocksSize = targetBlocksSize + 1
+        targetBlocks[targetBlocksSize] = {x, y, z}
+      end
+    end
+  end
+end
+print("targetBlocksSize = ", targetBlocksSize)
+if targetBlocksSize <= 128 then
+  local tourLength, normalizedTour = normalizeTour(solveTourACS(targetBlocks, targetBlocksSize))
+  print("tour:")
+  for i, v in ipairs(normalizedTour) do
+    io.write(tostring(v) .. " ")
+    setDeco(targetBlocks[v][1], targetBlocks[v][2], targetBlocks[v][3], i)
+  end
+  print("-> " .. tourLength)
+  
+else
+  targetBlocks = nil
+  
+end
 drawWorld(world, decoration, robot)
