@@ -411,7 +411,7 @@ local function printGrid(grid, paths)
   io.write("\n")
 end
 
---[=
+--[=[
 local grid = {}
 grid.xSize = 32--40--9
 grid.ySize = 4--40--12
@@ -1131,6 +1131,9 @@ local world = {
   zSize = 8
 }
 local decoration = {}
+local function toWorldIndex(x, y, z)
+  return (y * world.zSize + z) * world.xSize + x + 1
+end
 local function getBlock(x, y, z)
   return world[(y * world.zSize + z) * world.xSize + x + 1]
 end
@@ -1170,14 +1173,12 @@ local function drawWorld(world, decoration, robot)
     io.write("layer y" .. y .. (y == 0 and " (x increases right, z increases down)\n" or "\n"))
     for z = 0, world.zSize - 1 do
       for x = 0, world.xSize - 1 do
-        if decoration[i] then
+        if world[i] == 0 and x == robot.x and y == robot.y and z == robot.z then
+          io.write(" @")
+        elseif decoration[i] then
           io.write(string.format("%2d", decoration[i]))
         elseif world[i] == 0 then
-          if x == robot.x and y == robot.y and z == robot.z then
-            io.write(" @")
-          else
-            io.write(" .")
-          end
+          io.write(" .")
         elseif world[i] == 3 then
           io.write(" ▄")
         elseif world[i] == 4 then
@@ -1237,6 +1238,27 @@ function Robot:digScanTunnel()
   end
 end
 
+function Robot:digToBlock(targetBlock)
+  local pathCost, pathReversed, pathReversedSize = findPath(world, {self.x, self.y, self.z}, targetBlock)
+  --print("pathCost = ", pathCost, ", pathReversedSize = ", pathReversedSize)
+  if pathCost ~= math.huge then
+    for i = pathReversedSize - 1, 1, -1 do
+      --print(i, pathReversed[i])
+      local nodeDelta = pathReversed[i] - pathReversed[i + 1]
+      local nodeDeltaSign = (nodeDelta > 0 and 1 or -1)
+      if math.abs(nodeDelta) == 1 then
+        self:moveX(nodeDeltaSign)
+      elseif math.abs(nodeDelta) == world.xSize then
+        self:moveZ(nodeDeltaSign)
+      else
+        self:moveY(nodeDeltaSign)
+      end
+    end
+  else
+    print("no path!")
+  end
+end
+
 local robot = Robot:new(7, 1, 0)
 robot:digScanTunnel()
 -- Selecting targets can be done during scan steps! Below just for demo.
@@ -1261,8 +1283,39 @@ if targetBlocksSize <= 128 then
   end
   print("-> " .. tourLength)
   
+  --robot:digToBlock(targetBlocks[normalizedTour[2]])
+  for i = 2, #normalizedTour do
+    local coords = targetBlocks[normalizedTour[i]]
+    if getBlock(coords[1], coords[2], coords[3]) == 3 then
+      robot:digToBlock(coords)
+    else
+      print("skipped already dug block, i = ", i)
+    end
+  end
+  -- Return to starting position.
+  robot:digToBlock(targetBlocks[normalizedTour[1]])
 else
   targetBlocks = nil
-  
+  local robotStart = {robot.x, robot.y, robot.z}
+  for y = 0, world.ySize - 1 do
+    for z = 0, world.zSize - 1 do
+      for x = 0, world.xSize - 1 do
+        if getBlock(x, y, z) == 3 then
+          robot:digToBlock({x, y, z})
+        end
+      end
+    end
+  end
+  robot:digToBlock(robotStart)
 end
+
+-- Confirm no more ore remains.
+for y = 0, world.ySize - 1 do
+  for z = 0, world.zSize - 1 do
+    for x = 0, world.xSize - 1 do
+      assert(getBlock(x, y, z) ~= 3)
+    end
+  end
+end
+
 drawWorld(world, decoration, robot)
