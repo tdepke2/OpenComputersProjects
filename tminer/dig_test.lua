@@ -221,37 +221,84 @@ end
 
 local checkNeighborCounter = 0
 
-local findPathPriv
+local findPathHelper
 
--- findPath(grid: table, start: table, stop: table[, turnCost: number]): number, table|nil, number
+-- findPath(grid: table, start: table, stop: table[, turnCost: number]): number,
+--   table, number
 -- 
--- A* with modifications for straight-path bias
+-- Computes the lowest-cost optimal path between two points in a 3-dimensional
+-- scalar field. The scalar field (grid) is a 1-indexed table sequence of
+-- numbers where the indices increase in the positive x, positive z, then
+-- positive y direction (same as the geolyzer scan format). The size of the grid
+-- is defined by grid.xSize, grid.ySize, and grid.zSize where coordinates go
+-- from 0 to grid.<n>Size - 1. The start and stop values are 3D coordinates in
+-- the grid, both are tables with x, y, and z in indices 1, 2, and 3
+-- respectively. Scalar values in the grid represent the cost to pass through
+-- that point, the special value -1 indicates a barrier that cannot be passed
+-- through.
+-- 
+-- The turnCost is an optional argument that specifies the unit path cost when
+-- moving in a new direction. This is used to bias straight paths in the
+-- solution when there are multiple optimal paths. By setting this to 1, the
+-- bias is disabled (and a path through an area with uniform scalar values may
+-- take seemingly random turns). Setting this above 1 can make straight paths
+-- take priority over optimal ones, which has the potential to reduce the path
+-- length in the solution.
+-- 
+-- Returns the computed path cost, table sequence of indices in the grid along
+-- the path (in reverse order), and the length of this sequence. If no solution
+-- exists (the goal is blocked behind barriers), then math.huge is returned for
+-- the path cost.
+-- 
+-- This algorithm uses a modified version of A* search to add bias for
+-- straight-line paths. See below for references:
 -- https://en.wikipedia.org/wiki/A*_search_algorithm
 -- https://www.redblobgames.com/pathfinding/a-star/implementation.html
 local function findPath(grid, start, stop, turnCost)
+  -- The heuristic used here calculates the Manhattan distance between the target and stop node.
   local function pathCostHeuristicSum(pathCost, x, y, z)
     return pathCost + math.abs(x - stop[1]) + math.abs(y - stop[2]) + math.abs(z - stop[3])
   end
   
-  return findPathPriv(grid, start, stop, turnCost, pathCostHeuristicSum)
+  return findPathHelper(grid, start, stop, turnCost, pathCostHeuristicSum)
 end
 
--- Weighted A*
+-- findPathWeighted(grid: table, start: table, stop: table[, turnCost: number,
+--   suboptimalityBound: number]): number, table, number
 -- 
+-- Variation of findPath(). This uses Weighted A* to find a suboptimal path
+-- between the start and stop points. The trade-off is reduced exploration of
+-- nodes in the grid which therefore increases speed of the calculation. If the
+-- suboptimalityBound is provided, it should be a value greater than 1. This
+-- value is multiplied with the heuristic result to make it non-admissible (it
+-- overestimates the distance to the goal). As the suboptimalityBound approaches
+-- infinity, the search turns into a greedy best-first search.
+-- 
+-- See here for details and more variations:
 -- http://theory.stanford.edu/~amitp/GameProgramming/Variations.html
 local function findPathWeighted(grid, start, stop, turnCost, suboptimalityBound)
+  suboptimalityBound = suboptimalityBound or 1.5
   local function pathCostHeuristicSum(pathCost, x, y, z)
     return pathCost + (math.abs(x - stop[1]) + math.abs(y - stop[2]) + math.abs(z - stop[3])) * suboptimalityBound
   end
   
-  return findPathPriv(grid, start, stop, turnCost, pathCostHeuristicSum)
+  return findPathHelper(grid, start, stop, turnCost, pathCostHeuristicSum)
 end
 
--- Weighted A* (piecewise Convex Downward)
+-- findPathPWXD(grid: table, start: table, stop: table[, turnCost: number,
+--   suboptimalityBound: number]): number, table, number
 -- 
+-- Another variation of findPath(). This uses Weighted A* (piecewise Convex
+-- Downward) to find a suboptimal path between the start and stop points. This
+-- often gives better speed over Weighted A* because the scaling of the path
+-- cost is applied as we get closer to the goal. If the suboptimalityBound is
+-- provided, it should be a value greater than 1.
+-- 
+-- See here for demonstration and implementation details:
 -- https://www.movingai.com/SAS/SUB/
 -- https://webdocs.cs.ualberta.ca/~nathanst/papers/chen2021general.pdf
 local function findPathPWXD(grid, start, stop, turnCost, suboptimalityBound)
+  suboptimalityBound = suboptimalityBound or 1.5
   local function pathCostHeuristicSum(pathCost, x, y, z)
     local h = math.abs(x - stop[1]) + math.abs(y - stop[2]) + math.abs(z - stop[3])
     if h > pathCost then
@@ -261,27 +308,40 @@ local function findPathPWXD(grid, start, stop, turnCost, suboptimalityBound)
     end
   end
   
-  return findPathPriv(grid, start, stop, turnCost, pathCostHeuristicSum)
+  return findPathHelper(grid, start, stop, turnCost, pathCostHeuristicSum)
 end
 
-findPathPriv = function(grid, start, stop, turnCost, pathCostHeuristicSum)
+-- Helper function for findPath() and variations.
+findPathHelper = function(grid, start, stop, turnCost, pathCostHeuristicSum)
   turnCost = turnCost or 1.0001
   
+  -- Find indices of the start and stop positions in the grid.
   local startNode = (start[2] * grid.zSize + start[3]) * grid.xSize + start[1] + 1
   local stopNode = (stop[2] * grid.zSize + stop[3]) * grid.xSize + stop[1] + 1
   
+  -- For node n, cameFrom[n] is the node immediately preceding it on the cheapest path to get to n.
   local cameFrom = {}
-  local gScore = setmetatable({[startNode] = 0}, {
-    __index = function()
-      return math.huge
-    end
-  })
-  local fScore = setmetatable({[startNode] = 0--[[could also use: heuristicFunc(x, y, z)]]}, {
+  
+  -- For node n, pathCosts[n] is the cost of the cheapest path from start to n.
+  local pathCosts = setmetatable({[startNode] = 0}, {
     __index = function()
       return math.huge
     end
   })
   
+  -- For node n, nodePriorities[n] is the current best guess of the total path cost to get to the goal when going through n.
+  local nodePriorities = setmetatable({[startNode] = 0}, {
+    __index = function()
+      return math.huge
+    end
+  })
+  
+  -- Nodes that have been discovered and need to be expanded. The priority queue keeps the node with the smallest estimated total path cost at the front.
+  -- A node that is removed from the queue may be added again later, or a node may change priority from within the queue.
+  local fringeNodes = dstructs.PriorityQueue:new({startNode}, function(a, b) return nodePriorities[a] > nodePriorities[b] end)
+  
+  -- Iterates from stopNode to startNode following the trail left in cameFrom.
+  -- The solution (which is the reversed path) is then returned.
   local function reconstructPath()
     local pathReversed, pathReversedSize = {}, 0
     local node = stopNode
@@ -290,73 +350,48 @@ findPathPriv = function(grid, start, stop, turnCost, pathCostHeuristicSum)
       pathReversed[pathReversedSize] = node
       node = cameFrom[node]
     end
-    --assert(gScore[stopNode] == fScore[stopNode])
-    return gScore[stopNode], pathReversed, pathReversedSize
+    return pathCosts[stopNode], pathReversed, pathReversedSize
   end
   
-  local fringeNodes = dstructs.PriorityQueue:new({startNode}, function(a, b) return fScore[a] > fScore[b] end)
-  --local fringeSet = {[startNode] = true}
-  
+  -- Checks a node adjacent to current to see if it corresponds to an unexplored node, or if it improves the path cost of an existing one.
   local function checkNeighbor(current, x, y, z, baseMovementCost)
     local neighbor = (y * grid.zSize + z) * grid.xSize + x + 1
+    -- Return early if a barrier is found, or the neighbor is in the reverse direction.
     if grid[neighbor] == -1 or neighbor == cameFrom[current] then
       return
     end
     checkNeighborCounter = checkNeighborCounter + 1
-    local oldGScore = gScore[neighbor]
-    local newGScore = gScore[current] + baseMovementCost + grid[neighbor]
-    --io.write("  checkNeighbor(" .. current .. ", " .. x .. ", " .. y .. ", " .. z .. "), newGScore = " .. newGScore .. ", oldGScore = " .. gScore[neighbor])
-    if newGScore < oldGScore then
+    local oldPathCost = pathCosts[neighbor]
+    local newPathCost = pathCosts[current] + baseMovementCost + grid[neighbor]
+    --io.write("  checkNeighbor(" .. current .. ", " .. x .. ", " .. y .. ", " .. z .. "), newPathCost = " .. newPathCost .. ", oldPathCost = " .. pathCosts[neighbor])
+    if newPathCost < oldPathCost then
       --io.write(" (greater)\n")
-      if oldGScore ~= math.huge then
+      --if oldPathCost ~= math.huge then
         --io.write("score was increased for existing node!\n")
-      end
+      --end
       cameFrom[neighbor] = current
-      gScore[neighbor] = newGScore
-      fScore[neighbor] = pathCostHeuristicSum(newGScore, x, y, z)
+      pathCosts[neighbor] = newPathCost
+      nodePriorities[neighbor] = pathCostHeuristicSum(newPathCost, x, y, z)
+      
       -- The neighbor is added to fringe if it hasn't been found before, or it has and is not currently in the fringe.
       -- Another way to do this is to always add it (allow duplicates), but this doesn't work so well when we store the priorities outside of the queue (the heap can get invalidated).
-      if oldGScore == math.huge or not fringeNodes:updateKey(neighbor, neighbor, true) then
+      if oldPathCost == math.huge or not fringeNodes:updateKey(neighbor, neighbor, true) then
         fringeNodes:push(neighbor)
       end
-      --[[if fringeSet[neighbor] then
-        fringeNodes:updateKey(neighbor, neighbor, true)
-      else
-        fringeNodes:push(neighbor)
-        fringeSet[neighbor] = true
-      end--]]
-    else
+    --else
       --io.write(" (less)\n")
     end
   end
   
   while not fringeNodes:empty() do
-    -- debug to confirm min value in queue
-    local minNode = nil
-    local minValue = math.huge
-    for i, v in ipairs(fringeNodes.arr) do
-      if fScore[v] < minValue then
-        minNode = v
-        minValue = fScore[v]
-      end
-    end
-    
-    
+    -- Get node at the front of queue (smallest total estimated cost) and explore the neighbor nodes if it's not the goal.
     local current = fringeNodes:pop()
-    --fringeSet[current] = nil
-    assert(minValue == fScore[current], "minNode = " .. minNode .. ", current = " .. current)
     if current == stopNode then
       return reconstructPath()
     end
-    local divisor = (current - 1) / grid.xSize
-    local x = (current - 1) % grid.xSize
-    local z = math.floor(divisor) % grid.zSize
-    local y = math.floor(divisor / grid.zSize)
+    --io.write("current = " .. current .. ", (" .. x .. ", " .. y .. ", " .. z .. "), g = " .. pathCosts[current] .. ", f = " .. nodePriorities[current] .. "\n")
     
-    
-    --io.write("current = " .. current .. ", (" .. x .. ", " .. y .. ", " .. z .. "), g = " .. gScore[current] .. ", f = " .. fScore[current] .. "\n")
-    
-    -- Prefer straight line paths by adding a small cost when turning.
+    -- Prefer straight line paths by adding a small path cost when turning.
     local xMovementCost, yMovementCost, zMovementCost = turnCost, 1, turnCost
     if cameFrom[current] then
       if math.abs(current - cameFrom[current]) == 1 then
@@ -367,6 +402,11 @@ findPathPriv = function(grid, start, stop, turnCost, pathCostHeuristicSum)
         zMovementCost = 1
       end
     end
+    
+    local divisor = (current - 1) / grid.xSize
+    local x = (current - 1) % grid.xSize
+    local z = math.floor(divisor) % grid.zSize
+    local y = math.floor(divisor / grid.zSize)
     
     if x < grid.xSize - 1 then
       checkNeighbor(current, x + 1, y, z, xMovementCost)
@@ -387,7 +427,7 @@ findPathPriv = function(grid, start, stop, turnCost, pathCostHeuristicSum)
       checkNeighbor(current, x, y, z - 1, zMovementCost)
     end
   end
-  return math.huge, nil, 0
+  return math.huge, {}, 0
 end
 
 local function printGrid(grid, paths)
