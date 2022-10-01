@@ -1,3 +1,23 @@
+--[[
+todo:
+  * convert the coroutine checks to a function? maybe nah
+  * move iterators and item rearrange logic into separate module.
+  * forceSwing()/forceMine() should swap pick with a fresh one.
+  * toolDurabilityReturn could be set dynamically, based on the maxHealth and a fixed number of ticks we allow on the tool.
+  * need to build staircase and walls if enabled.
+  * load data from config file (and generate one if not found).
+  * support for generators?
+  * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
+  * dynamically compute energyLevelMin?
+
+to test:
+  * item restocking needs more testing
+  * are tools always protected? if allowed, can tools be used completely (what about tinkers tools)?
+
+issues:
+  * broken tools do not get deposited during resupply, also need to add a small bias to allowed durability level in case of rounding errors or slow repairing tools.
+]]--
+
 local component = require("component")
 local computer = require("computer")
 local crobot = component.robot
@@ -120,9 +140,17 @@ function Quarry:new(length, width, height)
   
   robnav.setCoords(0, 0, 0, sides.front)
   
-  self.toolDurabilityReturn = 0.5
-  self.toolDurabilityMin = 0.3
+  -- The tool health (number of uses remaining) threshold for triggering the robot to return to restock point, and minimum allowed health.
+  self.toolHealthReturn = 10
+  self.toolHealthMin = 0
+  -- Bias added to self.toolHealthReturn when robot is selecting new tools during resupply.
+  self.toolHealthBias = 5
+  -- Similar to tool health, but calculated as a float value in range [0, 1] per tool.
+  self.toolDurabilityReturn = false
+  self.toolDurabilityMin = false
+  -- Minimum threshold on energy level before robot needs to resupply.
   self.energyLevelMin = 1000
+  -- Minimum number of empty slots before robot needs to resupply.
   self.emptySlotsMin = 1
   
   self.withinMainCoroutine = false
@@ -138,9 +166,7 @@ function Quarry:new(length, width, height)
     {3, ".*stairs/.*"},
     {2, ".*pickaxe.*"}
   }
-  self.miningItems = {
-    ".*pickaxe.*"
-  }
+  self.miningItemsStockIndex = 3
   
   self.xDir = 1
   self.zDir = 1
@@ -337,6 +363,12 @@ function Quarry:itemRearrange()
         end
       end
     end
+    -- If found a mining tool and the durability is less than acceptable, mark the stockIndex as invalid.
+    if stockIndex == self.miningItemsStockIndex then
+      if item.maxDamage > 0 and item.maxDamage - item.damage <= self.toolHealthReturn + self.toolHealthBias then
+        stockIndex = -1
+      end
+    end
     internalInvItems[slot] = {
       itemName = itemName,
       stockIndex = stockIndex
@@ -371,10 +403,13 @@ function Quarry:itemRearrange()
         
         -- Transfer the item stack, and update internalInvItems.
         lastItemName = internalInvItems[foundSlot].itemName
-        stockedItems[slot] = lastItemName
         crobot.select(foundSlot)
-        xassert(crobot.transferTo(slot))
-        internalInvItems[slot], internalInvItems[foundSlot] = internalInvItems[foundSlot], internalInvItems[slot]
+        -- We should always be able to transfer the items, except if they are both tools of the same type then the operation fails.
+        -- It's possible to handle this by moving the duplicate tool elsewhere, but ignoring the problem until later should be fine.
+        if crobot.transferTo(slot) then
+          stockedItems[slot] = lastItemName
+          internalInvItems[slot], internalInvItems[foundSlot] = internalInvItems[foundSlot], internalInvItems[slot]
+        end
         if crobot.count(foundSlot) == 0 then
           internalInvItems[foundSlot] = nil
         end
@@ -385,6 +420,13 @@ function Quarry:itemRearrange()
   
   dlog.out("itemRearrange", "internalInvItems:", internalInvItems)
   dlog.out("itemRearrange", "stockedItems:", stockedItems)
+  
+  --[[
+  stockedItems = {
+    [slot] = <item full name>
+    ...
+  }
+  --]]
   
   return stockedItems
 end
@@ -411,18 +453,16 @@ function Quarry:itemDeposit(stockedItems, outputSide)
   end
   
   -- Push tool to output if too low.
+  -- We pull the tool out of equipped slot to check if there's actually something there and it has measurable durability.
   crobot.select(internalInventorySize)
   icontroller.equip()
   local toolItem = icontroller.getStackInInternalSlot()
-  if toolItem and toolItem.maxDamage > 0 then
-    local durability = (toolItem.maxDamage - toolItem.damage) / toolItem.maxDamage
-    if durability <= self.toolDurabilityReturn then
+  if toolItem and toolItem.maxDamage > 0 and toolItem.maxDamage - toolItem.damage <= self.toolHealthReturn + self.toolHealthBias then
+    crobot.drop(outputSide)
+    while crobot.count() > 0 do
+      os.sleep(2.0)
+      dlog.out("itemDeposit", "sleep...")
       crobot.drop(outputSide)
-      while crobot.count() > 0 do
-        os.sleep(2.0)
-        dlog.out("itemDeposit", "sleep...")
-        crobot.drop(outputSide)
-      end
     end
   end
   icontroller.equip()
@@ -431,59 +471,92 @@ end
 -- Retrieve items from the specified side and fill slots that match the format
 -- defined in self.stockLevels. If there is no equipped item then a new one is
 -- picked up that meets the minimum durability requirement.
-function Quarry:itemRestock(inputSide)
+function Quarry:itemRestock(stockedItems, inputSide)
   local internalInventorySize = crobot.inventorySize()
   robnav.turnTo(inputSide)
   inputSide = inputSide < 2 and inputSide or sides.front
   
-  -- Grab more stock items as needed (from input).
+  -- Categorize items in the input inventory based on their full name (and track which slots they are stored in).
+  -- Note that we could skip storing items that don't have a valid stockIndex, but then we need to search for the category each time one of those items appears.
   local inputItems = {}
   for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
     local itemName = getItemFullName(item)
     local inputItemSlots = inputItems[itemName]
     if not inputItemSlots then
-      inputItems[itemName] = {[slot] = math.floor(item.size)}
+      -- The first time an item type is found, search for its index in the stock levels.
+      local stockIndex = -1
+      for i, stockEntry in ipairs(self.stockLevels) do
+        if stockEntry[1] > 0 then
+          for j = 2, #stockEntry do
+            if string.match(itemName, stockEntry[j]) then
+              stockIndex = i
+              break
+            end
+          end
+          if stockIndex > 0 then
+            break
+          end
+        end
+      end
+      -- If found a mining tool and the durability is less than acceptable, mark the stockIndex as invalid.
+      -- This shouldn't cause problems if the inventory has two of the same tools with different durability levels, because the two tools will get mapped to different names (metadata is damage value).
+      if stockIndex == self.miningItemsStockIndex then
+        if item.maxDamage > 0 and item.maxDamage - item.damage <= self.toolHealthReturn + self.toolHealthBias then
+          stockIndex = -1
+        end
+      end
+      inputItems[itemName] = {
+        stockIndex = stockIndex,
+        [slot] = math.floor(item.size)
+      }
     else
       inputItemSlots[slot] = math.floor(item.size)
     end
   end
   
+  --[[
+  inputItems = {
+    [item full name] = {
+      stockIndex = <index in self.stockLevels>
+      [slot] = <item count in slot>
+      ...
+    }
+    ...
+  }
+  --]]
+  
   dlog.out("itemRestock", "inputItems before:", inputItems)
   
   for slot = 1, internalInventorySize do
     -- Determine the entry in self.stockLevels that corresponds to the current slot.
-    local slotStockEntry
+    local slotStockIndex = -1
     local slotOffset = 0
-    for _, stockEntry in ipairs(self.stockLevels) do
+    for i, stockEntry in ipairs(self.stockLevels) do
       slotOffset = slotOffset + stockEntry[1]
       if slotOffset >= slot then
-        slotStockEntry = stockEntry
+        slotStockIndex = i
         break
       end
     end
-    if not slotStockEntry then
+    if slotStockIndex == -1 then
       break
     end
     
-    dlog.out("itemRestock", "checking slot ", slot, " with stock levels:", slotStockEntry)
+    dlog.out("itemRestock", "checking slot ", slot, " with stock index ", slotStockIndex)
     
     if crobot.space(slot) > 0 then
-      -- Find the slots for the type of item we need to extract from the inventory. Use the same item in the current slot, or the first one that matches one of the options in slotStockEntry.
+      -- Find the slots for the type of item we need to extract from the inventory. Use the same item in the current slot, or the first one that matches the option at slotStockIndex.
       local currentItemName
       local inputItemSlots
       if crobot.count(slot) > 0 then
-        currentItemName = getItemFullName(icontroller.getStackInInternalSlot(slot))
+        -- There is an item in the slot, so it should already be in stockedItems (and we can skip expensive call to check the item stack).
+        currentItemName = stockedItems[slot]
         inputItemSlots = inputItems[currentItemName]
       else
         for itemName, itemSlots in pairs(inputItems) do
-          for i = 2, #slotStockEntry do
-            if string.match(itemName, slotStockEntry[i]) then
-              currentItemName = itemName
-              inputItemSlots = itemSlots
-              break
-            end
-          end
-          if inputItemSlots then
+          if itemSlots.stockIndex == slotStockIndex then
+            currentItemName = itemName
+            inputItemSlots = itemSlots
             break
           end
         end
@@ -492,15 +565,24 @@ function Quarry:itemRestock(inputSide)
       -- Continuously suck items from first available slot until full or none left.
       if inputItemSlots then
         dlog.out("itemRestock", "inputItemSlots:", inputItemSlots)
+        stockedItems[slot] = currentItemName
         crobot.select(slot)
+        local externSlot = next(inputItemSlots)
+        if type(externSlot) == "string" then
+          externSlot = next(inputItemSlots, externSlot)
+        end
         while crobot.space(slot) > 0 do
-          local externSlot = next(inputItemSlots)
           local numTransferred = icontroller.suckFromSlot(inputSide, externSlot, crobot.space(slot))
           xassert(numTransferred)
           inputItemSlots[externSlot] = inputItemSlots[externSlot] - numTransferred
           if inputItemSlots[externSlot] <= 0 then
+            -- Slot is empty, delete it and find the next one (if we can).
             inputItemSlots[externSlot] = nil
-            if next(inputItemSlots) == nil then
+            externSlot = next(inputItemSlots)
+            if type(externSlot) == "string" then
+              externSlot = next(inputItemSlots, externSlot)
+            end
+            if externSlot == nil then
               inputItems[currentItemName] = nil
               break
             end
@@ -509,28 +591,32 @@ function Quarry:itemRestock(inputSide)
       end
     end
   end
-  dlog.out("itemRestock", "inputItems before:", inputItems)
+  dlog.out("itemRestock", "inputItems after:", inputItems)
+  dlog.out("itemRestock", "stockedItems finalized:", stockedItems)
   
-  -- Grab new tool if needed.
+  -- Grab new tool if nothing is equipped.
   crobot.select(internalInventorySize)
   icontroller.equip()
   local toolItem = icontroller.getStackInInternalSlot()
   if not toolItem then
     local bestToolSlot = -1
-    local bestToolDurability = -1
+    local bestToolHealth = -1
     while true do
+      -- Check all items in input inventory for the highest durability tool that matches a mining item type.
       for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
         local itemName = getItemFullName(item)
-        local durability
-        for _, itemPattern in pairs(self.miningItems) do
-          if string.match(itemName, itemPattern) then
-            durability = item.maxDamage > 0 and ((item.maxDamage - item.damage) / item.maxDamage) or 1.0
+        local health
+        local stockEntry = self.stockLevels[self.miningItemsStockIndex]
+        for i = 2, #stockEntry do
+          if string.match(itemName, stockEntry[i]) then
+            health = item.maxDamage > 0 and item.maxDamage - item.damage or math.huge
             break
           end
         end
-        if durability and durability > self.toolDurabilityReturn and durability > bestToolDurability then
+        if health and health > self.toolHealthReturn + self.toolHealthBias and health > bestToolHealth then
           bestToolSlot = slot
-          bestToolDurability = durability
+          bestToolHealth = health
+          toolItem = item
         end
       end
       if bestToolSlot ~= -1 then
@@ -543,6 +629,27 @@ function Quarry:itemRestock(inputSide)
     xassert(icontroller.suckFromSlot(inputSide, bestToolSlot))
   end
   icontroller.equip()
+  
+  -- Tool damage is calculated as: ((item.maxDamage - item.damage) / item.maxDamage)
+  -- Find the damage values for the corresponding health levels.
+  if toolItem.maxDamage > 0 then
+    self.toolDurabilityReturn = self.toolHealthReturn / toolItem.maxDamage
+    self.toolDurabilityMin = self.toolHealthMin / toolItem.maxDamage
+  else
+    self.toolDurabilityReturn = 0.0
+    self.toolDurabilityMin = 0.0
+  end
+end
+
+-- Performs a rearrangement of items, deposits excess, and pulls in new ones to
+-- match the set stock levels. The equipped tool is replaced with a fresh one if
+-- necessary.
+function Quarry:fullResupply()
+  local stockedItems = self:itemRearrange()
+  self:itemDeposit(stockedItems, self.inventoryOutput)
+  self:itemRestock(stockedItems, self.inventoryInput)
+  crobot.select(1)
+  robnav.turnTo(sides.front)
 end
 
 function Quarry:run()
@@ -553,12 +660,7 @@ function Quarry:run()
     return ReturnReasons.quarryDone
   end)
   
-  -- Restock items in inventory.
-  local stockedItems = self:itemRearrange()
-  self:itemDeposit(stockedItems, self.inventoryOutput)
-  self:itemRestock(self.inventoryInput)
-  crobot.select(1)
-  robnav.turnTo(sides.front)
+  self:fullResupply()
   
   while true do
     self.withinMainCoroutine = true
@@ -572,7 +674,7 @@ function Quarry:run()
     -- Return to home position.
     dlog.out("run", "moving to home position.")
     local xLast, yLast, zLast, rLast = robnav.getCoords()
-    local selectedSlotType = self.selectedSlotType
+    local lastSelectedSlotType = self.selectedSlotType
     if robnav.y < 0 then
       self:forceMove(sides.top)
     end
@@ -599,12 +701,7 @@ function Quarry:run()
       return
     end
     
-    -- Restock items in inventory.
-    local stockedItems = self:itemRearrange()
-    self:itemDeposit(stockedItems, self.inventoryOutput)
-    self:itemRestock(self.inventoryInput)
-    crobot.select(1)
-    robnav.turnTo(sides.front)
+    self:fullResupply()
     
     -- Wait until fully recharged.
     while computer.maxEnergy() - computer.energy() > 50 do
@@ -614,9 +711,9 @@ function Quarry:run()
     
     -- Go back to working area.
     dlog.out("run", "moving back to working position.")
-    if selectedSlotType == 1  then
+    if lastSelectedSlotType == 1  then
       xassert(self:selectBuildBlock())
-    elseif selectedSlotType == 2  then
+    elseif lastSelectedSlotType == 2  then
       xassert(self:selectStairBlock())
     end
     while robnav.y > yLast + 2 do
