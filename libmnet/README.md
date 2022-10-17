@@ -216,7 +216,7 @@ Most of this code was adapted from the old packer.lua module. The packer module 
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libmnet/mrpc.lua) -->
-`mrpc.newServer(port: number): table`
+`mrpc.newServer(port: number[, allowDuplicatePorts: boolean]): table`
 
 Creates a new instance of an RPC server with a given port number. This server
 is used for both requesting functions to run on a remote machine (and
@@ -226,9 +226,31 @@ other machines. Once a server has been created on the sender and receiver
 bound on the receiving end, the sender can start sending requests to the
 receiver.
 
+New servers are added as listeners of network messages and all of them
+respond to `mrpc.handleMessage()`. For this reason, the port chosen should be
+unique so that servers do not conflict. For example, two servers with the
+same port running on the same machine (potentially from different programs)
+could define the same RPC function names, resulting in undefined behavior. To
+disable safety checks for this, set `allowDuplicatePorts` to true. When a
+server gets garbage collected it is automatically removed from the listeners,
+but it is good practice to call `MrpcServer.destroy()` when finished using
+the server.
+
 Note that the object this function returns is an instance of `MrpcServer`,
 and unlike most class designs the methods are invoked with a dot instead of
 colon operator (this enables the syntax with the sync and async methods).
+
+`mrpc.handleMessage(obj: any[, host: string, port: number,
+  message: string]): boolean`
+
+When called with the results of `mnet.receive()`, checks if the port and
+message match an incoming request to run a function (or results from a sent
+request). If the message is requesting to run a function and the matching
+function has been assigned to `MrpcServer.functions.<call name>`, it is
+called with obj, host, and all of the sent arguments. The obj argument should
+be used if the bound function is a class member. Otherwise, nil can be passed
+for obj and the first argument in the function can be ignored. Returns true
+if the message was handled by any listening servers, or false if not.
 
 `MrpcServer.sync.<call name>(host: string, ...): ...`
 
@@ -283,14 +305,14 @@ declarationMap table, then use `dofile()` to pass it into this function.
 `MrpcServer.handleMessage(obj: any[, host: string, port: number,
   message: string]): boolean`
 
-When called with the results of `mnet.receive()`, checks if the port and
-message match an incoming request to run a function (or results from a sent
-request). If the message is requesting to run a function and the matching
-function has been assigned to `MrpcServer.functions.<call name>`, it is
-called with obj, host, and all of the sent arguments. The obj argument should
-be used if the bound function is a class member. Otherwise, nil can be passed
-for obj and the first argument in the function can be ignored. Returns true
-if the message was handled by this server, or false if not.
+Alias for `mrpc.handleMessage()`, either function can be used.
+
+`MrpcServer.destroy()`
+
+Stops the RPC server instance from responding to network messages (this frees
+the port the server was using). Ideally, this should be called every time a
+server is finished running instead of assuming that garbage collection will
+delete it in a timely fashion.
 <!-- SIMPLE-DOC:END -->
 
 ### Example usage
