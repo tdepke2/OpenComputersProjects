@@ -448,10 +448,10 @@ function mnet.send(host, port, message, reliable, waitForAck)
   ##end
   
   ##if ENABLE_LOOPBACK then
-  local reliableBak
+  -- Messages sent to the loopback interface are always unreliable because it doesn't make sense to ack or retransmit these.
+  local reliableOriginal = reliable
   if host == mnet.hostname or host == "localhost" then
     host = mnet.hostname
-    reliableBak = reliable
     reliable = false
   end
   ##end
@@ -472,19 +472,34 @@ function mnet.send(host, port, message, reliable, waitForAck)
   end
   
   ##if ENABLE_LOOPBACK then
-  if reliable or reliableBak then
+  if reliableOriginal then
   ##else
   if reliable then
   ##end
     local lastHostSeq = host .. "," .. mnetLastSent[host]
+    
+    -- Busy-wait until the last packet receives an ack or it times out.
+    ##if ENABLE_LOOPBACK then
+    if waitForAck and reliable then
+    ##else
     if waitForAck then
-      -- Busy-wait until the last packet receives an ack or it times out.
+    ##end
       while mnetSentPackets[lastHostSeq] do
         if not mnetSentPackets[lastHostSeq][5] then
           return lastHostSeq
         end
         os.sleep(0.05)
       end
+    ##if ENABLE_LOOPBACK then
+    elseif waitForAck then
+      -- For loopback message, we will instead wait for the message in mnetReceivedPackets to clear out.
+      while mnetReceivedPackets[lastHostSeq] do
+        if not mnetReceivedPackets[lastHostSeq][4] then
+          return lastHostSeq
+        end
+        os.sleep(0.05)
+      end
+    ##end
     else
       return lastHostSeq
     end
