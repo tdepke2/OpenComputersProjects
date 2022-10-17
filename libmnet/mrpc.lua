@@ -20,7 +20,11 @@ local mrpc = {}
 local MrpcServer = {}
 
 -- These values are set from metatable __index events to keep track of state in chained function calls.
+-- The cachedObj holds an instance of an MrpcServer, and should always be set to nil after it is used (for garbage collection).
 local cachedObj, cachedCallName
+
+-- Set of all active RPC servers that are waiting for network messages. Weak keys are used to allow automatic removal of dead servers.
+local serverListeners = setmetatable({}, {__mode = "k"})
 
 MrpcServer.__index = function(t, k)
   cachedObj = t
@@ -28,7 +32,7 @@ MrpcServer.__index = function(t, k)
 end
 
 
---- `mrpc.newServer(port: number): table`
+--- `mrpc.newServer(port: number[, allowDuplicatePorts: boolean]): table`
 -- 
 -- Creates a new instance of an RPC server with a given port number. This server
 -- is used for both requesting functions to run on a remote machine (and
@@ -38,13 +42,28 @@ end
 -- bound on the receiving end, the sender can start sending requests to the
 -- receiver.
 -- 
+-- New servers are added as listeners of network messages and all of them
+-- respond to `mrpc.handleMessage()`. For this reason, the port chosen should be
+-- unique so that servers do not conflict. For example, two servers with the
+-- same port running on the same machine (potentially from different programs)
+-- could define the same RPC function names, resulting in undefined behavior. To
+-- disable safety checks for this, set `allowDuplicatePorts` to true. When a
+-- server gets garbage collected it is automatically removed from the listeners,
+-- but it is good practice to call `MrpcServer.destroy()` when finished using
+-- the server.
+-- 
 -- Note that the object this function returns is an instance of `MrpcServer`,
 -- and unlike most class designs the methods are invoked with a dot instead of
 -- colon operator (this enables the syntax with the sync and async methods).
-function mrpc.newServer(port)
+function mrpc.newServer(port, allowDuplicatePorts)
   local self = setmetatable({}, MrpcServer)
   
   dlog.checkArgs(port, "number")
+  if not allowDuplicatePorts then
+    for server, _ in pairs(serverListeners) do
+      xassert(port ~= server.port, "port ", port, " is already in use by server ", server, ".")
+    end
+  end
   self.port = port
   
   -- Function callbacks registered by the server and executed when a matching
@@ -72,7 +91,55 @@ function mrpc.newServer(port)
   self.returnedCallName = nil
   self.returnedMessage = nil
   
+  -- Register the server to listen for message events.
+  serverListeners[self] = true
+  
   return self
+end
+
+
+--- `mrpc.handleMessage(obj: any[, host: string, port: number,
+--   message: string]): boolean`
+-- 
+-- When called with the results of `mnet.receive()`, checks if the port and
+-- message match an incoming request to run a function (or results from a sent
+-- request). If the message is requesting to run a function and the matching
+-- function has been assigned to `MrpcServer.functions.<call name>`, it is
+-- called with obj, host, and all of the sent arguments. The obj argument should
+-- be used if the bound function is a class member. Otherwise, nil can be passed
+-- for obj and the first argument in the function can be ignored. Returns true
+-- if the message was handled by any listening servers, or false if not.
+function mrpc.handleMessage(obj, host, port, message)
+  local messageHandled = false
+  for server, _ in pairs(serverListeners) do
+    if port == server.port then
+      local messageType = string.byte(message)
+      local callName = string.match(message, ".,([^{]*)")
+      
+      if messageType == string.byte("r") then
+        -- Message is results from a previous syncSend() call, cache it for later.
+        if server.syncSendMutex then
+          server.returnedCallName = callName
+          server.returnedMessage = message
+        end
+      elseif server.functions[callName] then
+        if messageType == string.byte("s") then
+          -- Message is from a synchronous call, need to send the results back.
+          local results = table.pack(server.functions[callName](obj, host, server.unpack[callName](message)))
+          if rawget(server.callTypes, callName .. ",r") then
+            verifyCallTypes(callName, server.callTypes[callName .. ",r"], results, "result", 0)
+          end
+          
+          mnet.send(host, server.port, "r," .. callName .. (results.n == 0 and "{n=0}" or serialization.serialize(results)), true)
+        else
+          -- Message is from an asynchronous call, just call the function.
+          server.functions[callName](obj, host, server.unpack[callName](message))
+        end
+      end
+      messageHandled = true
+    end
+  end
+  return messageHandled
 end
 
 
@@ -94,8 +161,9 @@ end
 
 -- Helper function for MrpcServer.sync.
 local function syncSend(host, ...)
+  local self, cachedObj = cachedObj, nil
+  local callName, arg = cachedCallName, table.pack(...)
   xassert(host ~= "*", "broadcast address not allowed for synchronous call.")
-  local self, callName, arg = cachedObj, cachedCallName, table.pack(...)
   verifyCallTypes(callName, self.callTypes[callName .. ",a"], arg, "argument", 1)
   
   -- Attempt to grab the mutex, or wait for other threads to finish their syncSend() calls.
@@ -135,7 +203,8 @@ end
 
 -- Helper function for MrpcServer.async.
 local function asyncSend(host, ...)
-  local self, callName, arg = cachedObj, cachedCallName, table.pack(...)
+  local self, cachedObj = cachedObj, nil
+  local callName, arg = cachedCallName, table.pack(...)
   verifyCallTypes(callName, self.callTypes[callName .. ",a"], arg, "argument", 1)
   
   -- Serialize arguments into a message and send to host(s). No waiting for message to be received.
@@ -145,7 +214,8 @@ end
 
 -- Helper function for MrpcServer.unpack.
 local function doUnpack(message)
-  local self, callName = cachedObj, cachedCallName
+  local self, cachedObj = cachedObj, nil
+  local callName = cachedCallName
   
   -- Only run expensive call to serialization.unserialize() if non-empty table in message.
   if not string.find(message, "^.," .. callName .. "{n=0}") then
@@ -218,8 +288,8 @@ MrpcServer.unpack = setmetatable({}, {
 -- making it clear what the value represents) and types1 is a comma-separated
 -- list of accepted types (or the string `any`).
 function MrpcServer.declareFunction(callName, arguments, results)
+  local self, cachedObj = cachedObj, nil
   dlog.checkArgs(callName, "string", arguments, "table,nil", results, "table,nil")
-  local self = cachedObj
   
   local argTypes = {}
   if arguments then
@@ -250,8 +320,9 @@ end
 -- intended way to use this is create a Lua script that returns the
 -- declarationMap table, then use `dofile()` to pass it into this function.
 function MrpcServer.addDeclarations(declarationMap)
+  local self, cachedObj = cachedObj, nil
   for callName, v in pairs(declarationMap) do
-    MrpcServer.declareFunction(callName, v[1], v[2])
+    self.declareFunction(callName, v[1], v[2])
   end
 end
 
@@ -259,43 +330,25 @@ end
 --- `MrpcServer.handleMessage(obj: any[, host: string, port: number,
 --   message: string]): boolean`
 -- 
--- When called with the results of `mnet.receive()`, checks if the port and
--- message match an incoming request to run a function (or results from a sent
--- request). If the message is requesting to run a function and the matching
--- function has been assigned to `MrpcServer.functions.<call name>`, it is
--- called with obj, host, and all of the sent arguments. The obj argument should
--- be used if the bound function is a class member. Otherwise, nil can be passed
--- for obj and the first argument in the function can be ignored. Returns true
--- if the message was handled by this server, or false if not.
+-- Alias for `mrpc.handleMessage()`, either function can be used.
 function MrpcServer.handleMessage(obj, host, port, message)
-  local self = cachedObj
-  if port ~= self.port then
-    return false
-  end
-  local messageType = string.byte(message)
-  local callName = string.match(message, ".,([^{]*)")
-  
-  if messageType == string.byte("r") then
-    -- Message is results from a previous syncSend() call, cache it for later.
-    if self.syncSendMutex then
-      self.returnedCallName = callName
-      self.returnedMessage = message
-    end
-  elseif self.functions[callName] then
-    if messageType == string.byte("s") then
-      -- Message is from a synchronous call, need to send the results back.
-      local results = table.pack(self.functions[callName](obj, host, self.unpack[callName](message)))
-      if rawget(self.callTypes, callName .. ",r") then
-        verifyCallTypes(callName, self.callTypes[callName .. ",r"], results, "result", 0)
-      end
-      
-      mnet.send(host, self.port, "r," .. callName .. (results.n == 0 and "{n=0}" or serialization.serialize(results)), true)
-    else
-      -- Message is from an asynchronous call, just call the function.
-      self.functions[callName](obj, host, self.unpack[callName](message))
-    end
-  end
-  return true
+  cachedObj = nil
+  return mrpc.handleMessage(obj, host, port, message)
+end
+
+
+--- `MrpcServer.destroy()`
+-- 
+-- Stops the RPC server instance from responding to network messages (this frees
+-- the port the server was using). Ideally, this should be called every time a
+-- server is finished running instead of assuming that garbage collection will
+-- delete it in a timely fashion.
+function MrpcServer.destroy()
+  local self, cachedObj = cachedObj, nil
+  self.port = nil
+  self.functions = nil
+  self.callTypes = nil
+  serverListeners[self] = nil
 end
 
 return mrpc
