@@ -1,2 +1,94 @@
 <!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./simple_doc.man) -->
+<!-- The below content is automatically added from ./simple_doc.man -->
+## NAME
+  simple_doc - documentation generator for comments in Lua code.
+
+## SYNOPSIS
+  `simple_doc [OPTION]... [INPUT-FILE] [OUTPUT-FILE]`
+
+## DESCRIPTION
+  Parses docstrings in a Lua source file and writes them to the output file. This is helpful for generating an API reference for functions and fields in some source code. Docstrings are comments that begin with the pattern `---` or `--[[--` without leading characters besides whitespace. The docstring ends at the first non-comment line or the end of the comment block (the pattern `]]`). Currently, simple_doc does not consider any tags such as `@param` or `@return`, the text in the docstring is simply pasted into the output.
+  
+  It's easy to embed documentation in an existing file by using the `--insert-start` and `--insert-end` options. For example, this can be used to put Markdown formatted docstrings in a README.md file. Strings like `<!-- SIMPLE-DOC:START (FILE:...) -->` and `<!-- SIMPLE-DOC:END -->` can be placed in the readme to mark where to insert documentation, and the same strings passed to the aforementioned options. This can also be automated (with GitHub actions or other tools) to get the documentation always synced up with the code. Using Markdown docstrings is also nice for editors that can render these on hover, Sublime Text with LSP-lua works well for this purpose.
+  
+  Some of the concepts and inspiration for this program came from [LDoc](https://github.com/lunarmodules/LDoc).
+
+## OPTIONS
+  Input/output files default to `-` to specify standard input/output respectively.
+  
+  `-h`, `--help`                display help message and exit
+  
+  `-B`, `--boilerplate=NUMBER`  ignore first N comments in file (boilerplate comments)
+  
+  `-C`, `--context`             include next line in file after each comment block
+  
+  `--insert-start=STRING`       insert output text in file starting at the given string
+  
+  `--insert-end=STRING`         same as insert-start for the ending position
+  
+  `--ocdoc`                     add bullet points and indent like the OpenComputers docs
+
+## EXAMPLES
+  `simple_doc -B --ocdoc test.lua test.out`
+  
+  Input file `test.lua`:
+```lua
+--------------------------------------------------------------------------------
+-- some boilerplate comments
+-- ...
+--------------------------------------------------------------------------------
+
+--[[--
+Sample
+text
+with
+multiple
+lines
+]]
+
+--- Sample text 2
+
+local my_module = {}
+
+--- `my_module.message = "hello"`
+-- 
+-- Configures the message to send.
+my_module.message = "hello"
+
+--- `my_module.sendMessage(target: string): boolean`
+-- 
+-- Sends the message stored in `my_module.message` to a destination specified by
+-- `target`. Returns true if the message was sent and false if a transmission
+-- error occurred.
+function my_module.sendMessage(target)
+  print("Sending message ", my_module.message, " to ", target)
+  
+  -- Do some sending here...
+  -- These comments are not docstrings, and don't show up in documentation.
+  
+  return true
+end
+```
+  
+  
+  Output file `test.out`:
+```
+Sample
+text
+with
+multiple
+lines
+
+Sample text 2
+
+* `my_module.message = "hello"`
+  
+  Configures the message to send.
+
+* `my_module.sendMessage(target: string): boolean`
+  
+  Sends the message stored in `my_module.message` to a destination specified by
+  `target`. Returns true if the message was sent and false if a transmission
+  error occurred.
+```
 <!-- MARKDOWN-AUTO-DOCS:END -->
