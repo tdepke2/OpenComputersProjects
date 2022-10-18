@@ -20,5 +20,5 @@ numInputs=${#inputs[@]}
 
 for (( i = 0; i < ${numInputs}; i++ )); do
     echo "Generating docs for ${inputs[$i]}..."
-    lua simple_doc.lua "${inputs[$i]}" "${outputs[$i]}" -B --insert-start="<!-- SIMPLE-DOC:START (FILE:${inputs[$i]}) -->" --insert-end="<!-- SIMPLE-DOC:END -->"
+    lua simple_doc.lua "${inputs[$i]}" "${outputs[$i]}" -B --ocdoc --insert-start="<!-- SIMPLE-DOC:START (FILE:${inputs[$i]}) -->" --insert-end="<!-- SIMPLE-DOC:END -->"
 done

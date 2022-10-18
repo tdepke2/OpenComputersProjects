@@ -17,6 +17,7 @@ Options:
   -C, --context                include next line in file after each comment block
       --insert-start=STRING    insert output text in file starting at the given string
       --insert-end=STRING      same as insert-start for the ending position
+      --ocdoc                  add bullet points and indent like the OpenComputers docs
 
 For more information, run: man simple_doc
 ]]
@@ -67,10 +68,21 @@ local function writeSection(outputFile, docSection)
       end
       docSection[i] = nil
     end
-    -- Add remaining lines to output.
-    for i, v in ipairs(docSection) do
-      outputFile:write(v, "\n")
-      docSection[i] = nil
+    
+    if opts["ocdoc"] and docSection[1] and string.find(docSection[1], "^%s*`") then
+      -- The ocdoc format adds a bullet point to the first line (if it begins with a backtick) and indents the rest of the block.
+      outputFile:write("* ", docSection[1], "\n")
+      for i = 2, #docSection do
+        outputFile:write("  ", docSection[i], "\n")
+        docSection[i] = nil
+      end
+      docSection[1] = nil
+    else
+      -- Add remaining lines to output.
+      for i, v in ipairs(docSection) do
+        outputFile:write(v, "\n")
+        docSection[i] = nil
+      end
     end
   end
   docSection.sectionNumber = docSection.sectionNumber + 1
@@ -88,7 +100,7 @@ local function buildDoc(inputFile, outputFile)
   while line do
     if state == 1 then
       -- Within comment block (line type).
-      local docText = string.match(line, "%s*%-%-+%s?(.*)")
+      local docText = string.match(line, "^%s*%-%-+%s?(.*)")
       if docText then
         docSection.n = docSection.n + 1
         docSection[docSection.n] = docText
@@ -120,12 +132,12 @@ local function buildDoc(inputFile, outputFile)
     end
     
     -- Default state, check for comment prefix that could indicate doc comment.
-    if state == 0 and string.find(line, "%s*%-%-") then
-      local docText = string.match(line, "%s*%-%-%-+%s?(.*)")
+    if state == 0 and string.find(line, "^%s*%-%-") then
+      local docText = string.match(line, "^%s*%-%-%-+%s?(.*)")
       if docText then
         state = 1
       else
-        docText = string.match(line, "%s*%-%-%[%[%-%-+%s?(.*)")
+        docText = string.match(line, "^%s*%-%-%[%[%-%-+%s?(.*)")
         if docText then
           state = 2
         end
