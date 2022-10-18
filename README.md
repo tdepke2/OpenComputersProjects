@@ -16,6 +16,10 @@ TODO: Add description, setup instructions, screenshots, etc.
 
 > Networking library with support for reliable/unreliable messaging (like TCP/UDP) and messages of any size. Automatic routing makes the network design very flexible, and the code has a small footprint for embedded devices (fits on EEPROM).
 
+[simple_doc](simple_doc)
+
+> Document all the code! Did I mention it's fully automated too?
+
 [simple_preprocess](simple_preprocess)
 
 > Minimalistic preprocessor for Lua code. Use metaprogramming to let the code write new code!
