@@ -503,7 +503,7 @@ function mnet.receive(timeout, connectionLostCallback)
   
   -- Check if we have buffered packets that are ready to return immediately.
   if mnetReceiveReadyHostSeq or mnetLocalReadyHostSeq then
-    if not mnetReceiveReadyHostSeq then
+    if not mnetReceiveReadyHostSeq or mnetReceiveReadyHostSeq == mnetLocalReadyHostSeq then
       mnetReceiveReadyHostSeq = mnetLocalReadyHostSeq
       mnetLocalReadyHostSeq = nil
     end

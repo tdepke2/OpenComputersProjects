@@ -142,4 +142,5 @@ end
 dlog.handleError(xpcall(main, debug.traceback, ...))
 mnet.debugEnableLossy(false)
 mnet.debugSetSmallMTU(false)
+mrpc_server.destroy()
 dlog.osBlockNewGlobals(false)

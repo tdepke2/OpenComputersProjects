@@ -588,7 +588,7 @@ function mnet.receive(ev, connectionLostCallback)
   -- Check if we have buffered packets that are ready to return immediately.
   ##if ENABLE_LOOPBACK then
   if mnetReceiveReadyHostSeq or mnetLocalReadyHostSeq then
-    if not mnetReceiveReadyHostSeq then
+    if not mnetReceiveReadyHostSeq or mnetReceiveReadyHostSeq == mnetLocalReadyHostSeq then
       mnetReceiveReadyHostSeq = mnetLocalReadyHostSeq
       mnetLocalReadyHostSeq = nil
     end

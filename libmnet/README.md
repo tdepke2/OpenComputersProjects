@@ -19,6 +19,7 @@ The mnet protocol stack covers layers 3 and 4 of the OSI model and is designed f
 
 * Hostnames are used as addresses, they must be unique (no DNS or DHCP built in).
 * No congestion control, the network can get overloaded in extreme cases.
+* No background service means care should be taken when running mnet across multiple programs/threads. The threads would need to redistribute each message received that belongs to a different recipient (mrpc takes care of this).
 
 ### How it works
 
@@ -344,4 +345,8 @@ local listenerThread = thread.create(function()
     mrpc_server.handleMessage(nil, host, port, message)
   end
 end)
+
+-- Always a good practice to clean up the server explicitly.
+-- Otherwise, it may continue handling requests if mrpc.handleMessage() is called elsewhere.
+mrpc_server.destroy()
 ```
