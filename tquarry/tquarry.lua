@@ -21,7 +21,8 @@ potential problems:
   * Items that the robot is instructed to keep in inventory (blocks for building, tools, etc) that have unique NBT tags. Items with NBT are not handled well in general, because OC provides only limited support for these.
   * Tools that have durability values but don't record this in the damage metadata (for example, the tool may store durability in NBT tags).
   * Tools must all be strong enough to mine blocks in the way.
-  * Tinker's tools?
+  * Tinker's tools? These show durability values where a zero means the tool is broken. To handle them, just set toolHealthMin to zero.
+    * Small correction: a wooden pickaxe (and possibly other self-healing tools) sometimes breaks at 1 durability. To be safe, set toolHealthMin a bit above zero.
 ]]--
 
 local component = require("component")
@@ -34,6 +35,7 @@ local dlog = require("dlog")
 dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local robnav = require("robnav")
+local xassert = dlog.xassert    -- this may be a good idea to do from now on? ###########################################################
 
 -- Maximum number of attempts for the Quarry:force* functions. If one of these
 -- functions goes over the limit, the operation throws to indicate that the
@@ -353,11 +355,13 @@ end
 -- like Quarry:forceSwing() does, and continues to try and mine the target block
 -- while an entity is blocking the way.
 function Quarry:forceMine(direction, side, sneaky)
+  local preSwingTime = computer.uptime()
   local _, msg = self:forceSwing(direction, side, sneaky)
   if msg == "entity" then
     for i = 1, MAX_FORCE_OP_ATTEMPTS do
       -- Sleep as there is an entity in the way and we need to wait for iframes to deplete.
-      os.sleep(0.5)
+      os.sleep(math.max(0.5 + preSwingTime - computer.uptime(), 0))
+      preSwingTime = computer.uptime()
       _, msg = self:forceSwing(direction, side, sneaky)
       if msg ~= "entity" then
         return
@@ -383,9 +387,10 @@ function Quarry:forcePlace(direction, side, sneaky)
         self:stockSlotDepleted()
         self:selectStockType(self.selectedStockType)
       else
+        local preSwingTime = computer.uptime()
         self:forceSwing(direction)
         -- Sleep in case there is an entity in the way and we need to wait for iframes to deplete.
-        os.sleep(0.5)
+        os.sleep(math.max(0.5 + preSwingTime - computer.uptime(), 0))
       end
       result, err = crobot.place(direction, side, sneaky)
       if result then
@@ -576,9 +581,61 @@ function Quarry:itemRestock(stockedItems, inputSide)
   robnav.turnTo(inputSide)
   inputSide = inputSide < 2 and inputSide or sides.front
   
+  -- Grab new tool if nothing is equipped.
+  crobot.select(internalInventorySize)
+  icontroller.equip()
+  local toolItem = icontroller.getStackInInternalSlot()
+  if not toolItem then
+    local bestToolSlot = -1
+    local bestToolHealth = -1
+    while true do
+      -- Check all items in input inventory for the highest durability tool that matches a mining item type.
+      for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
+        local itemName = getItemFullName(item)
+        local health
+        local stockEntry = self.stockLevels[StockTypes.mining]
+        for i = 2, #stockEntry do
+          if string.match(itemName, stockEntry[i]) then
+            health = item.maxDamage > 0 and item.maxDamage - item.damage or math.huge
+            break
+          end
+        end
+        if health and health > self.toolHealthReturn + self.toolHealthBias and health > bestToolHealth then
+          bestToolSlot = slot
+          bestToolHealth = health
+          toolItem = item
+        end
+      end
+      if bestToolSlot ~= -1 then
+        break
+      end
+      os.sleep(2.0)
+      dlog.out("itemRestock", "waiting for mining tool...")
+    end
+    
+    xassert(icontroller.suckFromSlot(inputSide, bestToolSlot))
+  end
+  icontroller.equip()
+  
+  -- Find the damage values for the corresponding health levels.
+  computeDurabilityThresholds(self, toolItem)
+  
+  --[[
+  
+    inputItems = {
+      [item full name] = {
+        stockIndex = <index in self.stockLevels>
+        [slot] = <item count in slot>
+        ...
+      }
+      ...
+    }
+  
+  ]]
+  local inputItems = {}
+  
   -- Categorize items in the input inventory based on their full name (and track which slots they are stored in).
   -- Note that we could skip storing items that don't have a valid stockIndex, but then we need to search for the category each time one of those items appears.
-  local inputItems = {}
   for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
     local itemName = getItemFullName(item)
     local inputItemSlots = inputItems[itemName]
@@ -613,17 +670,6 @@ function Quarry:itemRestock(stockedItems, inputSide)
       inputItemSlots[slot] = math.floor(item.size)
     end
   end
-  
-  --[[
-  inputItems = {
-    [item full name] = {
-      stockIndex = <index in self.stockLevels>
-      [slot] = <item count in slot>
-      ...
-    }
-    ...
-  }
-  --]]
   
   dlog.out("itemRestock", "inputItems before:", inputItems)
   
@@ -693,45 +739,6 @@ function Quarry:itemRestock(stockedItems, inputSide)
   end
   dlog.out("itemRestock", "inputItems after:", inputItems)
   dlog.out("itemRestock", "stockedItems finalized:", stockedItems)
-  
-  -- Grab new tool if nothing is equipped.
-  crobot.select(internalInventorySize)
-  icontroller.equip()
-  local toolItem = icontroller.getStackInInternalSlot()
-  if not toolItem then
-    local bestToolSlot = -1
-    local bestToolHealth = -1
-    while true do
-      -- Check all items in input inventory for the highest durability tool that matches a mining item type.
-      for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
-        local itemName = getItemFullName(item)
-        local health
-        local stockEntry = self.stockLevels[StockTypes.mining]
-        for i = 2, #stockEntry do
-          if string.match(itemName, stockEntry[i]) then
-            health = item.maxDamage > 0 and item.maxDamage - item.damage or math.huge
-            break
-          end
-        end
-        if health and health > self.toolHealthReturn + self.toolHealthBias and health > bestToolHealth then
-          bestToolSlot = slot
-          bestToolHealth = health
-          toolItem = item
-        end
-      end
-      if bestToolSlot ~= -1 then
-        break
-      end
-      os.sleep(2.0)
-      dlog.out("itemRestock", "waiting for mining tool...")
-    end
-    
-    xassert(icontroller.suckFromSlot(inputSide, bestToolSlot))
-  end
-  icontroller.equip()
-  
-  -- Find the damage values for the corresponding health levels.
-  computeDurabilityThresholds(self, toolItem)
 end
 
 -- Performs a rearrangement of items, deposits excess, and pulls in new ones to
@@ -997,7 +1004,7 @@ local function main(...)
   
   io.write("Starting quarry!\n")
   --local quarry = BasicQuarry:new(6, 6, 8)
-  local quarry = BasicQuarry:new(3, 3, 3)
+  local quarry = BasicQuarry:new(6, 6, 6)
   --local quarry = FastQuarry:new(3, 2, 3)
   
   quarry:run()
