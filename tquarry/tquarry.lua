@@ -2,8 +2,6 @@
 todo:
   * convert the coroutine checks to a function? maybe nah
   * move iterators and item rearrange logic into separate module.
-  * forceSwing()/forceMine() should swap pick with a fresh one.
-  * toolDurabilityReturn could be set dynamically, based on the maxHealth and a fixed number of ticks we allow on the tool.
   * need to build staircase and walls if enabled.
   * load data from config file (and generate one if not found).
   * support for generators?
@@ -11,11 +9,10 @@ todo:
   * dynamically compute energyLevelMin?
 
 to test:
-  * item restocking needs more testing
-  * are tools always protected? if allowed, can tools be used completely (what about tinkers tools)?
+  * 
 
 issues:
-  * May be able to prevent equipment swapping in restock function by using equipmentDurability().
+  * 
 
 potential problems:
   * Items that the robot is instructed to keep in inventory (blocks for building, tools, etc) that have unique NBT tags. Items with NBT are not handled well in general, because OC provides only limited support for these.
@@ -187,6 +184,7 @@ function Quarry:new(length, width, height)
   self.emptySlotsMin = 1
   
   self.withinMainCoroutine = false
+  self.internalInventorySize = crobot.inventorySize()
   self.inventoryInput = sides.right
   self.inventoryOutput = sides.right
   --[[self.stockLevels = {
@@ -344,7 +342,7 @@ function Quarry:forceSwing(direction, side, sneaky)
   if self.withinMainCoroutine then
     if computer.energy() <= self.energyLevelMin then
       coroutine.yield(ReturnReasons.energyLow)
-    elseif (self.emptySlotsMin > 0 and crobot.count(crobot.inventorySize() - self.emptySlotsMin + 1) > 0) or crobot.space(crobot.inventorySize() - self.emptySlotsMin) == 0 then    -- FIXME: inventorySize() is a blocking function! ###################################
+    elseif (self.emptySlotsMin > 0 and crobot.count(self.internalInventorySize - self.emptySlotsMin + 1) > 0) or crobot.space(self.internalInventorySize - self.emptySlotsMin) == 0 then
       coroutine.yield(ReturnReasons.inventoryFull)
     end
   end
@@ -448,11 +446,10 @@ end
 -- table of stockedItems that tracks items in slots defined by the stock levels
 -- (so they don't get dumped into storage in the following operations).
 function Quarry:itemRearrange()
-  local internalInventorySize = crobot.inventorySize()
   local internalInvItems = {}
   
   -- First pass scans internal inventory and categorizes each item by stock type.
-  for slot, item in internalInvIterator(internalInventorySize) do
+  for slot, item in internalInvIterator(self.internalInventorySize) do
     local itemName = getItemFullName(item)
     local stockIndex = -1
     for i, stockEntry in ipairs(self.stockLevels) do
@@ -495,7 +492,7 @@ function Quarry:itemRearrange()
       while true do
         -- Find the first item in internal inventory that should be transferred into the current slot.
         local foundSlot
-        for j = 1, internalInventorySize do
+        for j = 1, self.internalInventorySize do
           if internalInvItems[j] and internalInvItems[j].stockIndex == stockIndex and not stockedItems[j] and (lastItemName == nil or internalInvItems[j].itemName == lastItemName) then
             foundSlot = j
             break
@@ -539,12 +536,11 @@ end
 -- Dumps each item in robot inventory to the specified side. The currently
 -- equipped item is dumped too if durability is low.
 function Quarry:itemDeposit(stockedItems, outputSide)
-  local internalInventorySize = crobot.inventorySize()
   robnav.turnTo(outputSide)
   outputSide = outputSide < 2 and outputSide or sides.front
   
   -- Push remaining slots to output.
-  for slot = 1, internalInventorySize do
+  for slot = 1, self.internalInventorySize do
     if not stockedItems[slot] and crobot.count(slot) > 0 then
       dlog.out("itemDeposit", "drop item in slot ", slot)
       crobot.select(slot)
@@ -559,7 +555,7 @@ function Quarry:itemDeposit(stockedItems, outputSide)
   
   -- Push tool to output if too low.
   -- We pull the tool out of equipped slot to check if there's actually something there and it has measurable durability.
-  crobot.select(internalInventorySize)
+  crobot.select(self.internalInventorySize)
   icontroller.equip()
   local toolItem = icontroller.getStackInInternalSlot()
   if toolItem and toolItem.maxDamage > 0 and toolItem.maxDamage - toolItem.damage <= self.toolHealthReturn + self.toolHealthBias then
@@ -577,12 +573,11 @@ end
 -- defined in self.stockLevels. If there is no equipped item then a new one is
 -- picked up that meets the minimum durability requirement.
 function Quarry:itemRestock(stockedItems, inputSide)
-  local internalInventorySize = crobot.inventorySize()
   robnav.turnTo(inputSide)
   inputSide = inputSide < 2 and inputSide or sides.front
   
   -- Grab new tool if nothing is equipped.
-  crobot.select(internalInventorySize)
+  crobot.select(self.internalInventorySize)
   icontroller.equip()
   local toolItem = icontroller.getStackInInternalSlot()
   if not toolItem then
@@ -673,7 +668,7 @@ function Quarry:itemRestock(stockedItems, inputSide)
   
   dlog.out("itemRestock", "inputItems before:", inputItems)
   
-  for slot = 1, internalInventorySize do
+  for slot = 1, self.internalInventorySize do
     -- Determine the entry in self.stockLevels that corresponds to the current slot.
     local slotStockIndex = -1
     local slotOffset = 0
@@ -1004,7 +999,7 @@ local function main(...)
   
   io.write("Starting quarry!\n")
   --local quarry = BasicQuarry:new(6, 6, 8)
-  local quarry = BasicQuarry:new(6, 6, 6)
+  local quarry = BasicQuarry:new(3, 3, 3)
   --local quarry = FastQuarry:new(3, 2, 3)
   
   quarry:run()
