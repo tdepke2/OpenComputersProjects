@@ -20,7 +20,7 @@ potential problems:
   * Tools must all be strong enough to mine blocks in the way.
   * Tinker's tools? These show durability values where a zero means the tool is broken. To handle them, just set toolHealthMin to zero.
     * Small correction: a wooden pickaxe (and possibly other self-healing tools) sometimes breaks at 1 durability. To be safe, set toolHealthMin a bit above zero.
-]]--
+--]]
 
 local component = require("component")
 local computer = require("computer")
@@ -69,9 +69,14 @@ local StockTypes = enum {
   "mining"
 }
 
+---@alias ItemFullName string
+
 -- Get the unique identifier of an item (internal name and metadata). This is
 -- used for table indexing of items and such. Note that items with different NBT
 -- can still resolve to the same identifier.
+-- 
+---@param item Item
+---@return ItemFullName itemName
 local function getItemFullName(item)
   return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
 end
@@ -81,7 +86,13 @@ end
 -- Iterator wrapper for the itemIter returned from icontroller.getAllStacks().
 -- Returns the current slot number and item with each call, skipping over empty
 -- slots.
+-- 
+---@param itemIter fun(): Item
 local function invIterator(itemIter)
+  ---@param itemIter fun(): Item
+  ---@param slot integer
+  ---@return integer|nil slot
+  ---@return Item|nil item
   local function iter(itemIter, slot)
     slot = slot + 1
     local item = itemIter()
@@ -99,7 +110,13 @@ end
 
 -- Iterator wrapper similar to invIterator(), but does not skip empty slots.
 -- Returns the current slot number and item with each call.
+-- 
+---@param itemIter fun(): Item
 local function invIteratorNoSkip(itemIter)
+  ---@param itemIter fun(): Item
+  ---@param slot integer
+  ---@return integer|nil slot
+  ---@return Item|nil item
   local function iter(itemIter, slot)
     slot = slot + 1
     local item = itemIter()
@@ -115,7 +132,13 @@ end
 -- the inventory size is passed in as this function blocks for a tick
 -- (getStackInInternalSlot() is blocking too). Returns the current slot and item
 -- with each call, skipping over empty slots.
+-- 
+---@param invSize number
 local function internalInvIterator(invSize)
+  ---@param invSize number
+  ---@param slot integer
+  ---@return integer|nil slot
+  ---@return Item|nil item
   local function iter(invSize, slot)
     local item
     while slot < invSize do
@@ -136,6 +159,8 @@ end
 -- regular damage values. Returns -1.0 for no tool, and math.huge otherwise.
 -- Note that this function is non-direct (blocks main thread), like other
 -- inventory inspection operations.
+-- 
+---@return number durability
 local function equipmentDurability()
   local durability, err = crobot.durability()
   if durability then
@@ -149,6 +174,7 @@ end
 
 
 -- Quarry class definition.
+---@class Quarry
 local Quarry = {}
 
 -- Hook up errors to throw on access to nil class members.
@@ -158,6 +184,14 @@ setmetatable(Quarry, {
   end
 })
 
+-- Construct a new Quarry object with the given length, width, and height mining
+-- dimensions. These correspond to the positive-x, positive-z, and negative-y
+-- dimensions with the robot facing in the positive-z direction.
+-- 
+---@param length integer|nil
+---@param width integer|nil
+---@param height integer|nil
+---@return Quarry
 function Quarry:new(length, width, height)
   self.__index = self
   self = setmetatable({}, self)
@@ -221,6 +255,9 @@ end
 -- the StockTypes items. The special value zero just selects the first slot in
 -- inventory. Returns true if slot was available and selected, and false
 -- otherwise.
+-- 
+---@param stockType integer
+---@return boolean
 function Quarry:selectStockType(stockType)
   if stockType == 0 then
     crobot.select(1)
@@ -257,6 +294,8 @@ end
 -- Wrapper for robnav.move(), throws an exception on failure. Tries to clear
 -- obstacles in the way (entities or blocks) until the movement succeeds or a
 -- limit is reached.
+-- 
+---@param direction Sides
 function Quarry:forceMove(direction)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
     coroutine.yield(ReturnReasons.energyLow)
@@ -285,6 +324,8 @@ function Quarry:forceMove(direction)
 end
 
 -- Wrapper for robnav.turn(), throws an exception on failure.
+-- 
+---@param clockwise boolean
 function Quarry:forceTurn(clockwise)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
     coroutine.yield(ReturnReasons.energyLow)
@@ -294,6 +335,9 @@ function Quarry:forceTurn(clockwise)
 end
 
 -- Helper function for updating the durability thresholds for a given itemstack.
+-- 
+---@param self Quarry
+---@param toolItem Item
 local function computeDurabilityThresholds(self, toolItem)
   if toolItem.maxDamage > 0 then
     self.toolDurabilityReturn = self.toolHealthReturn / toolItem.maxDamage
@@ -309,6 +353,12 @@ end
 -- Wrapper for crobot.swing(), throws an exception on failure. Protects the held
 -- tool by swapping it out with currently selected inventory item if the
 -- durability is too low. Returns boolean result and string message.
+-- 
+---@param direction Sides
+---@param side Sides|nil
+---@param sneaky boolean|nil
+---@return boolean result
+---@return string|nil message
 function Quarry:forceSwing(direction, side, sneaky)
   local result, msg
   if self.lastToolDurability <= self.toolDurabilityMin and self.lastToolDurability ~= -1.0 then
@@ -352,6 +402,10 @@ end
 -- Wrapper for crobot.swing(), throws an exception on failure. Protects tool
 -- like Quarry:forceSwing() does, and continues to try and mine the target block
 -- while an entity is blocking the way.
+-- 
+---@param direction Sides
+---@param side Sides|nil
+---@param sneaky boolean|nil
 function Quarry:forceMine(direction, side, sneaky)
   local preSwingTime = computer.uptime()
   local _, msg = self:forceSwing(direction, side, sneaky)
@@ -372,6 +426,10 @@ end
 -- Wrapper for crobot.place(), throws an exception on failure. Tries to clear
 -- obstacles in the way (entities or blocks) until the placement succeeds or a
 -- limit is reached.
+-- 
+---@param direction Sides
+---@param side Sides|nil
+---@param sneaky boolean|nil
 function Quarry:forcePlace(direction, side, sneaky)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
     coroutine.yield(ReturnReasons.energyLow)
@@ -400,15 +458,15 @@ function Quarry:forcePlace(direction, side, sneaky)
 end
 
 function Quarry:layerMine()
-  xassert(false, "Quarry:layerMine() not implemented.")
+  xassert(false, "Abstract method Quarry:layerMine() not implemented.")
 end
 
-function Quarry:layerTurn()
-  xassert(false, "Quarry:layerTurn() not implemented.")
+function Quarry:layerTurn(turnDir)
+  xassert(false, "Abstract method Quarry:layerTurn() not implemented.")
 end
 
 function Quarry:layerDown()
-  xassert(false, "Quarry:layerDown() not implemented.")
+  xassert(false, "Abstract method Quarry:layerDown() not implemented.")
 end
 
 function Quarry:quarryStart()
@@ -445,6 +503,8 @@ end
 -- stable-sort (based on selection sort to minimize swap operations). Returns a
 -- table of stockedItems that tracks items in slots defined by the stock levels
 -- (so they don't get dumped into storage in the following operations).
+-- 
+---@return StockedItems stockedItems
 function Quarry:itemRearrange()
   local internalInvItems = {}
   
@@ -479,8 +539,11 @@ function Quarry:itemRearrange()
   
   dlog.out("itemRearrange", "internalInvItems:", internalInvItems)
   
-  -- Second pass iterates only the slots used for stocking items and does the sorting.
+  ---@alias StockedItems table<integer, ItemFullName> Maps inventory slots to item names.
+  ---@type StockedItems
   local stockedItems = {}
+  
+  -- Second pass iterates only the slots used for stocking items and does the sorting.
   local slot = 1
   for stockIndex, stockEntry in ipairs(self.stockLevels) do
     for i = 1, stockEntry[1] do
@@ -523,18 +586,15 @@ function Quarry:itemRearrange()
   dlog.out("itemRearrange", "internalInvItems:", internalInvItems)
   dlog.out("itemRearrange", "stockedItems:", stockedItems)
   
-  --[[
-  stockedItems = {
-    [slot] = <item full name>
-    ...
-  }
-  --]]
-  
   return stockedItems
 end
 
+
 -- Dumps each item in robot inventory to the specified side. The currently
 -- equipped item is dumped too if durability is low.
+-- 
+---@param stockedItems StockedItems
+---@param outputSide Sides
 function Quarry:itemDeposit(stockedItems, outputSide)
   robnav.turnTo(outputSide)
   outputSide = outputSide < 2 and outputSide or sides.front
@@ -572,6 +632,9 @@ end
 -- Retrieve items from the specified side and fill slots that match the format
 -- defined in self.stockLevels. If there is no equipped item then a new one is
 -- picked up that meets the minimum durability requirement.
+-- 
+---@param stockedItems StockedItems
+---@param inputSide Sides
 function Quarry:itemRestock(stockedItems, inputSide)
   robnav.turnTo(inputSide)
   inputSide = inputSide < 2 and inputSide or sides.front
@@ -616,16 +679,17 @@ function Quarry:itemRestock(stockedItems, inputSide)
   computeDurabilityThresholds(self, toolItem)
   
   --[[
-  
-    inputItems = {
-      [item full name] = {
-        stockIndex = <index in self.stockLevels>
-        [slot] = <item count in slot>
-        ...
-      }
+  Maps item names to their locations in the input inventory.
+  ```
+  inputItems = {
+    [item full name] = {
+      stockIndex = <index in self.stockLevels>
+      [slot] = <item count in slot>
       ...
     }
-  
+    ...
+  }
+  ```
   ]]
   local inputItems = {}
   
@@ -747,6 +811,8 @@ function Quarry:fullResupply()
     self:itemRestock(stockedItems, self.inventoryInput)
     
     --[[
+    Maps stock index to slots where the items appear in the internal inventory.
+    ```
     currentStockSlots = {
       [1] = {
         [1] = <first slot>
@@ -758,11 +824,12 @@ function Quarry:fullResupply()
       }
       ...
     }
-    --]]
+    ```
+    ]]
+    self.currentStockSlots = {}
     
     -- Populate the currentStockSlots table with information from stockedItems. This keeps track of the next available slots in the internal inventory where stock items can be pulled.
     -- It is also fast to check if more stock items are available by checking the first index for a given stock item type (as stock items deplete, they get removed from the greatest index first).
-    self.currentStockSlots = {}
     local slot = 1
     local minimumLevelsReached = true
     for stockIndex, stockEntry in ipairs(self.stockLevels) do
@@ -795,6 +862,11 @@ function Quarry:fullResupply()
   robnav.turnTo(sides.front)
 end
 
+-- Starts the quarry process so that the robot mines out the rectangular area.
+-- The mining actions run within a coroutine so that any problems that occur
+-- (tools depleted, energy low, etc.) will cause the robot to return home for
+-- resupply and then go back to the working area. When the robot is finished, it
+-- dumps its inventory and this function returns.
 function Quarry:run()
   local co = coroutine.create(function()
     self:quarryStart()
