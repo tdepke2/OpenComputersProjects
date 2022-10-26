@@ -1,5 +1,4 @@
 
-
 local matrix = {}
 
 -- FIXME this should probably be fixed in other stuff #######################
@@ -35,8 +34,10 @@ setmetatable(matrixMeta, {
   end
 })
 
+
 -- matrix.new(data: table)
 -- matrix.new(rows: number, columns: number[, data: table|any])
+-- FIXME copy contructor for matrix? you could resize matrix this way and trim to a new size #######################
 function matrix.new(rows, columns, data)
   if type(rows) == "table" then
     xassert(type(rows[1]) == "table", "provided matrix data must be a 2-dimensional table structure.")
@@ -79,11 +80,11 @@ function matrix.new(rows, columns, data)
   else
     mat = {}
     for r = 1, rows do
-      mat[r] = {}
+      local matRow = {}
       for c = 1, columns do
-        mat[r][c] = data
+        matRow[c] = data
       end
-      setmetatable(mat[r], matrixRowMeta)
+      mat[r] = setmetatable(matRow, matrixRowMeta)
     end
   end
   mat.r = rows
@@ -91,21 +92,165 @@ function matrix.new(rows, columns, data)
   return setmetatable(mat, matrixMeta)
 end
 
+
 -- matrix.identity(rows: number)
 function matrix.identity(rows)
   xassert(rows == math.floor(rows) and rows >= 0, "matrix rows must be non-negative integer.")
   local mat = {}
   for r = 1, rows do
-    mat[r] = {}
+    local matRow = {}
     for c = 1, rows do
-      mat[r][c] = (r ~= c and 0 or 1)
+      matRow[c] = (r ~= c and 0 or 1)
     end
-    setmetatable(mat[r], matrixRowMeta)
+    mat[r] = setmetatable(matRow, matrixRowMeta)
   end
   mat.r = rows
   mat.c = rows
   return setmetatable(mat, matrixMeta)
 end
+
+
+-- 
+function matrixMeta.add(lhs, rhs)
+  xassert(lhs.type == "matrix" and rhs.type == "matrix" and lhs.r == rhs.r and lhs.c == rhs.c, "attempt to perform matrix addition with invalid type or different dimensions.")
+  local result = {}
+  for r = 1, lhs.r do
+    local resultRow, lhsRow, rhsRow = {}, lhs[r], rhs[r]
+    for c = 1, lhs.c do
+      resultRow[c] = lhsRow[c] + rhsRow[c]
+    end
+    result[r] = setmetatable(resultRow, matrixRowMeta)
+  end
+  result.r = lhs.r
+  result.c = lhs.c
+  return setmetatable(result, matrixMeta)
+end
+matrixMeta.__add = matrixMeta.add
+
+
+-- 
+function matrixMeta.sub(lhs, rhs)
+  xassert(lhs.type == "matrix" and rhs.type == "matrix" and lhs.r == rhs.r and lhs.c == rhs.c, "attempt to perform matrix subtraction with invalid type or different dimensions.")
+  local result = {}
+  for r = 1, lhs.r do
+    local resultRow, lhsRow, rhsRow = {}, lhs[r], rhs[r]
+    for c = 1, lhs.c do
+      resultRow[c] = lhsRow[c] - rhsRow[c]
+    end
+    result[r] = setmetatable(resultRow, matrixRowMeta)
+  end
+  result.r = lhs.r
+  result.c = lhs.c
+  return setmetatable(result, matrixMeta)
+end
+matrixMeta.__sub = matrixMeta.sub
+
+
+-- 
+function matrixMeta.mul(lhs, rhs)
+  local result = {}
+  if type(lhs) == "number" then
+    for r = 1, rhs.r do
+      local resultRow, rhsRow = {}, rhs[r]
+      for c = 1, rhs.c do
+        resultRow[c] = lhs * rhsRow[c]
+      end
+      result[r] = setmetatable(resultRow, matrixRowMeta)
+    end
+    result.r = rhs.r
+    result.c = rhs.c
+  elseif type(rhs) == "number" then
+    for r = 1, lhs.r do
+      local resultRow, lhsRow = {}, lhs[r]
+      for c = 1, lhs.c do
+        resultRow[c] = lhsRow[c] * rhs
+      end
+      result[r] = setmetatable(resultRow, matrixRowMeta)
+    end
+    result.r = lhs.r
+    result.c = lhs.c
+  else
+    xassert(lhs.type == "matrix" and rhs.type == "matrix" and lhs.c == rhs.r, "attempt to perform matrix multiplication with invalid type or different dimensions.")
+    for r = 1, lhs.r do
+      local resultRow, lhsRow = {}, lhs[r]
+      for c = 1, rhs.c do
+        local rowDotColumn = 0
+        for i = 1, lhs.c do
+          rowDotColumn = rowDotColumn + lhsRow[i] * rhs[i][c]
+        end
+        resultRow[c] = rowDotColumn
+      end
+      result[r] = setmetatable(resultRow, matrixRowMeta)
+    end
+    result.r = lhs.r
+    result.c = rhs.c
+  end
+  return setmetatable(result, matrixMeta)
+end
+matrixMeta.__mul = matrixMeta.mul
+
+
+-- 
+function matrixMeta.div(lhs, rhs)
+  local result = {}
+  if type(lhs) == "number" then
+    for r = 1, rhs.r do
+      local resultRow, rhsRow = {}, rhs[r]
+      for c = 1, rhs.c do
+        resultRow[c] = lhs / rhsRow[c]
+      end
+      result[r] = setmetatable(resultRow, matrixRowMeta)
+    end
+    result.r = rhs.r
+    result.c = rhs.c
+  elseif type(rhs) == "number" then
+    for r = 1, lhs.r do
+      local resultRow, lhsRow = {}, lhs[r]
+      for c = 1, lhs.c do
+        resultRow[c] = lhsRow[c] / rhs
+      end
+      result[r] = setmetatable(resultRow, matrixRowMeta)
+    end
+    result.r = lhs.r
+    result.c = lhs.c
+  else
+    -- FIXME NYI
+    xassert(false)
+  end
+  return setmetatable(result, matrixMeta)
+end
+matrixMeta.__div = matrixMeta.div
+
+
+-- 
+function matrixMeta:negate()
+  local result = {}
+  for r = 1, self.r do
+    local resultRow, selfRow = {}, self[r]
+    for c = 1, self.c do
+      resultRow[c] = -selfRow[c]
+    end
+    result[r] = setmetatable(resultRow, matrixRowMeta)
+  end
+  result.r = self.r
+  result.c = self.c
+  return setmetatable(result, matrixMeta)
+end
+matrixMeta.__unm = matrixMeta.negate
+
+
+-- 
+function matrixMeta:tostring(format)
+  
+end
+matrixMeta.__tostring = matrixMeta.tostring
+
+
+-- 
+function matrixMeta.equals(lhs, rhs)
+  
+end
+matrixMeta.__eq = matrixMeta.equals
 
 --[[
 xprint({}, matrix.new())
@@ -115,7 +260,8 @@ xprint({}, matrix.new({{1, 2, 3}, {4, 5, 6}}))
 xprint({}, matrix.new({{1, 2, 3}, {4, 5, 6}}))
 --]]
 
-local m = matrix.new(4, 5)
+--local m = matrix.new(4, 5)
+--[[
 xprint({}, m)
 m[3][2] = 7
 xprint({}, m)
@@ -123,3 +269,4 @@ xprint({}, m[3][19])
 xprint({}, m[3][2])
 xprint({}, m[11][6])
 xprint({}, m)
+--]]
