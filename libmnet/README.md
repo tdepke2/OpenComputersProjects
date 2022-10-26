@@ -52,6 +52,8 @@ Note that there are significant differences between the version of mnet that run
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libmnet/mnet_src.lua) -->
+@diagnostic disable
+
 * `mnet.hostname = <env HOSTNAME or first 8 characters of computer address>`
   
   Unique address for the machine running this instance of mnet. Do not set this
