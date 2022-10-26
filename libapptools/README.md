@@ -91,7 +91,7 @@ Makes it easy to handle multiple threads that must run in parallel and catch err
 
 ### Example usage
 
-See [app_template.lua](app_template.lua) for a comprehensive example that uses this.
+See [app_template.lua](tests/app_template.lua) for a comprehensive example that uses this.
 
 # dlog.lua
 
