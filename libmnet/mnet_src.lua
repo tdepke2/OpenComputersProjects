@@ -11,6 +11,10 @@
 -- @author tdepke2
 --------------------------------------------------------------------------------
 
+##if false then
+-- Diagnostics don't work well in this file because of the preprocessor directives.
+---@diagnostic disable
+##end
 
 local component = require("component")
 ##if OPEN_OS then
@@ -37,7 +41,7 @@ setmetatable(mnetRoutingTable, {__index = mnetStaticRoutes})
 -- 
 -- Unique address for the machine running this instance of mnet. Do not set this
 -- to the string `*` (asterisk is the broadcast address).
-##spwrite("mnet.hostname = ", OPEN_OS and "os.getenv()[\"HOSTNAME\"] or " or "", "computer.address():sub(1, 8)")
+##spwrite("mnet.hostname = ", OPEN_OS and "os.getenv(\"HOSTNAME\") or " or "", "computer.address():sub(1, 8)")
 
 --- `mnet.port = 2048`
 -- 

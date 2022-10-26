@@ -7,7 +7,7 @@ i=oa"dlog"local
 b,z,R,u,o,_,D,C,w,v={},{},{},{},{},{},{},nil,x.floor(2^32),{}local
 Q
 local
-H={}sa(z,{__index=H})b[O]=os.getenv().HOSTNAME
+H={}sa(z,{__index=H})b[O]=os.getenv("HOSTNAME")
 or
 K.address():sub(1,8)b[U]=2048
 b.route=true

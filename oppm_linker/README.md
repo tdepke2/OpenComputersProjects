@@ -36,7 +36,7 @@ See the man page below for details:
   
   To refresh the symlinks if a new package was added or files changed, you can manually run `rc oppm_linker start`. This also helps to debug errors and warnings that may be showing during boot. Note that oppm_linker will not delete any old symlinks (they are removed after a reboot anyways) and will not delete directories that no longer exist in the repo.
   
-  One more useful tip: creating copies of the hard disk that was used to set this up (using cheats) can be helpful to keep the same files synchronized across multiple computers. This can also be done by setting up a RAID and cloning the block to anywhere it is needed. Multiple computers can also access a single RAID when cheats are not an option.
+  One more useful tip: creating copies of the hard disk that was used to set this up (using cheats) can be helpful to keep the same files synchronized across multiple computers. This can also be done by setting up a RAID and cloning the block to anywhere it is needed. Be careful though, there are practical limits to copying lots of hard disks, especially when `hddSizes` has been increased in the config. Multiple computers can also access a single RAID when cheats are not an option.
 
 ## OPTIONS
   `-s`  suppress all normal output (except for errors)
@@ -53,6 +53,6 @@ See the man page below for details:
 
 # auto_hostname
 
-Simple daemon for setting hostname at boot. This lets computers with a shared filesystem individually set their hostname (the hostname usually lives in `/etc/hostname`).
+Simple daemon for setting hostname at boot. This lets computers with a shared filesystem individually set their hostname (the hostname usually lives in `/etc/hostname`). Note that some programs look at `/etc/hostname` instead of the environment var `HOSTNAME` and won't work correctly. For example, `/bin/hostname.lua` does this and will mistakenly report that the hostname is not set.
 
-Copy the file into `/etc/rc.d/` and run `rc auto_hostname enable` to use.
+Copy the file into `/etc/rc.d/` and run `rc auto_hostname enable` to use. Hosts are configured by copying each computer's address and desired hostname into the `hosts` table in the file (shift-right-click with an analyzer on the target computer to get the address).

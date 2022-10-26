@@ -369,7 +369,6 @@ function Quarry:forceSwing(direction, side, sneaky)
     result, msg = crobot.swing(direction, side, sneaky)
   end
   xassert(result or (msg ~= "block" and msg ~= "replaceable" and msg ~= "passable"), "Attempt to swing tool failed, unable to break block.")
-  local previousDurability = self.lastToolDurability
   self.lastToolDurability = equipmentDurability()
   
   -- Check if the current tool is almost/all used up and needs to be replaced.

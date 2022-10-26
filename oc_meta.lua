@@ -8,6 +8,14 @@
 ---@meta
 
 
+-- Returns the value of the process environment.
+-- 
+-- [View documents](http://www.lua.org/manual/5.3/manual.html#pdf-os.getenv)
+-- 
+---@return string?
+function os.getenv() end
+
+
 -- Allows pausing a script for the specified amount of time. `os.sleep` consumes
 -- events but registered event handlers and threads are still receiving events
 -- during the sleep. Rephrased, signals will still be processed by event

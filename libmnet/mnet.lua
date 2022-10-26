@@ -25,7 +25,7 @@ setmetatable(mnetRoutingTable, {__index = mnetStaticRoutes})
 -- 
 -- Unique address for the machine running this instance of mnet. Do not set this
 -- to the string `*` (asterisk is the broadcast address).
-mnet.hostname = os.getenv()["HOSTNAME"] or computer.address():sub(1, 8)
+mnet.hostname = os.getenv("HOSTNAME") or computer.address():sub(1, 8)
 
 --- `mnet.port = 2048`
 -- 
