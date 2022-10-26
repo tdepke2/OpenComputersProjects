@@ -22,6 +22,9 @@ local mrpc_server2 = mrpc.newServer(530, true)
 mrpc_server.declareFunction("say_hello", {
   "senderMessage", "string",
   "extraData", "any",
+}, {
+  "msg", "string",
+  "idk", "nil",
 })
 mrpc_server2.declareFunction("say_hello2", {
   "senderMessage", "string",
@@ -51,7 +54,10 @@ local caughtInterrupt = false
 local listenerThread = thread.create(function()
   while not caughtInterrupt do
     local host, port, message = mnet.receive(0.1)
-    mrpc_server.handleMessage(nil, host, port, message)
+    local status = dlog.handleError(xpcall(mrpc_server.handleMessage, debug.traceback, nil, host, port, message))
+    if not status then
+      break
+    end
   end
   print("Server is shutting down...")
   mrpc_server.destroy()

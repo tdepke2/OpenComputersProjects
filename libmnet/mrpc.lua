@@ -98,6 +98,22 @@ function mrpc.newServer(port, allowDuplicatePorts)
 end
 
 
+-- Confirms that the given values in the packed table packedVals match the
+-- specified types in typesList.
+local function verifyCallTypes(callName, typesList, packedVals, valName, valOffset)
+  if type(typesList) == "table" then
+    if #typesList < packedVals.n then
+      xassert(false, "number of ", valName, "s for call to \"", callName, "\" is incorrect (", #typesList + valOffset, " expected, got ", packedVals.n + valOffset, ").")
+    end
+    for i, validTypes in ipairs(typesList) do
+      if not string.find(validTypes, type(packedVals[i]), 1, true) and validTypes ~= "any" then
+        xassert(false, "bad ", valName, " for call to \"", callName, "\" at index #", i + valOffset, " (", validTypes, " expected, got ", type(packedVals[i]), ").")
+      end
+    end
+  end
+end
+
+
 --- `mrpc.handleMessage(obj: any[, host: string, port: number,
 --   message: string]): boolean`
 -- 
@@ -143,25 +159,10 @@ function mrpc.handleMessage(obj, host, port, message)
 end
 
 
--- Confirms that the given values in the packed table packedVals match the
--- specified types in typesList.
-local function verifyCallTypes(callName, typesList, packedVals, valName, valOffset)
-  if type(typesList) == "table" then
-    if #typesList < packedVals.n then
-      xassert(false, "number of ", valName, "s for call to \"", callName, "\" is incorrect (", #typesList + valOffset, " expected, got ", packedVals.n + valOffset, ").")
-    end
-    for i, validTypes in ipairs(typesList) do
-      if not string.find(validTypes, type(packedVals[i]), 1, true) and validTypes ~= "any" then
-        xassert(false, "bad ", valName, " for call to \"", callName, "\" at index #", i + valOffset, " (", validTypes, " expected, got ", type(packedVals[i]), ").")
-      end
-    end
-  end
-end
-
-
 -- Helper function for MrpcServer.sync.
 local function syncSend(host, ...)
-  local self, cachedObj = cachedObj, nil
+  local self = cachedObj
+  cachedObj = nil
   local callName, arg = cachedCallName, table.pack(...)
   xassert(host ~= "*", "broadcast address not allowed for synchronous call.")
   verifyCallTypes(callName, self.callTypes[callName .. ",a"], arg, "argument", 1)
@@ -203,7 +204,8 @@ end
 
 -- Helper function for MrpcServer.async.
 local function asyncSend(host, ...)
-  local self, cachedObj = cachedObj, nil
+  local self = cachedObj
+  cachedObj = nil
   local callName, arg = cachedCallName, table.pack(...)
   verifyCallTypes(callName, self.callTypes[callName .. ",a"], arg, "argument", 1)
   
@@ -214,7 +216,7 @@ end
 
 -- Helper function for MrpcServer.unpack.
 local function doUnpack(message)
-  local self, cachedObj = cachedObj, nil
+  cachedObj = nil
   local callName = cachedCallName
   
   -- Only run expensive call to serialization.unserialize() if non-empty table in message.
@@ -288,7 +290,8 @@ MrpcServer.unpack = setmetatable({}, {
 -- making it clear what the value represents) and types1 is a comma-separated
 -- list of accepted types (or the string `any`).
 function MrpcServer.declareFunction(callName, arguments, results)
-  local self, cachedObj = cachedObj, nil
+  local self = cachedObj
+  cachedObj = nil
   dlog.checkArgs(callName, "string", arguments, "table,nil", results, "table,nil")
   
   local argTypes = {}
@@ -320,7 +323,8 @@ end
 -- intended way to use this is create a Lua script that returns the
 -- declarationMap table, then use `dofile()` to pass it into this function.
 function MrpcServer.addDeclarations(declarationMap)
-  local self, cachedObj = cachedObj, nil
+  local self = cachedObj
+  cachedObj = nil
   for callName, v in pairs(declarationMap) do
     self.declareFunction(callName, v[1], v[2])
   end
@@ -344,7 +348,8 @@ end
 -- server is finished running instead of assuming that garbage collection will
 -- delete it in a timely fashion.
 function MrpcServer.destroy()
-  local self, cachedObj = cachedObj, nil
+  local self = cachedObj
+  cachedObj = nil
   self.port = nil
   self.functions = nil
   self.callTypes = nil
