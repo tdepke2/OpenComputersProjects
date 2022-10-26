@@ -36,7 +36,7 @@ See the man page below for details:
   
   To refresh the symlinks if a new package was added or files changed, you can manually run `rc oppm_linker start`. This also helps to debug errors and warnings that may be showing during boot. Note that oppm_linker will not delete any old symlinks (they are removed after a reboot anyways) and will not delete directories that no longer exist in the repo.
   
-  One more useful tip: creating copies of the hard disk that was used to set this up (using cheats) can be helpful to keep the same files synchronized across multiple computers. This can also be done by setting up a RAID and cloning the block to anywhere it is needed. Be careful though, there are practical limits to copying lots of hard disks, especially when `hddSizes` has been increased in the config. Multiple computers can also access a single RAID when cheats are not an option.
+  One more useful tip: creating copies of the hard disk that was used to set this up (using cheats) can be helpful to keep the same files synchronized across multiple computers. This can also be done by setting up a RAID and cloning the block to anywhere it is needed. Multiple computers can also access a single RAID when cheats are not an option.
 
 ## OPTIONS
   `-s`  suppress all normal output (except for errors)
