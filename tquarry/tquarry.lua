@@ -28,10 +28,13 @@ local crobot = component.robot
 local icontroller = component.inventory_controller
 local sides = require("sides")
 
-local dlog = require("dlog")
+local include = require("include")
+local dlog = include("dlog")
 dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
-local robnav = require("robnav")
+local enum = include("enum")
+local itemutil = include("itemutil")
+local robnav = include("robnav")
 local xassert = dlog.xassert    -- this may be a good idea to do from now on? ###########################################################
 
 -- Maximum number of attempts for the Quarry:force* functions. If one of these
@@ -40,20 +43,6 @@ local xassert = dlog.xassert    -- this may be a good idea to do from now on? ##
 -- continue to whittle down the equipped tool's health while whacking a mob with
 -- a massive health pool.
 local MAX_FORCE_OP_ATTEMPTS = 50
-
--- Creates a new enumeration from a given table (matches keys to values and vice
--- versa). The given table is intended to use numeric keys and string values,
--- but doesn't have to be a sequence.
--- Based on: https://unendli.ch/posts/2016-07-22-enumerations-in-lua.html
-local function enum(t)
-  local result = {}
-  for i, v in pairs(t) do
-    result[i] = v
-    result[v] = i
-  end
-  return result
-end
--- FIXME shouldn't enum protect against invalid keys? #######################################################################
 
 local ReturnReasons = enum {
   "energyLow",
@@ -69,98 +58,13 @@ local StockTypes = enum {
   "mining"
 }
 
----@alias ItemFullName string
-
--- Get the unique identifier of an item (internal name and metadata). This is
--- used for table indexing of items and such. Note that items with different NBT
--- can still resolve to the same identifier.
--- 
----@param item Item
----@return ItemFullName itemName
-local function getItemFullName(item)
-  return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
-end
-
--- FIXME these are the real iterators that should be used in storage.lua and related! still need to check if skipping empty is valid in the use cases there, and also the item/slot are swapped around. ####################################################################################################
-
--- Iterator wrapper for the itemIter returned from icontroller.getAllStacks().
--- Returns the current slot number and item with each call, skipping over empty
--- slots.
--- 
----@param itemIter fun(): Item
-local function invIterator(itemIter)
-  ---@param itemIter fun(): Item
-  ---@param slot integer
-  ---@return integer|nil slot
-  ---@return Item|nil item
-  local function iter(itemIter, slot)
-    slot = slot + 1
-    local item = itemIter()
-    while item do
-      if next(item) ~= nil then
-        return slot, item
-      end
-      slot = slot + 1
-      item = itemIter()
-    end
-  end
-  
-  return iter, itemIter, 0
-end
-
--- Iterator wrapper similar to invIterator(), but does not skip empty slots.
--- Returns the current slot number and item with each call.
--- 
----@param itemIter fun(): Item
-local function invIteratorNoSkip(itemIter)
-  ---@param itemIter fun(): Item
-  ---@param slot integer
-  ---@return integer|nil slot
-  ---@return Item|nil item
-  local function iter(itemIter, slot)
-    slot = slot + 1
-    local item = itemIter()
-    if item then
-      return slot, item
-    end
-  end
-  
-  return iter, itemIter, 0
-end
-
--- Iterator for scanning a device's internal inventory. For efficiency reasons,
--- the inventory size is passed in as this function blocks for a tick
--- (getStackInInternalSlot() is blocking too). Returns the current slot and item
--- with each call, skipping over empty slots.
--- 
----@param invSize number
-local function internalInvIterator(invSize)
-  ---@param invSize number
-  ---@param slot integer
-  ---@return integer|nil slot
-  ---@return Item|nil item
-  local function iter(invSize, slot)
-    local item
-    while slot < invSize do
-      slot = slot + 1
-      if crobot.count(slot) > 0 then
-        item = icontroller.getStackInInternalSlot(slot)
-        if item then
-          return slot, item
-        end
-      end
-    end
-  end
-  
-  return iter, invSize, 0
-end
-
 -- Wrapper for crobot.durability() to handle case of no tool and tools without
 -- regular damage values. Returns -1.0 for no tool, and math.huge otherwise.
 -- Note that this function is non-direct (blocks main thread), like other
 -- inventory inspection operations.
 -- 
 ---@return number durability
+---@nodiscard
 local function equipmentDurability()
   local durability, err = crobot.durability()
   if durability then
@@ -508,8 +412,8 @@ function Quarry:itemRearrange()
   local internalInvItems = {}
   
   -- First pass scans internal inventory and categorizes each item by stock type.
-  for slot, item in internalInvIterator(self.internalInventorySize) do
-    local itemName = getItemFullName(item)
+  for slot, item in itemutil.internalInvIterator(self.internalInventorySize) do
+    local itemName = itemutil.getItemFullName(item)
     local stockIndex = -1
     for i, stockEntry in ipairs(self.stockLevels) do
       if stockEntry[1] > 0 then
@@ -647,8 +551,8 @@ function Quarry:itemRestock(stockedItems, inputSide)
     local bestToolHealth = -1
     while true do
       -- Check all items in input inventory for the highest durability tool that matches a mining item type.
-      for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
-        local itemName = getItemFullName(item)
+      for slot, item in itemutil.invIterator(icontroller.getAllStacks(inputSide)) do
+        local itemName = itemutil.getItemFullName(item)
         local health
         local stockEntry = self.stockLevels[StockTypes.mining]
         for i = 2, #stockEntry do
@@ -694,8 +598,8 @@ function Quarry:itemRestock(stockedItems, inputSide)
   
   -- Categorize items in the input inventory based on their full name (and track which slots they are stored in).
   -- Note that we could skip storing items that don't have a valid stockIndex, but then we need to search for the category each time one of those items appears.
-  for slot, item in invIterator(icontroller.getAllStacks(inputSide)) do
-    local itemName = getItemFullName(item)
+  for slot, item in itemutil.invIterator(icontroller.getAllStacks(inputSide)) do
+    local itemName = itemutil.getItemFullName(item)
     local inputItemSlots = inputItems[itemName]
     if not inputItemSlots then
       -- The first time an item type is found, search for its index in the stock levels.

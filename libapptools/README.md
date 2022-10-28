@@ -184,7 +184,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
 * `dlog.osGetGlobalsList(): table`
   
   Collects a table of all global variables currently defined. Specifically,
-  this shows the contents of _G and any globals accessible by the running
+  this shows the contents of \_G and any globals accessible by the running
   process. This function is designed for debugging purposes only.
 
 * `dlog.fileOutput([filename: string[, mode: string]]): table|nil`
