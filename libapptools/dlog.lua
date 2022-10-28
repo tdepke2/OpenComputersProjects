@@ -268,7 +268,7 @@ end
 --- `dlog.osGetGlobalsList(): table`
 -- 
 -- Collects a table of all global variables currently defined. Specifically,
--- this shows the contents of _G and any globals accessible by the running
+-- this shows the contents of `_G` and any globals accessible by the running
 -- process. This function is designed for debugging purposes only.
 function dlog.osGetGlobalsList()
   local envLevel = _ENV
