@@ -14,26 +14,6 @@ local itemutil = include("itemutil")
 local robnav = include("robnav")
 local xassert = dlog.xassert    -- this may be a good idea to do from now on? ###########################################################
 
--- Maximum number of attempts for the Miner:force* functions. If one of these
--- functions goes over the limit, the operation throws to indicate that the
--- robot is stuck. Having a limit is important so that the robot does not
--- continue to whittle down the equipped tool's health while whacking a mob with
--- a massive health pool.
-local MAX_FORCE_OP_ATTEMPTS = 50
-
-local ReturnReasons = enum {
-  "energyLow",
-  "toolLow",
-  "blocksLow",
-  "inventoryFull",
-  "quarryDone"
-}
-
-local StockTypes = enum {
-  "buildBlock",
-  "stairBlock",
-  "mining"
-}
 
 -- Wrapper for crobot.durability() to handle case of no tool and tools without
 -- regular damage values. Returns -1.0 for no tool, and math.huge otherwise.
@@ -65,72 +45,99 @@ setmetatable(Miner, {
   end
 })
 
--- Construct a new Miner object with the given length, width, and height mining
--- dimensions. These correspond to the positive-x, positive-z, and negative-y
--- dimensions with the robot facing in the positive-z direction.
+
+-- Creates a Miner instance. This provides safe wrappers for robot actions,
+-- inventory and tool management, and utilizes robnav for navigation. The miner
+-- is also able to cache the state it was in when a sudden resupply trip is
+-- needed. To do this, miner functions should be run within a coroutine and the
+-- `self.withinMainCoroutine` flag set accordingly before and after the
+-- coroutine is resumed. When `self.withinMainCoroutine` is true, the coroutine
+-- will yield with a value from `self.ReturnReasons` if a resupply event occurs.
 -- 
----@param length integer|nil
----@param width integer|nil
----@param height integer|nil
+---@param stockTypes Enum|nil
+---@param stockLevels table[]|nil
+---@param stockLevelsMinimum integer[]|nil
 ---@return Miner
-function Miner:new(length, width, height)
+---@nodiscard
+function Miner:new(stockTypes, stockLevels, stockLevelsMinimum)
   self.__index = self
   self = setmetatable({}, self)
   
-  length = length or 1
-  width = width or 1
-  height = height or 1
+  -- Yield results from the coroutine that trigger the robot to return home (and
+  -- the reason why).
+  self.ReturnReasons = enum {
+    "energyLow",
+    "toolLow",
+    "blocksLow",
+    "inventoryFull",
+    "minerDone"
+  }
   
-  robnav.setCoords(0, 0, 0, sides.front)
+  -- Types of items the robot should keep in its inventory (tools, construction
+  -- blocks, etc). All other items get dumped into the output inventory when
+  -- robot returns home to resupply.
+  self.StockTypes = stockTypes or enum {
+    "mining"
+  }
+  xassert(self.StockTypes.mining, "provided stockTypes enum must define \"mining\".")
   
-  -- The tool health (number of uses remaining) threshold for triggering the robot to return to restock point, and minimum allowed health.
-  -- The return threshold is only considered if the robot is out of spare tools. Tools generally wear down to the minimum level (or if -1, the tool is used completely).
+  -- Maximum number of attempts for the Miner:force* functions. If one of these
+  -- functions goes over the limit, the operation throws to indicate that the
+  -- robot is stuck. Having a limit is important so that the robot does not
+  -- continue to whittle down the equipped tool's health while whacking a mob
+  -- with a massive health pool.
+  self.maxForceAttempts = 50
+  
+  -- The tool health (number of uses remaining) threshold for triggering the
+  -- robot to return to restock point, and minimum allowed health. The return
+  -- threshold is only considered if the robot is out of spare tools. Tools
+  -- generally wear down to the minimum level (or if -1, the tool is used
+  -- completely).
   self.toolHealthReturn = 5
   self.toolHealthMin = 0
-  -- Bias added to self.toolHealthReturn/Min when robot is selecting new tools during resupply.
+  -- Bias added to self.toolHealthReturn/Min when robot is selecting new tools
+  -- during resupply.
   self.toolHealthBias = 5
-  -- Similar to tool health, but calculated as a float value in range [0, 1] per tool.
-  self.toolDurabilityReturn = false
-  self.toolDurabilityMin = false
+  -- Similar to tool health, but calculated as a float value in range [0, 1] per
+  -- tool.
+  self.toolDurabilityReturn = 0.0
+  self.toolDurabilityMin = 0.0
   self.lastToolDurability = -1.0
+  
   -- Minimum threshold on energy level before robot needs to resupply.
   self.energyLevelMin = 1000
   -- Minimum number of empty slots before robot needs to resupply.
   self.emptySlotsMin = 1
   
+  -- Indicates if functions are running within a coroutine or not. The coroutine
+  -- should be created and this value set by external code.
   self.withinMainCoroutine = false
+  
   self.internalInventorySize = crobot.inventorySize()
-  self.inventoryInput = sides.right
-  self.inventoryOutput = sides.right
-  --[[self.stockLevels = {
-    {2, "minecraft:stone/0", "minecraft:cobblestone/0"},
-    {1, "minecraft:stone_stairs/0"}
-  }--]]
-  -- Defines how slots in the robot inventory will be partitioned for items that the robot can use. These are tightly packed starting at the first slot in inventory.
-  self.stockLevels = {
-    {3, ".*stone/.*"},
-    {3, ".*stairs/.*"},
+  
+  -- For each of the StockTypes, defines how many slots in the robot inventory
+  -- will be partitioned for items of that type. These are tightly packed
+  -- starting at the first slot in inventory.
+  self.stockLevels = stockLevels or {
     {2, ".*pickaxe.*"}
   }
-  -- The minimum number of slots that must contain items for each stock type before the robot can finish resupply.
-  -- Note that zeros are only allowed for temporary stock types that the robot does not use for construction (like fuel and tools).
-  self.stockLevelsMinimum = {
-    1,
-    1,
+  xassert(#self.stockLevels == #self.StockTypes, "length of stockLevels and StockTypes must match (", #self.StockTypes, " expected, got ", #self.stockLevels, ")")
+  
+  -- For each of the StockTypes, defines the minimum number of slots that must
+  -- contain items for that type before the robot can finish resupply. Note that
+  -- zeros are only allowed for temporary stock types that the robot does not
+  -- use for construction (like fuel and tools).
+  self.stockLevelsMinimum = stockLevelsMinimum or {
     0
   }
-  self.currentStockSlots = false
+  xassert(#self.stockLevelsMinimum == #self.StockTypes, "length of stockLevelsMinimum and StockTypes must match (", #self.StockTypes, " expected, got ", #self.stockLevelsMinimum, ")")
+  
+  self.currentStockSlots = {}
   self.selectedStockType = 0
-  
-  self.xDir = 1
-  self.zDir = 1
-  
-  self.xMax = length - 1
-  self.yMin = -height
-  self.zMax = width - 1
   
   return self
 end
+
 
 -- Selects the next available slot (starting from the highest index) for one of
 -- the StockTypes items. The special value zero just selects the first slot in
@@ -146,7 +153,7 @@ function Miner:selectStockType(stockType)
     return true
   end
   if self.withinMainCoroutine and not self.currentStockSlots[stockType][1] then
-    coroutine.yield(ReturnReasons.blocksLow)
+    coroutine.yield(self.ReturnReasons.blocksLow)
   end
   local stockSlots = self.currentStockSlots[stockType]
   for i = #stockSlots, 1, -1 do
@@ -161,6 +168,7 @@ function Miner:selectStockType(stockType)
   return false
 end
 
+
 -- Marks a slot previously selected with Miner:selectStockType() as empty. This
 -- removes the slot from stock items tracking, and a new slot can be selected
 -- with Miner:selectStockType().
@@ -172,6 +180,7 @@ function Miner:stockSlotDepleted()
   stockSlots.n = stockSlots.n - 1
 end
 
+
 -- Wrapper for robnav.move(), throws an exception on failure. Tries to clear
 -- obstacles in the way (entities or blocks) until the movement succeeds or a
 -- limit is reached.
@@ -179,15 +188,15 @@ end
 ---@param direction Sides
 function Miner:forceMove(direction)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
-    coroutine.yield(ReturnReasons.energyLow)
+    coroutine.yield(self.ReturnReasons.energyLow)
   end
   local result, err = robnav.move(direction)
   if not result then
-    for i = 1, MAX_FORCE_OP_ATTEMPTS do
+    for i = 1, self.maxForceAttempts do
       if err == "entity" or err == "solid" or err == "replaceable" or err == "passable" then
         self:forceSwing(direction)
       elseif self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
-        coroutine.yield(ReturnReasons.energyLow)
+        coroutine.yield(self.ReturnReasons.energyLow)
       end
       result, err = robnav.move(direction)
       if result then
@@ -196,24 +205,26 @@ function Miner:forceMove(direction)
     end
     if err == "impossible move" then
       -- Impossible move can happen if the robot has reached a flight limitation, or tries to move into an unloaded chunk.
-      xassert(false, "Attempt to move failed with \"", err, "\", a flight upgrade or chunkloader may be required.")
+      xassert(false, "attempt to move failed with \"", err, "\", a flight upgrade or chunkloader may be required.")
     else
       -- Other errors might be "not enough energy", etc.
-      xassert(false, "Attempt to move failed with \"", err, "\".")
+      xassert(false, "attempt to move failed with \"", err, "\".")
     end
   end
 end
+
 
 -- Wrapper for robnav.turn(), throws an exception on failure.
 -- 
 ---@param clockwise boolean
 function Miner:forceTurn(clockwise)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
-    coroutine.yield(ReturnReasons.energyLow)
+    coroutine.yield(self.ReturnReasons.energyLow)
   end
   local result, err = robnav.turn(clockwise)
-  xassert(result, "Attempt to turn failed with \"", err, "\".")
+  xassert(result, "attempt to turn failed with \"", err, "\".")
 end
+
 
 -- Helper function for updating the durability thresholds for a given itemstack.
 -- 
@@ -230,6 +241,7 @@ local function computeDurabilityThresholds(self, toolItem)
     self.lastToolDurability = math.huge
   end
 end
+
 
 -- Wrapper for crobot.swing(), throws an exception on failure. Protects the held
 -- tool by swapping it out with currently selected inventory item if the
@@ -249,35 +261,36 @@ function Miner:forceSwing(direction, side, sneaky)
   else
     result, msg = crobot.swing(direction, side, sneaky)
   end
-  xassert(result or (msg ~= "block" and msg ~= "replaceable" and msg ~= "passable"), "Attempt to swing tool failed, unable to break block.")
+  xassert(result or (msg ~= "block" and msg ~= "replaceable" and msg ~= "passable"), "attempt to swing tool failed, unable to break block.")
   self.lastToolDurability = equipmentDurability()
   
   -- Check if the current tool is almost/all used up and needs to be replaced.
-  if self.lastToolDurability <= (self.currentStockSlots[StockTypes.mining][1] and self.toolDurabilityMin or self.toolDurabilityReturn) then
-    if self.currentStockSlots[StockTypes.mining][1] then
+  if self.lastToolDurability <= (self.currentStockSlots[self.StockTypes.mining][1] and self.toolDurabilityMin or self.toolDurabilityReturn) then
+    if self.currentStockSlots[self.StockTypes.mining][1] then
       -- Select the next available mining tool, and swap it into the equipment slot.
       -- The old tool (now in current slot) gets removed from stock items.
       local lastSelectedStockType = self.selectedStockType
-      self:selectStockType(StockTypes.mining)
+      self:selectStockType(self.StockTypes.mining)
       local toolItem = icontroller.getStackInInternalSlot()
       icontroller.equip()
       self:stockSlotDepleted()
       computeDurabilityThresholds(self, toolItem)
       self:selectStockType(lastSelectedStockType)
     elseif self.withinMainCoroutine then
-      coroutine.yield(ReturnReasons.toolLow)
+      coroutine.yield(self.ReturnReasons.toolLow)
     end
   end
   
   if self.withinMainCoroutine then
     if computer.energy() <= self.energyLevelMin then
-      coroutine.yield(ReturnReasons.energyLow)
+      coroutine.yield(self.ReturnReasons.energyLow)
     elseif (self.emptySlotsMin > 0 and crobot.count(self.internalInventorySize - self.emptySlotsMin + 1) > 0) or crobot.space(self.internalInventorySize - self.emptySlotsMin) == 0 then
-      coroutine.yield(ReturnReasons.inventoryFull)
+      coroutine.yield(self.ReturnReasons.inventoryFull)
     end
   end
   return result, msg
 end
+
 
 -- Wrapper for crobot.swing(), throws an exception on failure. Protects tool
 -- like Miner:forceSwing() does, and continues to try and mine the target block
@@ -290,7 +303,7 @@ function Miner:forceMine(direction, side, sneaky)
   local preSwingTime = computer.uptime()
   local _, msg = self:forceSwing(direction, side, sneaky)
   if msg == "entity" then
-    for i = 1, MAX_FORCE_OP_ATTEMPTS do
+    for i = 1, self.maxForceAttempts do
       -- Sleep as there is an entity in the way and we need to wait for iframes to deplete.
       os.sleep(math.max(0.5 + preSwingTime - computer.uptime(), 0))
       preSwingTime = computer.uptime()
@@ -299,9 +312,10 @@ function Miner:forceMine(direction, side, sneaky)
         return
       end
     end
-    xassert(false, "Attempt to swing tool failed with message \"", msg, "\".")
+    xassert(false, "attempt to swing tool failed with message \"", msg, "\".")
   end
 end
+
 
 -- Wrapper for crobot.place(), throws an exception on failure. Tries to clear
 -- obstacles in the way (entities or blocks) until the placement succeeds or a
@@ -312,14 +326,14 @@ end
 ---@param sneaky boolean|nil
 function Miner:forcePlace(direction, side, sneaky)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
-    coroutine.yield(ReturnReasons.energyLow)
+    coroutine.yield(self.ReturnReasons.energyLow)
   end
   local result, err = crobot.place(direction, side, sneaky)
   if not result then
-    for i = 1, MAX_FORCE_OP_ATTEMPTS do
+    for i = 1, self.maxForceAttempts do
       if err == "nothing selected" then
         local stockSlots = self.currentStockSlots[self.selectedStockType]
-        xassert(stockSlots[#stockSlots], "Attempt to place block with nothing selected.")
+        xassert(stockSlots[#stockSlots], "attempt to place block with nothing selected.")
         self:stockSlotDepleted()
         self:selectStockType(self.selectedStockType)
       else
@@ -333,9 +347,10 @@ function Miner:forcePlace(direction, side, sneaky)
         return
       end
     end
-    xassert(false, "Attempt to place block failed with \"", err, "\".")
+    xassert(false, "attempt to place block failed with \"", err, "\".")
   end
 end
+
 
 -- Sorts the items in the robot inventory to match the format defined in
 -- self.stockLevels as close as possible. This behaves roughly like a
@@ -365,7 +380,7 @@ function Miner:itemRearrange()
       end
     end
     -- If found a mining tool and the durability is less than acceptable, mark the stockIndex as invalid.
-    if stockIndex == StockTypes.mining then
+    if stockIndex == self.StockTypes.mining then
       if item.maxDamage > 0 and item.maxDamage - item.damage <= self.toolHealthMin + self.toolHealthBias then
         stockIndex = -1
       end
@@ -468,6 +483,7 @@ function Miner:itemDeposit(stockedItems, outputSide)
   icontroller.equip()
 end
 
+
 -- Retrieve items from the specified side and fill slots that match the format
 -- defined in self.stockLevels. If there is no equipped item then a new one is
 -- picked up that meets the minimum durability requirement.
@@ -490,7 +506,7 @@ function Miner:itemRestock(stockedItems, inputSide)
       for slot, item in itemutil.invIterator(icontroller.getAllStacks(inputSide)) do
         local itemName = itemutil.getItemFullName(item)
         local health
-        local stockEntry = self.stockLevels[StockTypes.mining]
+        local stockEntry = self.stockLevels[self.StockTypes.mining]
         for i = 2, #stockEntry do
           if string.match(itemName, stockEntry[i]) then
             health = item.maxDamage > 0 and item.maxDamage - item.damage or math.huge
@@ -555,7 +571,7 @@ function Miner:itemRestock(stockedItems, inputSide)
       end
       -- If found a mining tool and the durability is less than acceptable, mark the stockIndex as invalid.
       -- This shouldn't cause problems if the inventory has two of the same tools with different durability levels, because the two tools will get mapped to different names (metadata is damage value).
-      if stockIndex == StockTypes.mining then
+      if stockIndex == self.StockTypes.mining then
         if item.maxDamage > 0 and item.maxDamage - item.damage <= self.toolHealthMin + self.toolHealthBias then
           stockIndex = -1
         end
@@ -639,15 +655,19 @@ function Miner:itemRestock(stockedItems, inputSide)
   dlog.out("itemRestock", "stockedItems finalized:", stockedItems)
 end
 
+
 -- Performs a rearrangement of items, deposits excess, and pulls in new ones to
 -- match the set stock levels. The equipped tool is replaced with a fresh one if
 -- necessary.
-function Miner:fullResupply()
+-- 
+---@param inputSide Sides
+---@param outputSide Sides
+function Miner:fullResupply(inputSide, outputSide)
   local stockedItems = self:itemRearrange()
-  self:itemDeposit(stockedItems, self.inventoryOutput)
+  self:itemDeposit(stockedItems, outputSide)
   
   while true do
-    self:itemRestock(stockedItems, self.inventoryInput)
+    self:itemRestock(stockedItems, inputSide)
     
     --[[
     Maps stock index to slots where the items appear in the internal inventory.
@@ -700,3 +720,5 @@ function Miner:fullResupply()
   crobot.select(1)
   robnav.turnTo(sides.front)
 end
+
+return Miner

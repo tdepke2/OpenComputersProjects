@@ -25,7 +25,6 @@ potential problems:
 local component = require("component")
 local computer = require("computer")
 local crobot = component.robot
-local icontroller = component.inventory_controller
 local sides = require("sides")
 
 local include = require("include")
@@ -33,23 +32,9 @@ local dlog = include("dlog")
 dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local enum = include("enum")
-local itemutil = include("itemutil")
+local miner = include("miner")
 local robnav = include("robnav")
 local xassert = dlog.xassert    -- this may be a good idea to do from now on? ###########################################################
-
-local ReturnReasons = enum {
-  "energyLow",
-  "toolLow",
-  "blocksLow",
-  "inventoryFull",
-  "quarryDone"
-}
-
-local StockTypes = enum {
-  "buildBlock",
-  "stairBlock",
-  "mining"
-}
 
 
 -- Quarry class definition.
@@ -63,6 +48,7 @@ setmetatable(Quarry, {
   end
 })
 
+
 -- Construct a new Quarry object with the given length, width, and height mining
 -- dimensions. These correspond to the positive-x, positive-z, and negative-y
 -- dimensions with the robot facing in the positive-z direction.
@@ -71,6 +57,7 @@ setmetatable(Quarry, {
 ---@param width integer|nil
 ---@param height integer|nil
 ---@return Quarry
+---@nodiscard
 function Quarry:new(length, width, height)
   self.__index = self
   self = setmetatable({}, self)
@@ -81,44 +68,26 @@ function Quarry:new(length, width, height)
   
   robnav.setCoords(0, 0, 0, sides.front)
   
-  -- The tool health (number of uses remaining) threshold for triggering the robot to return to restock point, and minimum allowed health.
-  -- The return threshold is only considered if the robot is out of spare tools. Tools generally wear down to the minimum level (or if -1, the tool is used completely).
-  self.toolHealthReturn = 5
-  self.toolHealthMin = 0
-  -- Bias added to self.toolHealthReturn/Min when robot is selecting new tools during resupply.
-  self.toolHealthBias = 5
-  -- Similar to tool health, but calculated as a float value in range [0, 1] per tool.
-  self.toolDurabilityReturn = false
-  self.toolDurabilityMin = false
-  self.lastToolDurability = -1.0
-  -- Minimum threshold on energy level before robot needs to resupply.
-  self.energyLevelMin = 1000
-  -- Minimum number of empty slots before robot needs to resupply.
-  self.emptySlotsMin = 1
+  self.miner = miner:new(
+    enum {"buildBlock", "stairBlock", "mining"},
+    {{3, ".*stone/.*"}, {3, ".*stairs/.*"}, {2, ".*pickaxe.*"}},
+    {1, 1, 0}
+  )
   
-  self.withinMainCoroutine = false
-  self.internalInventorySize = crobot.inventorySize()
-  self.inventoryInput = sides.right
-  self.inventoryOutput = sides.right
   --[[self.stockLevels = {
     {2, "minecraft:stone/0", "minecraft:cobblestone/0"},
     {1, "minecraft:stone_stairs/0"}
   }--]]
-  -- Defines how slots in the robot inventory will be partitioned for items that the robot can use. These are tightly packed starting at the first slot in inventory.
-  self.stockLevels = {
-    {3, ".*stone/.*"},
-    {3, ".*stairs/.*"},
-    {2, ".*pickaxe.*"}
-  }
-  -- The minimum number of slots that must contain items for each stock type before the robot can finish resupply.
-  -- Note that zeros are only allowed for temporary stock types that the robot does not use for construction (like fuel and tools).
-  self.stockLevelsMinimum = {
-    1,
-    1,
-    0
-  }
-  self.currentStockSlots = false
-  self.selectedStockType = 0
+  
+  self.miner.toolHealthReturn = 5
+  self.miner.toolHealthMin = 0
+  self.miner.toolHealthBias = 5
+  
+  self.miner.energyLevelMin = 1000
+  self.miner.emptySlotsMin = 1
+  
+  self.inventoryInput = sides.right
+  self.inventoryOutput = sides.right
   
   self.xDir = 1
   self.zDir = 1
@@ -162,7 +131,7 @@ function Quarry:quarryMain()
       end
       self.zDir = -self.zDir
     else
-      self:forceMove(sides.front)
+      self.miner:forceMove(sides.front)
     end
   end
 end
@@ -181,51 +150,51 @@ function Quarry:run()
     self:quarryStart()
     self:quarryMain()
     self:quarryEnd()
-    return ReturnReasons.quarryDone
+    return self.miner.ReturnReasons.minerDone
   end)
   
-  self:fullResupply()
+  self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
   
   while true do
-    self.withinMainCoroutine = true
+    self.miner.withinMainCoroutine = true
     local status, ret = coroutine.resume(co)
-    self.withinMainCoroutine = false
+    self.miner.withinMainCoroutine = false
     if not status then
       error(ret)
     end
-    dlog.out("run", "return reason = ", ReturnReasons[ret])
+    dlog.out("run", "return reason = ", self.miner.ReturnReasons[ret])
     
     -- Return to home position.
     dlog.out("run", "moving to home position.")
     local xLast, yLast, zLast, rLast = robnav.getCoords()
-    local lastSelectedStockType = self.selectedStockType
+    local lastSelectedStockType = self.miner.selectedStockType
     if robnav.y < 0 then
-      self:forceMove(sides.top)
+      self.miner:forceMove(sides.top)
     end
     if robnav.y < 0 then
-      self:forceMove(sides.top)
+      self.miner:forceMove(sides.top)
     end
     robnav.turnTo(sides.back)
     while robnav.z > 0 do
-      self:forceMove(sides.front)
+      self.miner:forceMove(sides.front)
     end
     robnav.turnTo(sides.right)
     while robnav.x > 0 do
-      self:forceMove(sides.front)
+      self.miner:forceMove(sides.front)
     end
     while robnav.y < 0 do
-      self:forceMove(sides.top)
+      self.miner:forceMove(sides.top)
     end
     
-    if ret == ReturnReasons.quarryDone then
-      self:itemDeposit({}, self.inventoryOutput)
+    if ret == self.miner.ReturnReasons.minerDone then
+      self.miner:itemDeposit({}, self.inventoryOutput)
       crobot.select(1)
       robnav.turnTo(sides.front)
       io.write("Quarry finished!\n")
       return
     end
     
-    self:fullResupply()
+    self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
     
     -- Wait until fully recharged.
     while computer.maxEnergy() - computer.energy() > 50 do
@@ -235,23 +204,23 @@ function Quarry:run()
     
     -- Go back to working area.
     dlog.out("run", "moving back to working position.")
-    self:selectStockType(lastSelectedStockType)
+    self.miner:selectStockType(lastSelectedStockType)
     while robnav.y > yLast + 2 do
-      self:forceMove(sides.bottom)
+      self.miner:forceMove(sides.bottom)
     end
     robnav.turnTo(sides.left)
     while robnav.x < xLast do
-      self:forceMove(sides.front)
+      self.miner:forceMove(sides.front)
     end
     robnav.turnTo(sides.front)
     while robnav.z < zLast do
-      self:forceMove(sides.front)
+      self.miner:forceMove(sides.front)
     end
     if robnav.y > yLast then
-      self:forceMove(sides.bottom)
+      self.miner:forceMove(sides.bottom)
     end
     if robnav.y > yLast then
-      self:forceMove(sides.bottom)
+      self.miner:forceMove(sides.bottom)
     end
     robnav.turnTo(rLast)
     xassert(robnav.x == xLast and robnav.y == yLast and robnav.z == zLast and robnav.r == rLast)
@@ -262,61 +231,61 @@ end
 local BasicQuarry = Quarry:new()
 function BasicQuarry:layerMine()
   if (robnav.z ~= self.zMax or self.zDir ~= 1) and (robnav.z ~= 0 or self.zDir ~= -1) then
-    self:forceMine(sides.front)
+    self.miner:forceMine(sides.front)
   end
 end
 function BasicQuarry:layerTurn(turnDir)
-  self:forceTurn(turnDir)
-  self:forceMine(sides.front)
-  self:forceMove(sides.front)
-  self:forceTurn(turnDir)
+  self.miner:forceTurn(turnDir)
+  self.miner:forceMine(sides.front)
+  self.miner:forceMove(sides.front)
+  self.miner:forceTurn(turnDir)
 end
 function BasicQuarry:layerDown()
-  self:forceMine(sides.bottom)
-  self:forceMove(sides.bottom)
-  self:forceTurn(true)
-  self:forceTurn(true)
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
+  self.miner:forceTurn(true)
+  self.miner:forceTurn(true)
 end
 function BasicQuarry:quarryStart()
-  self:forceMine(sides.bottom)
-  self:forceMove(sides.bottom)
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
 end
 
 -- Fast quarry mines three layers at a time, may not clear all liquids.
 local FastQuarry = Quarry:new()
 function FastQuarry:layerMine()
-  self:forceMine(sides.top)
+  self.miner:forceMine(sides.top)
   if (robnav.z ~= self.zMax or self.zDir ~= 1) and (robnav.z ~= 0 or self.zDir ~= -1) then
-    self:forceMine(sides.front)
+    self.miner:forceMine(sides.front)
   end
-  self:forceMine(sides.bottom)
+  self.miner:forceMine(sides.bottom)
 end
 function FastQuarry:layerTurn(turnDir)
-  self:forceTurn(turnDir)
-  self:forceMine(sides.front)
-  self:forceMove(sides.front)
-  self:forceTurn(turnDir)
+  self.miner:forceTurn(turnDir)
+  self.miner:forceMine(sides.front)
+  self.miner:forceMove(sides.front)
+  self.miner:forceTurn(turnDir)
 end
 function FastQuarry:layerDown()
-  self:forceMove(sides.bottom)
-  self:forceMine(sides.bottom)
-  self:forceMove(sides.bottom)
-  self:forceMine(sides.bottom)
-  self:forceMove(sides.bottom)
-  self:forceTurn(true)
-  self:forceTurn(true)
+  self.miner:forceMove(sides.bottom)
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
+  self.miner:forceTurn(true)
+  self.miner:forceTurn(true)
 end
 function FastQuarry:quarryStart()
-  self:forceMine(sides.bottom)
-  self:forceMove(sides.bottom)
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
   if robnav.y <= self.yMin + 1 then
     FastQuarry.layerMine = BasicQuarry.layerMine
     FastQuarry.layerTurn = BasicQuarry.layerTurn
     FastQuarry.layerDown = BasicQuarry.layerDown
     FastQuarry.quarryMain = Quarry.quarryMain
   else
-    self:forceMine(sides.bottom)
-    self:forceMove(sides.bottom)
+    self.miner:forceMine(sides.bottom)
+    self.miner:forceMove(sides.bottom)
   end
 end
 function FastQuarry:quarryMain()
@@ -331,7 +300,7 @@ function FastQuarry:quarryMain()
           FastQuarry.layerMine = BasicQuarry.layerMine
           FastQuarry.layerTurn = BasicQuarry.layerTurn
           FastQuarry.layerDown = BasicQuarry.layerDown
-          self:forceMove(sides.bottom)
+          self.miner:forceMove(sides.bottom)
           useBasicQuarryMain = true
         end
         self:layerDown()
@@ -342,7 +311,7 @@ function FastQuarry:quarryMain()
       end
       self.zDir = -self.zDir
     else
-      self:forceMove(sides.front)
+      self.miner:forceMove(sides.front)
     end
     --self.xLayer, self.yLayer, self.zLayer = robnav.getCoords()
   end
