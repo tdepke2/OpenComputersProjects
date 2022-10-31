@@ -6,14 +6,16 @@
 --------------------------------------------------------------------------------
 
 
+---@alias Enum table<integer|string, string|integer>
+
 -- Creates a new enumeration from a given table (matches keys to values and vice
 -- versa). The given table is intended to use numeric keys and string values,
 -- but doesn't have to be a sequence. An error is thrown if there are duplicate
 -- values in the table.
 -- Based on: https://unendli.ch/posts/2016-07-22-enumerations-in-lua.html
 -- 
----@param t table
----@return table
+---@param t table<integer, string>
+---@return Enum
 ---@nodiscard
 local function enum(t)
   local result = {}
