@@ -227,6 +227,7 @@ function Quarry:run()
   end
 end
 
+
 -- Basic quarry mines out the rectangular area and nothing more.
 local BasicQuarry = Quarry:new()
 function BasicQuarry:layerMine()
@@ -250,6 +251,7 @@ function BasicQuarry:quarryStart()
   self.miner:forceMine(sides.bottom)
   self.miner:forceMove(sides.bottom)
 end
+
 
 -- Fast quarry mines three layers at a time, may not clear all liquids.
 local FastQuarry = Quarry:new()
@@ -317,29 +319,91 @@ function FastQuarry:quarryMain()
   end
 end
 
+
 -- Fill floor quarry ensures a solid floor below each working layer, needed for
 -- when a flight upgrade is not in use.
 local FillFloorQuarry = Quarry:new()
 function FillFloorQuarry:layerMine()
-  
+  -- Testing shows that blocks categorized as "replaceable", "liquid", and "passable" allow movement too, but we only accept solid blocks here for safety.
+  if select(2, crobot.detect(sides.bottom)) ~= "solid" then
+    self.miner:forcePlace(sides.bottom)
+  end
+  if (robnav.z ~= self.zMax or self.zDir ~= 1) and (robnav.z ~= 0 or self.zDir ~= -1) then
+    self.miner:forceMine(sides.front)
+  end
 end
 function FillFloorQuarry:layerTurn(turnDir)
-  
+  self.miner:forceTurn(turnDir)
+  self.miner:forceMine(sides.front)
+  self.miner:forceMove(sides.front)
+  self.miner:forceTurn(turnDir)
 end
 function FillFloorQuarry:layerDown()
-  
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
+  self.miner:forceTurn(true)
+  self.miner:forceTurn(true)
+end
+function FillFloorQuarry:quarryStart()
+  self.miner:selectStockType(self.miner.StockTypes.buildBlock)
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
 end
 
--- Fill wall quarry creates a solid wall at the borders of the rectangular area (keeps liquids out). Requires angel upgrade.
+
+-- Fill wall quarry creates a solid wall at the borders of the rectangular area
+-- (keeps liquids out). Requires angel upgrade.
 local FillWallQuarry = Quarry:new()
 function FillWallQuarry:layerMine()
-  
+  -- Check to place wall on left/right sides.
+  if robnav.x == 0 or robnav.x == self.xMax then
+    local wallDir = ((robnav.x == 0) == (self.zDir == 1))
+    self.miner:forceTurn(wallDir)
+    if select(2, crobot.detect(sides.front)) ~= "solid" then
+      self.miner:forcePlace(sides.front)
+    end
+    self.miner:forceTurn(not wallDir)
+  end
+  -- Check to place wall on front/back sides. Otherwise, mine straight ahead.
+  if (robnav.z == self.zMax and self.zDir == 1) or (robnav.z == 0 and self.zDir == -1) then
+    if select(2, crobot.detect(sides.front)) ~= "solid" then
+      self.miner:forcePlace(sides.front)
+    end
+  else
+    self.miner:forceMine(sides.front)
+  end
 end
 function FillWallQuarry:layerTurn(turnDir)
-  
+  self.miner:forceTurn(turnDir)
+  self.miner:forceMine(sides.front)
+  self.miner:forceMove(sides.front)
+  self.miner:forceTurn(not turnDir)
+  if select(2, crobot.detect(sides.front)) ~= "solid" then
+    self.miner:forcePlace(sides.front)
+  end
+  self.miner:forceTurn(turnDir)
+  self.miner:forceTurn(turnDir)
 end
 function FillWallQuarry:layerDown()
-  
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
+  if select(2, crobot.detect(sides.front)) ~= "solid" then
+    self.miner:forcePlace(sides.front)
+  end
+  self.miner:forceTurn(true)
+  self.miner:forceTurn(true)
+end
+function FillWallQuarry:quarryStart()
+  self.miner:selectStockType(self.miner.StockTypes.buildBlock)
+  self.miner:forceMine(sides.bottom)
+  self.miner:forceMove(sides.bottom)
+  self.miner:forceTurn(true)
+  self.miner:forceTurn(true)
+  if select(2, crobot.detect(sides.front)) ~= "solid" then
+    self.miner:forcePlace(sides.front)
+  end
+  self.miner:forceTurn(false)
+  self.miner:forceTurn(false)
 end
 
 
@@ -349,7 +413,7 @@ local function main(...)
   
   io.write("Starting quarry!\n")
   --local quarry = BasicQuarry:new(6, 6, 8)
-  local quarry = BasicQuarry:new(3, 3, 3)
+  local quarry = FillWallQuarry:new(3, 3, 3)
   --local quarry = FastQuarry:new(3, 2, 3)
   
   quarry:run()
