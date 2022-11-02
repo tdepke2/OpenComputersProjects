@@ -5,7 +5,10 @@
 -- @author tdepke2
 --------------------------------------------------------------------------------
 
-require = require("unix_compatibility")
+-- Check for optional dependency unix_compatibility. This is needed only when running simple_doc outside of OpenOS.
+do
+  pcall(function() require = require("unix_compatibility") end)
+end
 local fs = require("filesystem")
 local shell = require("shell")
 
@@ -25,8 +28,15 @@ For more information, run: man simple_doc
 local args, opts = shell.parse(...)
 
 
--- Wrapper for io.open() to check if the file was opened successfully, and raise
--- an error if not.
+---@docstr
+-- 
+-- Wrapper for `io.open()` to check if the file was opened successfully, and
+-- raise an error if not.
+-- 
+---@param filename string
+---@param mode? openmode
+---@return file*
+---@nodiscard
 local function ioOpenSafe(filename, mode)
   if fs.isDirectory(filename) then
     io.stderr:write("simple_doc " .. filename .. ": is a directory\n")
@@ -41,13 +51,120 @@ local function ioOpenSafe(filename, mode)
 end
 
 
+---@docstr
+-- 
+-- Searches for annotations in the docSection (patterns beginning with the `@`
+-- symbol). Most of these are replaced with empty lines to hide them from
+-- documentation, but a few (`@docstr`, `@param`, and `@return`) are used to add
+-- function/variable definitions with named parameter types and return values.
+-- 
+---@param contextLine string
+---@param docSection table
+local function formatAnnotations(contextLine, docSection)
+  -- Tables for tracking function/variable definition lines, named parameters, and potentially named return values.
+  local funcs, params, returns
+  
+  -- Step through each line in docSection to find lines that begin with "@".
+  for i = 1, docSection.n do
+    local annotation, arguments = string.match(docSection[i], "^%s*@(%S+)%s*(.*)")
+    if annotation then
+      docSection[i] = ""
+      if annotation == "docstr" then
+        -- The "@docstr [function/variable definition]" annotation was found. If no definition is provided, guess it from the contextLine.
+        if arguments == "" then
+          docSection[i] = string.match(contextLine, "function%s+(.*)") or contextLine
+          docSection[i] = "`" .. docSection[i] .. "`"
+        else
+          docSection[i] = arguments
+        end
+        funcs = funcs or {}
+        funcs[#funcs + 1] = i
+      elseif annotation == "param" then
+        -- The "@param <name[?]> <type[|type...]> [description]" annotation was found. We ignore the description if provided.
+        local paramName, paramTypes, paramDesc = string.match(arguments, "(%S+)%s+(%S+)%s*(.*)")
+        if paramName then
+          params = params or {}
+          params[paramName] = paramTypes
+        end
+      elseif annotation == "return" then
+        -- The "@return <type> [<name> [comment] | [name] #<comment>]" annotation was found. We ignore the comment if provided.
+        local returnTypes, returnName, returnDesc = string.match(arguments, "(%S+)%s*(%S*)%s*(.*)")
+        if returnTypes then
+          returns = returns or {}
+          returns[#returns + 1] = {returnTypes, returnName}
+        end
+      end
+    end
+  end
+  
+  -- If some function/variable definitions were found, try to add types to parameters and return values for each definition.
+  if funcs then
+    for _, index in ipairs(funcs) do
+      -- Substitute function parameter names with the annotated version where applicable.
+      if params then
+        local funcParams = string.match(docSection[index], "%(.*%)")
+        if funcParams then
+          local annotatedParams = ""
+          for p in string.gmatch(funcParams, "[%w_%.]+") do
+            if params[p] then
+              p = p .. ": " .. params[p]
+            elseif params[p .. "?"] then
+              p = p .. "?: " .. params[p .. "?"]
+            end
+            annotatedParams = annotatedParams .. p .. ", "
+          end
+          docSection[index] = string.gsub(docSection[index], funcParams, string.sub(annotatedParams, 1, -3), 1)
+        end
+      end
+      
+      -- Add on the list of annotated return values if provided.
+      local annotatedReturns = ""
+      for _, returnTypeNamePair in ipairs(returns or {}) do
+        annotatedReturns = annotatedReturns .. (returnTypeNamePair[2] ~= "" and returnTypeNamePair[2] .. ": " or "") .. returnTypeNamePair[1] .. ", "
+      end
+      if annotatedReturns ~= "" then
+        local trailingChars = string.match(docSection[index], "^.*%)(.+)$")
+        if trailingChars then
+          docSection[index] = string.sub(docSection[index], 1, -1 - #trailingChars)
+        else
+          trailingChars = ""
+        end
+        docSection[index] = docSection[index] .. " -> " .. string.sub(annotatedReturns, 1, -3) .. trailingChars
+      end
+    end
+  end
+end
+
+
+---@docstr
+-- 
 -- Write a documentation comment block to the output file. Skips any blocks that
 -- are considered boilerplate code, adds a newline to separate blocks, and trims
 -- trailing empty lines.
+-- 
+---@param outputFile file*
+---@param docSection table
 local function writeSection(outputFile, docSection)
+  local contextLine = docSection[docSection.n]
+  if docSection.n > 0 and not opts["C"] then
+    docSection[docSection.n] = nil
+    docSection.n = docSection.n - 1
+  end
+  formatAnnotations(contextLine, docSection)
+  
+  -- Trim trailing lines that are only whitespace. Return early if docSection is empty.
+  for i = docSection.n, 1, -1 do
+    if string.find(docSection[i], "%S") then
+      break
+    end
+    docSection[i] = nil
+    docSection.n = docSection.n - 1
+  end
   if docSection.n == 0 then
+    docSection.sectionNumber = docSection.sectionNumber + 1
     return
   end
+  
   if opts["B"] and docSection.sectionNumber <= opts["B"] then
     -- Ignore the boilerplate comment.
     for i, v in ipairs(docSection) do
@@ -60,13 +177,6 @@ local function writeSection(outputFile, docSection)
       end
     elseif docSection.sectionNumber ~= 1 then
       outputFile:write("\n")
-    end
-    -- Trim trailing lines that are only whitespace.
-    for i = docSection.n, 1, -1 do
-      if string.find(docSection[i], "%S") then
-        break
-      end
-      docSection[i] = nil
     end
     
     if opts["ocdoc"] and docSection[1] and string.find(docSection[1], "^%s*`") then
@@ -90,8 +200,13 @@ local function writeSection(outputFile, docSection)
 end
 
 
+---@docstr
+-- 
 -- Reads the given input file to look for comment blocks formatted as
 -- documentation. These are appended to the output file.
+-- 
+---@param inputFile file*
+---@param outputFile file*
 local function buildDoc(inputFile, outputFile)
   local state = 0
   local docSection = {sectionNumber = 1, n = 0}
@@ -105,10 +220,8 @@ local function buildDoc(inputFile, outputFile)
         docSection.n = docSection.n + 1
         docSection[docSection.n] = docText
       else
-        if opts["C"] then
-          docSection.n = docSection.n + 1
-          docSection[docSection.n] = line
-        end
+        docSection.n = docSection.n + 1
+        docSection[docSection.n] = line
         state = 0
         writeSection(outputFile, docSection)
       end
@@ -117,9 +230,6 @@ local function buildDoc(inputFile, outputFile)
       if not string.find(line, "%]%]") then
         docSection.n = docSection.n + 1
         docSection[docSection.n] = line
-      elseif not opts["C"] then
-        state = 0
-        writeSection(outputFile, docSection)
       else
         state = 3
       end
@@ -153,6 +263,8 @@ local function buildDoc(inputFile, outputFile)
 end
 
 
+---@docstr
+-- 
 -- Check command line options, open files, generate documentation, and write
 -- results to output.
 local function main()
