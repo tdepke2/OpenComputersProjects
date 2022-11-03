@@ -28,7 +28,7 @@ For more information, run: man simple_doc
 local args, opts = shell.parse(...)
 
 
----@docstr
+---@docdef
 -- 
 -- Wrapper for `io.open()` to check if the file was opened successfully, and
 -- raise an error if not.
@@ -51,11 +51,11 @@ local function ioOpenSafe(filename, mode)
 end
 
 
----@docstr
+---@docdef
 -- 
 -- Searches for annotations in the docSection (patterns beginning with the `@`
 -- symbol). Most of these are replaced with empty lines to hide them from
--- documentation, but a few (`@docstr`, `@param`, and `@return`) are used to add
+-- documentation, but a few (`@docdef`, `@param`, and `@return`) are used to add
 -- function/variable definitions with named parameter types and return values.
 -- 
 ---@param contextLine string
@@ -69,8 +69,8 @@ local function formatAnnotations(contextLine, docSection)
     local annotation, arguments = string.match(docSection[i], "^%s*@(%S+)%s*(.*)")
     if annotation then
       docSection[i] = ""
-      if annotation == "docstr" then
-        -- The "@docstr [function/variable definition]" annotation was found. If no definition is provided, guess it from the contextLine.
+      if annotation == "docdef" then
+        -- The "@docdef [function/variable definition]" annotation was found. If no definition is provided, guess it from the contextLine.
         if arguments == "" then
           docSection[i] = string.match(contextLine, "function%s+(.*)") or contextLine
           docSection[i] = "`" .. docSection[i] .. "`"
@@ -93,6 +93,8 @@ local function formatAnnotations(contextLine, docSection)
           returns = returns or {}
           returns[#returns + 1] = {returnTypes, returnName}
         end
+      elseif annotation == "see" or annotation == "author" then
+        docSection[i] = string.upper(string.sub(annotation, 1, 1)) .. string.sub(annotation, 2) .. ": " .. arguments
       end
     end
   end
@@ -136,7 +138,7 @@ local function formatAnnotations(contextLine, docSection)
 end
 
 
----@docstr
+---@docdef
 -- 
 -- Write a documentation comment block to the output file. Skips any blocks that
 -- are considered boilerplate code, adds a newline to separate blocks, and trims
@@ -200,7 +202,7 @@ local function writeSection(outputFile, docSection)
 end
 
 
----@docstr
+---@docdef
 -- 
 -- Reads the given input file to look for comment blocks formatted as
 -- documentation. These are appended to the output file.
@@ -263,7 +265,7 @@ local function buildDoc(inputFile, outputFile)
 end
 
 
----@docstr
+---@docdef
 -- 
 -- Check command line options, open files, generate documentation, and write
 -- results to output.
