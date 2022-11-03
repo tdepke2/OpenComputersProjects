@@ -11,7 +11,7 @@
   
   Annotations are recognized by an "@" symbol at the beginning of a line in the docstring. They are based off of annotations used in [lua-language-server](https://github.com/sumneko/lua-language-server/wiki/Annotations). Only the few listed below are supported and the rest are simply ignored and treated as empty lines.
   
-  * `---@docstr [function/variable definition]`
+  * `---@docdef [function/variable definition]`
     
     Indicates that a function/variable definition should be inserted at this line. This enables `@param` and `@return` to substitute named parameter/return types into the definition line. If the function/variable definition is not provided, it is guessed from the context (the first non-comment line after the docstring). This annotation can also be used multiple times within a docstring, which is useful for functions with multiple call signatures.
     
@@ -22,6 +22,10 @@
   * `---@return <type> [<name> [comment] | [name] #<comment>]`
     
     Define a `return` value for a function. For this one, a question mark after the return type will mark it as optional. If the comment is provided it is ignored.
+    
+  * `---@see`, `---@author`
+    
+    Just adds a basic comment that is prefixed with the annotation name.
   
   
   It's easy to embed documentation in an existing file by using the `--insert-start` and `--insert-end` options. For example, this can be used to put Markdown formatted docstrings in a README.md file. Strings like `<!-- SIMPLE-DOC:START (FILE:...) -->` and `<!-- SIMPLE-DOC:END -->` can be placed in the readme to mark where to insert documentation, and the same strings passed to the aforementioned options. This can also be automated (with GitHub actions or other tools) to get the documentation always synced up with the code. Using Markdown docstrings is also nice for editors that can render these on hover, Sublime Text with LSP-lua works well for this purpose.
@@ -84,7 +88,7 @@ function my_module.sendMessage(target)
   return true
 end
 
----@docstr
+---@docdef
 -- 
 -- Callback that triggers when a message is received from another host. Returns
 -- true if message data was processed successfully, or false and an error
