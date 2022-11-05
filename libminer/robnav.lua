@@ -1,9 +1,13 @@
---[[
-Robot navigation without a navigation upgrade. Extends the base robot component
-move() and turn() functions with local coordinates tracking.
+--------------------------------------------------------------------------------
+-- Robot navigation without a navigation upgrade. Extends the base robot
+-- component move() and turn() functions with local coordinates tracking. To use
+-- this correctly, first call `robnav.setCoords()` to specify the robot's
+-- coordinates and then always use `robnav.move()` and `robnav.turn()` instead
+-- of the corresponding functions in the robot component.
+-- 
+-- @author tdepke2
+--------------------------------------------------------------------------------
 
-
---]]
 
 local component = require("component")
 local crobot = component.robot
@@ -31,20 +35,29 @@ local turnCCW = {
   [sides.left] = sides.back
 }
 
--- robnav.getCoords(): number, number, number, number
--- 
+
 -- Gets the current coordinates of the robot. This is just for convenience,
 -- directly accessing the robnav.x, robnav.y, etc. values is fine too.
+-- 
+---@return integer x
+---@return integer y
+---@return integer z
+---@return Sides r
+---@nodiscard
 function robnav.getCoords()
   return robnav.x, robnav.y, robnav.z, robnav.r
 end
 
--- robnav.setCoords(x: number, y: number, z: number, side: number)
--- 
+
 -- Sets the current coordinates of the robot, effectively changing the
 -- local-space point of reference. If these match the block coordinates of the
 -- robot in the world (where sides.front points to the south), then the robot's
 -- coordinate system will be put in world-space.
+-- 
+---@param x integer
+---@param y integer
+---@param z integer
+---@param side Sides
 function robnav.setCoords(x, y, z, side)
   robnav.x = x
   robnav.y = y
@@ -52,11 +65,14 @@ function robnav.setCoords(x, y, z, side)
   robnav.r = side
 end
 
--- robnav.move(direction: number): boolean[, string]
--- 
--- Moves the robot 1 block just like component.robot.move(), but updates the
+
+-- Moves the robot 1 block just like `component.robot.move()`, but updates the
 -- coords of the robot. The direction can be either front, back, top, or bottom.
 -- Returns true on success, or false and an error message on failure.
+-- 
+---@param direction Sides
+---@return boolean success
+---@return string|nil err
 function robnav.move(direction)
   local result, err = crobot.move(direction)
   if result then
@@ -73,12 +89,33 @@ function robnav.move(direction)
   end
 end
 
--- robnav.turn(clockwise: boolean): boolean[, string]
+
+-- Similar to `robnav.move()`, but doesn't actually change the robots position.
+-- This only calculates and updates the given position (as if the robot was
+-- there).
 -- 
--- Rotates the robot 90 degrees just like component.robot.turn(), but updates
+---@param direction Sides
+---@param position {x: integer, y: integer, z: integer, r: Sides}
+function robnav.computeMove(direction, position)
+  assert(direction >= 0 and direction < 4)
+  if direction < 2 then
+    position.y = position.y + direction * 2 - 1
+  elseif position.r < 4 then
+    position.z = position.z + (direction * 2 - 5) * (position.r * 2 - 5)
+  else
+    position.x = position.x + (direction * 2 - 5) * (position.r * 2 - 9)
+  end
+end
+
+
+-- Rotates the robot 90 degrees just like `component.robot.turn()`, but updates
 -- the coords of the robot. The clockwise parameter refers to the direction as
 -- observed from the top of the robot. Returns true on success, or false and an
 -- error message on failure.
+-- 
+---@param clockwise boolean
+---@return boolean success
+---@return string|nil err
 function robnav.turn(clockwise)
   local result, err = crobot.turn(clockwise)
   if result then
@@ -89,11 +126,25 @@ function robnav.turn(clockwise)
   end
 end
 
--- robnav.moveN(direction: number, count: number): boolean
+
+-- Similar to `robnav.turn()`, but doesn't actually change the robots direction.
+-- This only calculates and updates the given position (as if the robot was
+-- there).
 -- 
+---@param clockwise boolean
+---@param position {x: integer, y: integer, z: integer, r: Sides}
+function robnav.computeTurn(clockwise, position)
+  position.r = clockwise and turnCW[position.r] or turnCCW[position.r]
+end
+
+
 -- Moves the robot N blocks in the specified direction. The direction can be
 -- either front, back, top, or bottom and the count must be non-negative. If
 -- unsuccessful, stops early and returns false.
+-- 
+---@param direction Sides
+---@param count integer
+---@return boolean success
 function robnav.moveN(direction, count)
   if direction < 2 then
     local dy = direction * 2 - 1
@@ -129,11 +180,15 @@ function robnav.moveN(direction, count)
   return true
 end
 
--- robnav.moveTo(x: number, y: number, z: number): boolean
--- 
+
 -- Moves to the specified coordinates in an X -> Y -> Z ordering. This does not
 -- apply any path-finding to get to the destination. If unsuccessful, stops
 -- early and returns false.
+-- 
+---@param x integer
+---@param y integer
+---@param z integer
+---@return boolean success
 function robnav.moveTo(x, y, z)
   if x - robnav.x > 0 then
     robnav.turnTo(sides.left)
@@ -171,11 +226,13 @@ function robnav.moveTo(x, y, z)
   return x == robnav.x and y == robnav.y and z == robnav.z
 end
 
--- robnav.turnTo(side: number): boolean
--- 
+
 -- Rotates the robot to the requested side in the fewest number of turns. If the
 -- side is bottom, top, or the side the robot is already facing, no action is
 -- taken. If unsuccessful, stops early and returns false.
+-- 
+---@param side Sides
+---@return boolean success
 function robnav.turnTo(side)
   if side == sides.bottom or side == sides.top or side == robnav.r then
     return true

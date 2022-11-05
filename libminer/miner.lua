@@ -115,9 +115,22 @@ function Miner:new(stockTypes, stockLevels, stockLevelsMinimum)
   
   self.internalInventorySize = crobot.inventorySize()
   
-  -- For each of the StockTypes, defines how many slots in the robot inventory
-  -- will be partitioned for items of that type. These are tightly packed
-  -- starting at the first slot in inventory.
+  --[[
+  For each of the StockTypes, defines how many slots in the robot inventory will
+  be partitioned for items of that type (zeros are allowed). These are tightly
+  packed starting at the first slot in inventory.
+  ```
+  stockLevels = {
+    [stock index] = {
+      [1] = <number of slots>
+      [2] = <item name pattern 1>
+      ...
+      [N] = <item name pattern N>
+    }
+    ...
+  }
+  ```
+  ]]
   self.stockLevels = stockLevels or {
     {2, ".*pickaxe.*"}
   }
@@ -132,7 +145,9 @@ function Miner:new(stockTypes, stockLevels, stockLevelsMinimum)
   }
   xassert(#self.stockLevelsMinimum == #self.StockTypes, "length of stockLevelsMinimum and StockTypes must match (", #self.StockTypes, " expected, got ", #self.stockLevelsMinimum, ")")
   
-  self.currentStockSlots = {}
+  self.currentStockSlots = setmetatable({}, {
+    __index = function() return {n = 0} end
+  })
   self.selectedStockType = 0
   
   return self
@@ -353,7 +368,7 @@ end
 
 
 -- Sorts the items in the robot inventory to match the format defined in
--- self.stockLevels as close as possible. This behaves roughly like a
+-- `self.stockLevels` as close as possible. This behaves roughly like a
 -- stable-sort (based on selection sort to minimize swap operations). Returns a
 -- table of stockedItems that tracks items in slots defined by the stock levels
 -- (so they don't get dumped into storage in the following operations).
@@ -485,7 +500,7 @@ end
 
 
 -- Retrieve items from the specified side and fill slots that match the format
--- defined in self.stockLevels. If there is no equipped item then a new one is
+-- defined in `self.stockLevels`. If there is no equipped item then a new one is
 -- picked up that meets the minimum durability requirement.
 -- 
 ---@param stockedItems StockedItems
@@ -673,7 +688,7 @@ function Miner:fullResupply(inputSide, outputSide)
     Maps stock index to slots where the items appear in the internal inventory.
     ```
     currentStockSlots = {
-      [1] = {
+      [stock index] = {
         [1] = <first slot>
         [2] = <second slot, or false if empty>
         [3] = <third slot, or false if empty>
@@ -703,7 +718,7 @@ function Miner:fullResupply(inputSide, outputSide)
         end
         slot = slot + 1
       end
-      if stockSlots.n < self.stockLevelsMinimum[stockIndex] then
+      if stockSlots.n < math.min(self.stockLevelsMinimum[stockIndex], stockEntry[1]) then
         minimumLevelsReached = false
       end
     end

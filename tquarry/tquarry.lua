@@ -70,7 +70,7 @@ function Quarry:new(length, width, height)
   
   self.miner = miner:new(
     enum {"buildBlock", "stairBlock", "mining"},
-    {{3, ".*stone/.*"}, {3, ".*stairs/.*"}, {2, ".*pickaxe.*"}},
+    {{3, ".*stone/.*"}, {0, ".*stairs/.*"}, {2, ".*pickaxe.*"}},
     {1, 1, 0}
   )
   
@@ -140,6 +140,102 @@ function Quarry:quarryEnd()
   
 end
 
+
+-- Builds a staircase that wraps around the walls of the quarry in a spiral
+-- (going clockwise if moving up). The stairs end at the top directly below the
+-- robot in the home position.
+function Quarry:buildStairs()
+  
+  -- FIXME the min area to build stairs is 2 by 2, recommended angel upgrade
+  
+  self.miner:selectStockType(self.miner.StockTypes.stairBlock)
+  
+  -- Simulate starting the robot from the home position, then follow the path the stairs will take to reach the bottom.
+  local position = {
+    x = 0,
+    y = 0,
+    z = 0,
+    r = sides.front
+  }
+  while position.y > self.yMin + 1 do
+    robnav.computeMove(sides.front, position)
+    robnav.computeMove(sides.bottom, position)
+    if
+      position.r == sides.front and position.z == self.zMax
+      or position.r == sides.left and position.x == self.xMax
+      or position.r == sides.back and position.z == 0
+      or position.r == sides.right and position.x == 0
+    then
+      robnav.computeTurn(false, position)
+    end
+  end
+  robnav.computeMove(sides.front, position)
+  robnav.computeMove(sides.bottom, position)
+  robnav.computeTurn(false, position)
+  robnav.computeTurn(false, position)
+  
+  -- Get robot into position, then build the stairs until we reach the top.
+  self:moveTo(position.x, position.y, position.z)
+  robnav.turnTo(position.r)
+  
+  while robnav.y < 0 do
+    -- Only place stairs in front, it doesn't seem possible to get the right rotation when placing above or below.
+    self.miner:forcePlace(sides.front)
+    
+    self.miner:forceMove(sides.top)
+    self.miner:forceMove(sides.front)
+    if
+      robnav.r == sides.front and robnav.z == self.zMax
+      or robnav.r == sides.left and robnav.x == self.xMax
+      or robnav.r == sides.back and robnav.z == 0
+      or robnav.r == sides.right and robnav.x == 0
+    then
+      self.miner:forceTurn(true)
+    end
+  end
+end
+
+
+-- Moves the robot to the specified coordinates. This is similar to
+-- `robnav.moveTo()` but uses `miner:forceMove()` to protect against obstacles.
+-- Movement follows an X -> Z -> Y ordering when the target position is above
+-- the robot, and the reverse when the target is below (ensures clear movement
+-- within the quarry area).
+-- 
+---@param x integer
+---@param y integer
+---@param z integer
+function Quarry:moveTo(x, y, z)
+  -- Moves the robot in the vector specified by forwardDir and backwardDir, with
+  -- delta as the magnitude.
+  local function moveVec(delta, forwardDir, backwardDir)
+    if forwardDir ~= sides.top then
+      if delta > 0 then
+        robnav.turnTo(forwardDir)
+      elseif delta < 0 then
+        robnav.turnTo(backwardDir)
+      end
+      forwardDir = sides.front
+    elseif delta < 0 then
+      forwardDir = backwardDir
+    end
+    for _ = 1, math.abs(delta) do
+      self.miner:forceMove(forwardDir)
+    end
+  end
+  
+  if y - robnav.y >= 0 then
+    moveVec(x - robnav.x, sides.left, sides.right)
+    moveVec(z - robnav.z, sides.front, sides.back)
+    moveVec(y - robnav.y, sides.top, sides.bottom)
+  else
+    moveVec(y - robnav.y, sides.top, sides.bottom)
+    moveVec(z - robnav.z, sides.front, sides.back)
+    moveVec(x - robnav.x, sides.left, sides.right)
+  end
+end
+
+
 -- Starts the quarry process so that the robot mines out the rectangular area.
 -- The mining actions run within a coroutine so that any problems that occur
 -- (tools depleted, energy low, etc.) will cause the robot to return home for
@@ -154,6 +250,8 @@ function Quarry:run()
   end)
   
   self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
+  
+  local buildStairsQueued = true
   
   while true do
     self.miner.withinMainCoroutine = true
@@ -174,24 +272,29 @@ function Quarry:run()
     if robnav.y < 0 then
       self.miner:forceMove(sides.top)
     end
-    robnav.turnTo(sides.back)
-    while robnav.z > 0 do
-      self.miner:forceMove(sides.front)
-    end
-    robnav.turnTo(sides.right)
-    while robnav.x > 0 do
-      self.miner:forceMove(sides.front)
-    end
-    while robnav.y < 0 do
-      self.miner:forceMove(sides.top)
-    end
+    self:moveTo(0, 0, 0)
     
     if ret == self.miner.ReturnReasons.minerDone then
-      self.miner:itemDeposit({}, self.inventoryOutput)
-      crobot.select(1)
-      robnav.turnTo(sides.front)
-      io.write("Quarry finished!\n")
-      return
+      if buildStairsQueued then
+        -- Replace the old coroutine with new tasks to build staircase. The coroutine will start after the resupply finishes.
+        co = coroutine.create(function()
+          self:buildStairs()
+          return self.miner.ReturnReasons.minerDone
+        end)
+        
+        -- Request stairs to be stocked in inventory.
+        self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] = 3
+        
+        xLast, yLast, zLast, rLast = 0, 0, 0, sides.front
+        buildStairsQueued = false
+      else
+        -- Operations finished, dump inventory and return.
+        self.miner:itemDeposit({}, self.inventoryOutput)
+        crobot.select(1)
+        robnav.turnTo(sides.front)
+        io.write("Quarry finished!\n")
+        return
+      end
     end
     
     self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
@@ -205,17 +308,7 @@ function Quarry:run()
     -- Go back to working area.
     dlog.out("run", "moving back to working position.")
     self.miner:selectStockType(lastSelectedStockType)
-    while robnav.y > yLast + 2 do
-      self.miner:forceMove(sides.bottom)
-    end
-    robnav.turnTo(sides.left)
-    while robnav.x < xLast do
-      self.miner:forceMove(sides.front)
-    end
-    robnav.turnTo(sides.front)
-    while robnav.z < zLast do
-      self.miner:forceMove(sides.front)
-    end
+    self:moveTo(xLast, math.min(yLast + 2, 0), zLast)
     if robnav.y > yLast then
       self.miner:forceMove(sides.bottom)
     end
@@ -413,7 +506,7 @@ local function main(...)
   
   io.write("Starting quarry!\n")
   --local quarry = BasicQuarry:new(6, 6, 8)
-  local quarry = FillWallQuarry:new(3, 3, 3)
+  local quarry = BasicQuarry:new(3, 3, 3)
   --local quarry = FastQuarry:new(3, 2, 3)
   
   quarry:run()
