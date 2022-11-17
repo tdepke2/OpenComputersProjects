@@ -118,7 +118,7 @@ local cfgFormat = {
       },
     },
     baz = {
-      _comment_ = "idk what this is...\nmust be at least 3 items",
+      _comment_ = "\nidk what this is...\nmust be at least 3 items",
       --_iter_ = {"number", "any",
         
         -- not finished yet, would this even be useful?
@@ -162,6 +162,7 @@ local cfgFormat = {
     },
   },
   ["while"] = {"table|nil", {"bam", "boozled", 1234, {["for"] = true}}},
+  _ipairs_ = {"string"},
 }
 
 --[[
@@ -398,13 +399,14 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
   if cfgFormat._ipairs_ then
     local valueTypes = cfgFormat._ipairs_[1]
     for i, v in ipairs(cfg) do
-      if not processedKeys[i] then
-        processedKeys[i] = true
-        if type(valueTypes) == "string" then
-          verifyType(v, valueTypes, "value", nextAddress(address, i))
-        else
-          verifySubconfig(v, valueTypes, typeList, nextAddress(address, i))
-        end
+      if processedKeys[i] then
+        break
+      end
+      processedKeys[i] = true
+      if type(valueTypes) == "string" then
+        verifyType(v, valueTypes, "value", nextAddress(address, i))
+      else
+        verifySubconfig(v, valueTypes, typeList, nextAddress(address, i))
       end
     end
   end
@@ -510,8 +512,7 @@ local function writeValue(file, value, typeNames, valueName, address, spacing, e
   end
   
   if valueType == "table" then
-    
-    
+    -- Recursively print the contents of the table. Custom types are not considered in the table (there's no way to define them in there).
     local newSpacing = spacing .. "  "
     file:write("{\n")
     for k, v in pairs(value) do
@@ -520,12 +521,6 @@ local function writeValue(file, value, typeNames, valueName, address, spacing, e
       writeValue(file, v, nil, "value", address, newSpacing, ",\n")
     end
     file:write(string.sub(spacing, 3), "}")
-    
-    --file:write(string.sub(spacing, 3), "}", (spacing ~= "  " and endOfLine or "\n"))
-    
-    -- FIXME problem here, prints a trailing comma when on first level #########################
-    
-    
   elseif valueType == "string" and (valueName ~= "key" or addBrackets) then
     file:write((string.format("%q", value):gsub("\\\n","\\n")))
   else
@@ -536,6 +531,18 @@ local function writeValue(file, value, typeNames, valueName, address, spacing, e
     file:write("]", endOfLine)
   else
     file:write(endOfLine)
+  end
+end
+
+local function writeComment(file, comment, spacing)
+  local prefixNewlines = true
+  for line in string.gmatch(comment .. "\n", "(.-)\n") do
+    if line ~= "" or not prefixNewlines then
+      file:write(spacing, "-- ", line, "\n")
+      prefixNewlines = false
+    else
+      file:write("\n")
+    end
   end
 end
 
@@ -694,7 +701,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   
   -- Special case to handle first level of cfg. The first level is written to the file such that the values are not within a table.
   local endOfLine = ",\n"
-  if spacing == "" then
+  if #spacing <= 2 then
     endOfLine = "\n"
   end
   
@@ -717,8 +724,12 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   local processedKeys = {}
   for k, v in pairs(cfgFormat) do
     if not formatFields[k] then
-      if type(v) == "table" and v._comment_ then
-        file:write(spacing, "-- ", v._comment_, "\n")    -- FIXME need better comment handling. #######################
+      if type(v) == "table" then
+        if v._comment_ then
+          writeComment(file, v._comment_, spacing)
+        elseif type(v[1]) == "string" and v[3] then
+          writeComment(file, v[3], spacing)
+        end
       end
       file:write(spacing)
       writeValue(file, k, nil, "key", address, newSpacing, " = ")
@@ -730,16 +741,17 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   if cfgFormat._ipairs_ then
     local valueTypes = cfgFormat._ipairs_[1]
     for i, v in ipairs(cfg) do
-      if not processedKeys[i] then
-        processedKeys[i] = true
-        file:write(spacing)
-        if type(valueTypes) == "string" then
-          --verifyType(v, valueTypes, "value", nextAddress(address, i))
-          writeValue(file, v, valueTypes, "value", nextAddress(address, i), newSpacing, endOfLine)
-        else
-          --verifySubconfig(v, valueTypes, typeList, nextAddress(address, i))
-          writeSubconfig(file, v, valueTypes, typeList, nextAddress(address, i), newSpacing)
-        end
+      if processedKeys[i] then
+        break
+      end
+      processedKeys[i] = true
+      file:write(spacing)
+      if type(valueTypes) == "string" then
+        --verifyType(v, valueTypes, "value", nextAddress(address, i))
+        writeValue(file, v, valueTypes, "value", nextAddress(address, i), newSpacing, endOfLine)
+      else
+        --verifySubconfig(v, valueTypes, typeList, nextAddress(address, i))
+        writeSubconfig(file, v, valueTypes, typeList, nextAddress(address, i), newSpacing)
       end
     end
   end
@@ -765,7 +777,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   end
   
   if spacing ~= "" then
-    file:write(string.sub(spacing, 3), "}", (spacing ~= "  " and endOfLine or "\n"))
+    file:write(string.sub(spacing, 3), "}", endOfLine)
   end
   
 end
@@ -858,6 +870,8 @@ local cfg2 = {
       ["for"] = true,
     },
   },
+  [1] = "-1.234",
+  [2] = "cool",
 }
 
 print("verify cfg2")
