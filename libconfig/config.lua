@@ -55,7 +55,7 @@ properties = {
 ]]
 
 
-local typeList = {
+local typeListDemo = {
   Fruits = {
     "apple", "banana", "cherry"
   },
@@ -98,7 +98,7 @@ local propList = {
   {"Float2"},
 }
 
-local cfgFormat = {
+local cfgFormatDemo = {
   stuff = {
     _comment_ = "My sample config file",
     _order_ = 1,
@@ -318,10 +318,11 @@ end
 -- 
 ---@param value any
 ---@param typeNames string
+---@param typeList table
 ---@param valueName string
 ---@param address string
 ---@return string typeVerified
-local function verifyType(value, typeNames, valueName, address)
+local function verifyType(value, typeNames, typeList, valueName, address)
   -- Iterate type names (separated by vertical bars) until we find a match with value.
   local typeVerified, typeCheckError
   for typeName in string.gmatch(typeNames, "[%w_]+") do
@@ -368,6 +369,23 @@ local function nextAddress(address, key)
   end
 end
 
+local function keyUnionIter(a, b)
+  local t, k = a, nil
+  local function iter()
+    k = next(t, k)
+    if t == a then
+      if k == nil then
+        t = b
+        return iter()
+      end
+    elseif a[k] ~= nil then
+      return iter()
+    end
+    return k
+  end
+  return iter
+end
+
 -- Helper function for `config.verify()` to check for errors in configuration.
 -- 
 ---@param cfg any
@@ -382,47 +400,63 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
   -- If first index in cfgFormat is a string, the table represents a value definition.
   -- Value format: `{<type names>, [default value], [comment]}`.
   if type(cfgFormat[1]) == "string" then
-    verifyType(cfg, cfgFormat[1], "value", address)
+    verifyType(cfg, cfgFormat[1], typeList, "value", address)
     return
   end
   
-  -- Match keys in cfgFormat with ones in cfg (format fields are skipped). We mark these as processed so they won't get picked up a second time in "_ipairs_" or "_pairs_".
-  local processedKeys = {}
-  for k, v in pairs(cfgFormat) do
+  -- Find the union of keys in cfg and cfgFormat (except for format fields). This is similar to the result of sortKeys() but unsorted.
+  local unifiedKeys, unifiedKeysSize = {}, 0
+  for k in keyUnionIter(cfg, cfgFormat) do
     if not formatFields[k] then
-      processedKeys[k] = true
-      verifySubconfig(cfg[k], v, typeList, nextAddress(address, k))
+      unifiedKeysSize = unifiedKeysSize + 1
+      unifiedKeys[unifiedKeysSize] = k
     end
   end
   
-  -- Check for "_ipairs_" second and iterate sequential keys in cfg.
+  print("unifiedKeys:")
+  for i = -100, 100 do
+    if unifiedKeys[i] then
+      print(i, unifiedKeys[i])
+    end
+  end
+  print()
+  
+  -- Check for "_ipairs_" first and iterate sequential keys in cfg. We mark these as processed so they won't get picked up a second time in the following iterations.
+  local processedKeys = {}
   if cfgFormat._ipairs_ then
     local valueTypes = cfgFormat._ipairs_[1]
     for i, v in ipairs(cfg) do
-      if processedKeys[i] then
-        break
-      end
       processedKeys[i] = true
       if type(valueTypes) == "string" then
-        verifyType(v, valueTypes, "value", nextAddress(address, i))
+        verifyType(v, valueTypes, typeList, "value", nextAddress(address, i))
       else
         verifySubconfig(v, valueTypes, typeList, nextAddress(address, i))
       end
     end
   end
   
-  -- Check for "_pairs_" third and iterate remaining keys/values in cfg.
+  -- Match keys in cfgFormat with existing/non-existing ones in cfg second. Iterates with unifiedKeys for a defined ordering.
+  for i = 1, unifiedKeysSize do
+    local k = unifiedKeys[i]
+    if not processedKeys[k] and cfgFormat[k] then
+      processedKeys[k] = true
+      verifySubconfig(cfg[k], cfgFormat[k], typeList, nextAddress(address, k))
+    end
+  end
+  
+  -- Check for "_pairs_" third and iterate remaining keys/values in cfg (we already got all of the cfgFormat ones in above step). Iterates with unifiedKeys for a defined ordering.
   if cfgFormat._pairs_ then
     local keyTypes, valueTypes = cfgFormat._pairs_[1], cfgFormat._pairs_[2]
-    for k, v in pairs(cfg) do
+    for i = 1, unifiedKeysSize do
+      local k = unifiedKeys[i]
       if not processedKeys[k] then
         local address2 = nextAddress(address, k)
         processedKeys[k] = true
-        verifyType(k, keyTypes, "key", address2)
+        verifyType(k, keyTypes, typeList, "key", address2)
         if type(valueTypes) == "string" then
-          verifyType(v, valueTypes, "value", address2)
+          verifyType(cfg[k], valueTypes, typeList, "value", address2)
         else
-          verifySubconfig(v, valueTypes, typeList, address2)
+          verifySubconfig(cfg[k], valueTypes, typeList, address2)
         end
       end
     end
@@ -480,13 +514,14 @@ local luaReservedWords = {
 ---@param file file*
 ---@param value any
 ---@param typeNames string|nil
+---@param typeList table
 ---@param valueName string
 ---@param address string
 ---@param spacing string
 ---@param endOfLine string
-local function writeValue(file, value, typeNames, valueName, address, spacing, endOfLine)
+local function writeValue(file, value, typeNames, typeList, valueName, address, spacing, endOfLine)
   local valueType = type(value)
-  local typeVerified = typeNames and verifyType(value, typeNames, valueName, address) or "any"
+  local typeVerified = typeNames and verifyType(value, typeNames, typeList, valueName, address) or "any"
   
   -- For custom types, use the encode() function if found to convert the value to a code chunk.
   if typeList[typeVerified] and typeList[typeVerified].encode then
@@ -517,8 +552,8 @@ local function writeValue(file, value, typeNames, valueName, address, spacing, e
     file:write("{\n")
     for k, v in pairs(value) do
       file:write(spacing)
-      writeValue(file, k, nil, "key", address, newSpacing, " = ")
-      writeValue(file, v, nil, "value", address, newSpacing, ",\n")
+      writeValue(file, k, nil, typeList, "key", address, newSpacing, " = ")
+      writeValue(file, v, nil, typeList, "value", address, newSpacing, ",\n")
     end
     file:write(string.sub(spacing, 3), "}")
   elseif valueType == "string" and (valueName ~= "key" or addBrackets) then
@@ -593,15 +628,17 @@ local cfgFormat = {
 ]]--
 
 local function sortKeys(cfg, cfgFormat)
-  -- Collect all cfg table keys and sort them. Based on code used in xprint module.
+  -- Collect all cfg and cfgFormat keys and sort them. Based on code used in xprint module.
   local sortedKeys, stringKeys, otherKeys = {}, {}, {}
-  for k, v in pairs(cfg) do
-    if type(k) == "number" then
-      sortedKeys[#sortedKeys + 1] = k
-    elseif type(k) == "string" then
-      stringKeys[#stringKeys + 1] = k
-    else
-      otherKeys[#otherKeys + 1] = k
+  for k in keyUnionIter(cfg, cfgFormat) do
+    if not formatFields[k] then
+      if type(k) == "number" then
+        sortedKeys[#sortedKeys + 1] = k
+      elseif type(k) == "string" then
+        stringKeys[#stringKeys + 1] = k
+      else
+        otherKeys[#otherKeys + 1] = k
+      end
     end
   end
   table.sort(sortedKeys)
@@ -662,7 +699,7 @@ local function sortKeys(cfg, cfgFormat)
   local customOrder = setmetatable({}, {
     __index = function() return math.huge end
   })
-  for i, v in ipairs(sortedKeys) do
+  for _, v in ipairs(sortedKeys) do
     local formatValue = cfgFormat[v]
     if type(formatValue) == "table" and formatValue._order_ then
       customOrder[v] = formatValue._order_
@@ -706,12 +743,15 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   end
   
   if type(cfgFormat[1]) == "string" then
-    writeValue(file, cfg, cfgFormat[1], "value", address, spacing, endOfLine)
+    writeValue(file, cfg, cfgFormat[1], typeList, "value", address, spacing, endOfLine)
     return
   end
   
   -- FIXME implement this when ready ################################
   --local sortedKeys = sortKeys(cfg, cfgFormat)
+  
+  -- do we need to change order of below 3 code blocks to get better sort order?
+  -- FIXME the 3 code blocks can be put in a separate function? ##########################
   
   
   
@@ -732,7 +772,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
         end
       end
       file:write(spacing)
-      writeValue(file, k, nil, "key", address, newSpacing, " = ")
+      writeValue(file, k, nil, typeList, "key", address, newSpacing, " = ")
       processedKeys[k] = true
       writeSubconfig(file, cfg[k], v, typeList, nextAddress(address, k), newSpacing)
     end
@@ -748,7 +788,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
       file:write(spacing)
       if type(valueTypes) == "string" then
         --verifyType(v, valueTypes, "value", nextAddress(address, i))
-        writeValue(file, v, valueTypes, "value", nextAddress(address, i), newSpacing, endOfLine)
+        writeValue(file, v, valueTypes, typeList, "value", nextAddress(address, i), newSpacing, endOfLine)
       else
         --verifySubconfig(v, valueTypes, typeList, nextAddress(address, i))
         writeSubconfig(file, v, valueTypes, typeList, nextAddress(address, i), newSpacing)
@@ -764,10 +804,10 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
         processedKeys[k] = true
         --verifyType(k, keyTypes, "key", address2)
         file:write(spacing)
-        writeValue(file, k, keyTypes, "key", address2, newSpacing, " = ")
+        writeValue(file, k, keyTypes, typeList, "key", address2, newSpacing, " = ")
         if type(valueTypes) == "string" then
           --verifyType(v, valueTypes, "value", address2)
-          writeValue(file, v, valueTypes, "value", address2, newSpacing, endOfLine)
+          writeValue(file, v, valueTypes, typeList, "value", address2, newSpacing, endOfLine)
         else
           --verifySubconfig(v, valueTypes, typeList, address2)
           writeSubconfig(file, v, valueTypes, typeList, address2, newSpacing)
@@ -804,10 +844,10 @@ end
 
 
 --local xprint = require("xprint")
-local cfg = config.loadFile("/home/configTest2", cfgFormat, true)
+local cfg = config.loadFile("/home/configTest2", cfgFormatDemo, true)
 xprint.print({}, cfg)
 print("verify cfg")
-config.verify(cfg, cfgFormat, typeList)
+config.verify(cfg, cfgFormatDemo, typeListDemo)
 
 
 
@@ -875,5 +915,5 @@ local cfg2 = {
 }
 
 print("verify cfg2")
-config.verify(cfg2, cfgFormat, typeList)
-config.saveFile(nil, cfg2, cfgFormat, typeList)
+config.verify(cfg2, cfgFormatDemo, typeListDemo)
+config.saveFile(nil, cfg2, cfgFormatDemo, typeListDemo)
