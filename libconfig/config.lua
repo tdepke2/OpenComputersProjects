@@ -1,171 +1,4 @@
 --[[
-
--- My sample config file
-stuff = {
-  foo = {
-    ["number"]   = "number  ",
-    ["string"]   = "string  ",
-    
-    -- can be one of: apple, banana, or cherry
-    enumVal = "apple",
-  },
-  bar = {
-    "set",
-    "test",
-    "first",
-    123,
-  },
-  -- idk what this is...
-  -- must be at least 3 items
-  baz = {
-    [0] = "z",
-    [1] = "o",
-    [2] = "t",
-  },
-  mixedPairs = {
-    [1] = "a",
-    [2] = "b",
-    another = "c",
-    even_more = "d",
-  },
-}
-
-properties = {
-  color1 = 0xAABBCC,
-  color2 = 0x000000,
-  useColors = true,
-  [1] = {
-    true,
-    "height",
-    4.67,
-  },
-  [2] = {
-    false,
-    "length",
-    2.89,
-  },
-  [3] = {
-    true,
-    "width",
-    3.00,
-  },
-}
-
-
-]]
-
-
-local typeListDemo = {
-  Fruits = {
-    "apple", "banana", "cherry"
-  },
-  DataTypes = {
-    "number", "string", "table"
-  },
-  Table3Plus = {
-    verify = function(v)
-      
-      
-      -- maybe don't do this??
-      
-      
-    end,
-  },
-  Color = {
-    encode = function(v)
-      return string.format("0x%06X", v)
-    end,
-    decode = function(v)
-      return v
-    end,
-    verify = function(v)
-      assert(type(v) == "number" and math.floor(v) == v and v >= 0 and v <= 0xFFFFFF, "provided Color must be a 24 bit integer value.")
-    end,
-  },
-  Float2 = {
-    encode = function(v)
-      return string.format("%.2f", v)
-    end,
-    verify = function(v)
-      assert(type(v) == "number", "provided Float2 must be a number.")
-    end
-  },
-}
-
-local propList = {
-  {"boolean"},
-  {"string"},
-  {"Float2"},
-}
-
-local cfgFormatDemo = {
-  stuff = {
-    _comment_ = "My sample config file",
-    _order_ = 1,
-    foo = {
-      enumVal = {"Fruits", "apple", "\ncan be one of: apple, banana, or cherry"},
-      _pairs_ = {"DataTypes", "string",
-        ["number"]   = "number  ",
-        ["string"]   = "string  ",
-      },
-    },
-    bar = {
-      _ipairs_ = {"string|number",
-        "set",
-        "test",
-        "first",
-        123,
-      },
-    },
-    baz = {
-      _comment_ = "\nidk what this is...\nmust be at least 3 items",
-      --_iter_ = {"number", "any",
-        
-        -- not finished yet, would this even be useful?
-        -- I think we should skip this, complex iteration checking should be done outside of the config.
-        
-      --},
-      _ipairs_ = {"string"}
-    },
-    mixedPairs = {
-      _ipairs_ = {"string",
-        "a",
-        "b",
-      },
-      _pairs_ = {"string", "string",
-        another = "c",
-        even_more = "d",
-      },
-    },
-  },
-  properties = {
-    _order_ = 2,
-    color1 = {"Color", 0xAABBCC},
-    color2 = {"Color", 0x000000},
-    useColors = {"boolean", true},
-    _ipairs_ = {propList,
-      {
-        true,
-        "height",
-        4.67,
-      },
-      {
-        false,
-        "length",
-        2.89,
-      },
-      {
-        true,
-        "width",
-        3.00,
-      },
-    },
-  },
-  ["while2"] = {"table|nil", {"bam", "boozled", 1234, {["for"] = true}}},
-  --_ipairs_ = {"string"},
-}
-
---[[
 for table t in cfgFormat, if t[1] is string then t represents a value definition
 
 
@@ -380,27 +213,27 @@ local function verifyType(value, typeNames, typeList, valueName, address)
         typeCheckError = result
       end
     else
-      error("at \"" .. address .. "\": undefined type \"" .. typeName .. "\".")
+      error("at " .. address .. ": undefined type \"" .. typeName .. "\".")
     end
   end
   
   if typeCheckError then
-    error("at \"" .. address .. "\": bad " .. valueName .. ": " .. tostring(typeCheckError))
+    error("at " .. address .. ": bad " .. valueName .. ": " .. tostring(typeCheckError))
   elseif not typeVerified then
-    error("at \"" .. address .. "\": " .. valueName .. " with type \"" .. type(value) .. "\" does not match any of the allowed types \"" .. typeNames .. "\".")
+    error("at " .. address .. ": " .. valueName .. " with type \"" .. type(value) .. "\" does not match any of the allowed types \"" .. typeNames .. "\".")
   end
   return typeVerified
 end
 
--- Helper function to concatenate the next key onto the address, using a dot or
--- brackets where appropriate.
+-- Helper function to concatenate the next key onto the address, using quotes
+-- for strings where appropriate.
 -- 
 ---@param address string
 ---@param key any
 ---@return string
 local function nextAddress(address, key)
   if type(key) == "string" then
-    return address .. "." .. key
+    return address .. "[" .. string.format("%q", key):gsub("\\\n","\\n") .. "]"
   else
     return address .. "[" .. tostring(key) .. "]"
   end
@@ -431,7 +264,7 @@ end
 ---@param address string
 local function verifySubconfig(cfg, cfgFormat, typeList, address)
   if type(cfgFormat) ~= "table" then
-    error("at \"" .. address .. "\": expected table in configuration format.")
+    error("at " .. address .. ": expected table in configuration format.")
   end
   
   -- If first index in cfgFormat is a string, the table represents a value definition.
@@ -483,7 +316,7 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
   -- Confirm no extra fields are defined in cfg that we didn't match previously.
   for k, v in pairs(cfg) do
     if not processedKeys[k] then
-      error("at \"" .. nextAddress(address, k) .. "\": key is undefined in configuration format.")
+      error("at " .. nextAddress(address, k) .. ": key is undefined in configuration format.")
     end
   end
 end
@@ -496,11 +329,11 @@ end
 ---@param typeList table
 function config.verify(cfg, cfgFormat, typeList)
   if type(cfgFormat) ~= "table" then
-    error("at \"config\": expected table in configuration format.")
+    error("at config: expected table in configuration format.")
   end
   
   if cfgFormat._pairs_ or cfgFormat._ipairs_ then
-    error("at \"config\": _pairs_ and _ipairs_ are not allowed in first level of configuration format.")
+    error("at config: _pairs_ and _ipairs_ are not allowed in first level of configuration format.")
   end
   
   -- Match keys in cfgFormat with ones in cfg (format fields are skipped).
@@ -508,7 +341,7 @@ function config.verify(cfg, cfgFormat, typeList)
   for k, v in pairs(cfgFormat) do
     if not formatFields[k] then
       if not isFreeIdentifier(k) then
-        error("at \"" .. nextAddress("config", k) .. "\": keys in first level of configuration must be non-reserved string identifiers.")
+        error("at " .. nextAddress("config", k) .. ": keys in first level of configuration must be non-reserved string identifiers.")
       end
       processedKeys[k] = true
       verifySubconfig(cfg[k], v, typeList, nextAddress("config", k))
@@ -518,7 +351,7 @@ function config.verify(cfg, cfgFormat, typeList)
   -- Confirm no extra fields are defined in cfg that we didn't match previously.
   for k, v in pairs(cfg) do
     if not processedKeys[k] then
-      error("at \"" .. nextAddress("config", k) .. "\": key is undefined in configuration format.")
+      error("at " .. nextAddress("config", k) .. ": key is undefined in configuration format.")
     end
   end
 end
@@ -547,7 +380,7 @@ local function writeValue(file, value, typeNames, typeList, valueName, address, 
       if status then
         result = "result is type " .. type(result)
       end
-      error("at \"" .. address .. "\": failed to convert " .. typeVerified .. " to string: " .. tostring(result))
+      error("at " .. address .. ": failed to convert " .. typeVerified .. " to string: " .. tostring(result))
     end
     value = result
     -- Pseudo type for strings that need to be written as a Lua chunk (and not wrapped in quotes like normal strings, the below code does this).
@@ -598,52 +431,6 @@ local function writeComment(file, comment, spacing)
   end
 end
 
---[[
-
-local cfg = {
-    stuff = {
-        
-    },
-    properties = {
-        
-    },
-    cum = "succ",
-    [0] = {
-        
-    },
-    [1] = {
-        
-    },
-    [2] = nil,
-    [-3] = {
-        
-    },
-}
-
-local cfgFormat = {
-    stuff = {
-        _order_ = 3
-    },
-    properties = {
-        _order_ = 1
-    },
-    cum = {_order_ = 6},
-    [0] = {
-        _order_ = 4
-    },
-    [1] = {
-        _order_ = 7
-    },
-    [2] = {
-        _order_ = 2
-    },
-    [-3] = {
-        _order_ = 5
-    },
-}
-
-]]--
-
 local function sortKeys(cfg, cfgFormat)
   -- Collect all cfg and cfgFormat keys and sort them. Based on code used in xprint module.
   local sortedKeys, stringKeys, otherKeys = {}, {}, {}
@@ -669,49 +456,6 @@ local function sortKeys(cfg, cfgFormat)
     sortedKeys[sortedKeysSize + i] = v
   end
   
-  --[[print("sortedKeys:")
-  for i = -100, 100 do
-    if sortedKeys[i] then
-      print(i, sortedKeys[i])
-    end
-  end
-  print()--]]
-  
-  --[=[
-  local customOrder = {}
-  for i = 1, sortedKeysSize do
-    local formatValue = cfgFormat[sortedKeys[i]]
-    if type(formatValue) == "table" and formatValue._order_ then
-      customOrder[formatValue._order_] = i
-    end
-  end
-  local customOrderSize = #customOrder
-  print("customOrderSize = ", customOrderSize)
-  if customOrderSize > 0 then
-    local newSortedKeys = {}
-    --table.move(sortedKeys, 1, customOrderSize, customOrderSize + 1, sortedKeys)
-    for i = 1, customOrderSize do
-      newSortedKeys[i] = sortedKeys[customOrder[i]]
-      sortedKeys[customOrder[i]] = nil
-    end
-    local newIndex = customOrderSize + 1
-    for i = 1, sortedKeysSize do
-      if sortedKeys[i] ~= nil then
-        newSortedKeys[newIndex] = sortedKeys[i]
-        newIndex = newIndex + 1
-      end
-    end
-    sortedKeys = newSortedKeys
-    
-    --[[
-    for i = sortedKeysSize + customOrderSize, 1, -1 do
-      if sortedKeys[i] == nil and sortedKeys[i + 1] ~= nil then
-        table.remove(sortedKeys, i)
-        print("removed ", i)
-      end
-    end]]
-  end]=]
-  
   -- Search for cfg keys that have a corresponding "_order_" field in cfgFormat. This marks an override for the ordering.
   local customOrder = setmetatable({}, {
     __index = function() return math.huge end
@@ -720,7 +464,6 @@ local function sortKeys(cfg, cfgFormat)
     local formatValue = cfgFormat[v]
     if type(formatValue) == "table" and formatValue._order_ then
       customOrder[v] = formatValue._order_
-      --print("customOrder[", v, "] = ", formatValue._order_)
     end
   end
   
@@ -732,13 +475,6 @@ local function sortKeys(cfg, cfgFormat)
       j = j - 1
     end
   end
-  
-  --[[print("\nsortedKeys after:")
-  for i = -100, 100 do
-    if sortedKeys[i] then
-      print(i, sortedKeys[i])
-    end
-  end--]]
   
   return sortedKeys
 end
@@ -757,7 +493,7 @@ end
 ---@param spacing string
 local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   if type(cfgFormat) ~= "table" then
-    error("at \"" .. address .. "\": expected table in configuration format.")
+    error("at " .. address .. ": expected table in configuration format.")
   end
   
   -- Special case to handle first level of cfg. The first level is written to the file such that the values are not within a table.
@@ -857,79 +593,3 @@ function config.saveFile(filename, cfg, cfgFormat, typeList)
   
   writeSubconfig(io.stdout, cfg, cfgFormat, typeList, "config", "")
 end
-
-
---local xprint = require("xprint")
-local cfg = config.loadFile("/home/configTest2", cfgFormatDemo, true)
-xprint.print({}, cfg)
-print("verify cfg")
-config.verify(cfg, cfgFormatDemo, typeListDemo)
-
-
-
-
-local cfg2 = {
-  -- My sample config file
-  stuff = {
-    bar = {
-      "set",
-      "test",
-      "first",
-      123,
-    },
-    -- idk what this is...
-    -- must be at least 3 items
-    baz = {
-      --[0] = "z",
-      [1] = "o",
-      [2] = "t",
-    },
-    foo = {
-      
-      -- can be one of: apple, banana, or cherry
-      enumVal = "apple",
-      ["number"]   = "number  ",
-      ["string"]   = "string  ",
-    },
-    mixedPairs = {
-      [1] = "a",
-      [2] = "b",
-      another = "c",
-      even_more = "d",
-    },
-  },
-  properties = {
-    [1] = {
-      true,
-      "height",
-      4.67,
-    },
-    [2] = {
-      false,
-      "length",
-      2.89,
-    },
-    [3] = {
-      true,
-      "width",
-      3.00,
-    },
-    color1 = 0xAABBCC,
-    color2 = 0x000000,
-    useColors = true,
-  },
-  ["while2"] = {
-    "bam",
-    "boozled",
-    1234,
-    {
-      ["for"] = true,
-    },
-  },
-  --[1] = "-1.234",
-  --[2] = "cool",
-}
-
-print("verify cfg2")
-config.verify(cfg2, cfgFormatDemo, typeListDemo)
-config.saveFile(nil, cfg2, cfgFormatDemo, typeListDemo)
