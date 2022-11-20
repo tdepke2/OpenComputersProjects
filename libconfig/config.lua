@@ -161,8 +161,8 @@ local cfgFormatDemo = {
       },
     },
   },
-  ["while"] = {"table|nil", {"bam", "boozled", 1234, {["for"] = true}}},
-  _ipairs_ = {"string"},
+  ["while2"] = {"table|nil", {"bam", "boozled", 1234, {["for"] = true}}},
+  --_ipairs_ = {"string"},
 }
 
 --[[
@@ -193,6 +193,43 @@ local luaTypes = {
   ["thread"] = true,
   ["table"] = true,
 }
+
+-- List of Lua keywords. If a table has any of these as string keys, they need to be escaped in quotes during serialization.
+local luaReservedWords = {
+  ["and"] = true,
+  ["break"] = true,
+  ["do"] = true,
+  ["else"] = true,
+  ["elseif"] = true,
+  ["end"] = true,
+  ["false"] = true,
+  ["for"] = true,
+  ["function"] = true,
+  ["goto"] = true,
+  ["if"] = true,
+  ["in"] = true,
+  ["local"] = true,
+  ["nil"] = true,
+  ["not"] = true,
+  ["or"] = true,
+  ["repeat"] = true,
+  ["return"] = true,
+  ["then"] = true,
+  ["true"] = true,
+  ["until"] = true,
+  ["while"] = true,
+}
+
+-- Checks if a value is a free Lua identifier (a string, contains only
+-- alphanumeric characters and underscores, doesn't start with a number, and not
+-- a reserved word). If this function returns true, the value is safe to use as
+-- a table key without needing to wrap it in brackets.
+-- 
+---@param v any
+---@return boolean
+local function isFreeIdentifier(v)
+  return (type(v) == "string" and string.find(v, "^[%a_][%w_]*$") and not luaReservedWords[v])
+end
 
 -- Makes a deep copy of a table (or just returns the given argument otherwise).
 -- This uses raw iteration (metamethods are ignored) and also makes deep copies
@@ -404,23 +441,6 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
     return
   end
   
-  -- Find the union of keys in cfg and cfgFormat (except for format fields). This is similar to the result of sortKeys() but unsorted.
-  local unifiedKeys, unifiedKeysSize = {}, 0
-  for k in keyUnionIter(cfg, cfgFormat) do
-    if not formatFields[k] then
-      unifiedKeysSize = unifiedKeysSize + 1
-      unifiedKeys[unifiedKeysSize] = k
-    end
-  end
-  
-  print("unifiedKeys:")
-  for i = -100, 100 do
-    if unifiedKeys[i] then
-      print(i, unifiedKeys[i])
-    end
-  end
-  print()
-  
   -- Check for "_ipairs_" first and iterate sequential keys in cfg. We mark these as processed so they won't get picked up a second time in the following iterations.
   local processedKeys = {}
   if cfgFormat._ipairs_ then
@@ -435,28 +455,26 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
     end
   end
   
-  -- Match keys in cfgFormat with existing/non-existing ones in cfg second. Iterates with unifiedKeys for a defined ordering.
-  for i = 1, unifiedKeysSize do
-    local k = unifiedKeys[i]
-    if not processedKeys[k] and cfgFormat[k] then
+  -- Match keys in cfgFormat with ones in cfg (format fields are skipped).
+  for k, v in pairs(cfgFormat) do
+    if not (processedKeys[k] or formatFields[k]) then
       processedKeys[k] = true
-      verifySubconfig(cfg[k], cfgFormat[k], typeList, nextAddress(address, k))
+      verifySubconfig(cfg[k], v, typeList, nextAddress(address, k))
     end
   end
   
-  -- Check for "_pairs_" third and iterate remaining keys/values in cfg (we already got all of the cfgFormat ones in above step). Iterates with unifiedKeys for a defined ordering.
+  -- Check for "_pairs_" third and iterate remaining keys/values in cfg.
   if cfgFormat._pairs_ then
     local keyTypes, valueTypes = cfgFormat._pairs_[1], cfgFormat._pairs_[2]
-    for i = 1, unifiedKeysSize do
-      local k = unifiedKeys[i]
+    for k, v in pairs(cfg) do
       if not processedKeys[k] then
         local address2 = nextAddress(address, k)
         processedKeys[k] = true
         verifyType(k, keyTypes, typeList, "key", address2)
         if type(valueTypes) == "string" then
-          verifyType(cfg[k], valueTypes, typeList, "value", address2)
+          verifyType(v, valueTypes, typeList, "value", address2)
         else
-          verifySubconfig(cfg[k], valueTypes, typeList, address2)
+          verifySubconfig(v, valueTypes, typeList, address2)
         end
       end
     end
@@ -477,35 +495,34 @@ end
 ---@param cfgFormat table
 ---@param typeList table
 function config.verify(cfg, cfgFormat, typeList)
-  verifySubconfig(cfg, cfgFormat, typeList, "config")
+  if type(cfgFormat) ~= "table" then
+    error("at \"config\": expected table in configuration format.")
+  end
+  
+  if cfgFormat._pairs_ or cfgFormat._ipairs_ then
+    error("at \"config\": _pairs_ and _ipairs_ are not allowed in first level of configuration format.")
+  end
+  
+  -- Match keys in cfgFormat with ones in cfg (format fields are skipped).
+  local processedKeys = {}
+  for k, v in pairs(cfgFormat) do
+    if not formatFields[k] then
+      if not isFreeIdentifier(k) then
+        error("at \"" .. nextAddress("config", k) .. "\": keys in first level of configuration must be non-reserved string identifiers.")
+      end
+      processedKeys[k] = true
+      verifySubconfig(cfg[k], v, typeList, nextAddress("config", k))
+    end
+  end
+  
+  -- Confirm no extra fields are defined in cfg that we didn't match previously.
+  for k, v in pairs(cfg) do
+    if not processedKeys[k] then
+      error("at \"" .. nextAddress("config", k) .. "\": key is undefined in configuration format.")
+    end
+  end
 end
 
-
--- List of Lua keywords. If a table has any of these as string keys, they need to be escaped in quotes during serialization.
-local luaReservedWords = {
-  ["and"] = true,
-  ["break"] = true,
-  ["do"] = true,
-  ["else"] = true,
-  ["elseif"] = true,
-  ["end"] = true,
-  ["false"] = true,
-  ["for"] = true,
-  ["function"] = true,
-  ["goto"] = true,
-  ["if"] = true,
-  ["in"] = true,
-  ["local"] = true,
-  ["nil"] = true,
-  ["not"] = true,
-  ["or"] = true,
-  ["repeat"] = true,
-  ["return"] = true,
-  ["then"] = true,
-  ["true"] = true,
-  ["until"] = true,
-  ["while"] = true,
-}
 
 -- Writes a value out to the given file. This uses typeNames and verifyType() if
 -- provided to determine if the value is a custom type. Includes checking when
@@ -539,7 +556,7 @@ local function writeValue(file, value, typeNames, typeList, valueName, address, 
   
   -- Brackets are needed for table keys (except when the key is a string, valid identifier, and not a reserved word).
   local addBrackets = (valueName == "key")
-  if addBrackets and valueType == "string" and string.find(value, "^[%a_][%w_]*$") and not luaReservedWords[value] then
+  if addBrackets and isFreeIdentifier(value) then
     addBrackets = false
   end
   if addBrackets then
@@ -652,13 +669,13 @@ local function sortKeys(cfg, cfgFormat)
     sortedKeys[sortedKeysSize + i] = v
   end
   
-  print("sortedKeys:")
+  --[[print("sortedKeys:")
   for i = -100, 100 do
     if sortedKeys[i] then
       print(i, sortedKeys[i])
     end
   end
-  print()
+  print()--]]
   
   --[=[
   local customOrder = {}
@@ -703,7 +720,7 @@ local function sortKeys(cfg, cfgFormat)
     local formatValue = cfgFormat[v]
     if type(formatValue) == "table" and formatValue._order_ then
       customOrder[v] = formatValue._order_
-      print("customOrder[", v, "] = ", formatValue._order_)
+      --print("customOrder[", v, "] = ", formatValue._order_)
     end
   end
   
@@ -716,15 +733,22 @@ local function sortKeys(cfg, cfgFormat)
     end
   end
   
-  print("\nsortedKeys after:")
+  --[[print("\nsortedKeys after:")
   for i = -100, 100 do
     if sortedKeys[i] then
       print(i, sortedKeys[i])
     end
-  end
+  end--]]
+  
+  return sortedKeys
 end
 
--- FIXME this is very similar to verification code, can we merge the two somehow? #############################################################
+-- 
+-- 
+-- NOTE: This function is fairly similar to verifySubconfig(), it just does file
+-- I/O instead of type checking. Maybe there is an elegant way to combine the
+-- two (might add extra complexity and not be worth it)?
+-- 
 ---@param file file*
 ---@param cfg any
 ---@param cfgFormat table
@@ -747,13 +771,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
     return
   end
   
-  -- FIXME implement this when ready ################################
-  --local sortedKeys = sortKeys(cfg, cfgFormat)
-  
-  -- do we need to change order of below 3 code blocks to get better sort order?
-  -- FIXME the 3 code blocks can be put in a separate function? ##########################
-  
-  
+  local sortedKeys = sortKeys(cfg, cfgFormat)
   
   if spacing ~= "" then
     file:write("{\n")
@@ -761,9 +779,26 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   
   local newSpacing = spacing .. "  "
   
+  -- Check for "_ipairs_" first and iterate sequential keys in cfg. We mark these as processed so they won't get picked up a second time in the following iterations.
   local processedKeys = {}
-  for k, v in pairs(cfgFormat) do
-    if not formatFields[k] then
+  if cfgFormat._ipairs_ then
+    local valueTypes = cfgFormat._ipairs_[1]
+    for i, v in ipairs(cfg) do
+      processedKeys[i] = true
+      file:write(spacing)
+      if type(valueTypes) == "string" then
+        writeValue(file, v, valueTypes, typeList, "value", nextAddress(address, i), newSpacing, endOfLine)
+      else
+        writeSubconfig(file, v, valueTypes, typeList, nextAddress(address, i), newSpacing)
+      end
+    end
+  end
+  
+  -- Match keys in cfgFormat with existing/non-existing ones in cfg second. Iterates with sortedKeys for a defined ordering.
+  for i = 1, #sortedKeys do
+    local k = sortedKeys[i]
+    local v = cfgFormat[k]
+    if not processedKeys[k] and v then
       if type(v) == "table" then
         if v._comment_ then
           writeComment(file, v._comment_, spacing)
@@ -778,39 +813,20 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
     end
   end
   
-  if cfgFormat._ipairs_ then
-    local valueTypes = cfgFormat._ipairs_[1]
-    for i, v in ipairs(cfg) do
-      if processedKeys[i] then
-        break
-      end
-      processedKeys[i] = true
-      file:write(spacing)
-      if type(valueTypes) == "string" then
-        --verifyType(v, valueTypes, "value", nextAddress(address, i))
-        writeValue(file, v, valueTypes, typeList, "value", nextAddress(address, i), newSpacing, endOfLine)
-      else
-        --verifySubconfig(v, valueTypes, typeList, nextAddress(address, i))
-        writeSubconfig(file, v, valueTypes, typeList, nextAddress(address, i), newSpacing)
-      end
-    end
-  end
-  
+  -- Check for "_pairs_" third and iterate remaining keys/values in cfg (we already got all of the cfgFormat ones in above step). Iterates with sortedKeys for a defined ordering.
   if cfgFormat._pairs_ then
     local keyTypes, valueTypes = cfgFormat._pairs_[1], cfgFormat._pairs_[2]
-    for k, v in pairs(cfg) do
+    for i = 1, #sortedKeys do
+      local k = sortedKeys[i]
       if not processedKeys[k] then
         local address2 = nextAddress(address, k)
         processedKeys[k] = true
-        --verifyType(k, keyTypes, "key", address2)
         file:write(spacing)
         writeValue(file, k, keyTypes, typeList, "key", address2, newSpacing, " = ")
         if type(valueTypes) == "string" then
-          --verifyType(v, valueTypes, "value", address2)
-          writeValue(file, v, valueTypes, typeList, "value", address2, newSpacing, endOfLine)
+          writeValue(file, cfg[k], valueTypes, typeList, "value", address2, newSpacing, endOfLine)
         else
-          --verifySubconfig(v, valueTypes, typeList, address2)
-          writeSubconfig(file, v, valueTypes, typeList, address2, newSpacing)
+          writeSubconfig(file, cfg[k], valueTypes, typeList, address2, newSpacing)
         end
       end
     end
@@ -902,7 +918,7 @@ local cfg2 = {
     color2 = 0x000000,
     useColors = true,
   },
-  ["while"] = {
+  ["while2"] = {
     "bam",
     "boozled",
     1234,
@@ -910,8 +926,8 @@ local cfg2 = {
       ["for"] = true,
     },
   },
-  [1] = "-1.234",
-  [2] = "cool",
+  --[1] = "-1.234",
+  --[2] = "cool",
 }
 
 print("verify cfg2")
