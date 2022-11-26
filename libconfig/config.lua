@@ -5,6 +5,7 @@
 -- Strict type checking is optional and can be used to verify the configuration
 -- for user-made errors.
 -- 
+-- @see file://libconfig/README.md
 -- @author tdepke2
 --------------------------------------------------------------------------------
 

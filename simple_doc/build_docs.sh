@@ -7,6 +7,7 @@ declare -a inputs=(
     "../libapptools/include.lua"
     "../libmnet/mnet_src.lua"
     "../libmnet/mrpc.lua"
+    "../libconfig/config.lua"
 )
 declare -a outputs=(
     "../libapptools/README.md"
@@ -14,6 +15,7 @@ declare -a outputs=(
     "../libapptools/README.md"
     "../libmnet/README.md"
     "../libmnet/README.md"
+    "../libconfig/README.md"
 )
 
 numInputs=${#inputs[@]}
