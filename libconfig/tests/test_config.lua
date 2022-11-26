@@ -1,9 +1,10 @@
---[[local include = require("include")
+local include = require("include")
 local dlog = include("dlog")
+dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
 local config = include("config")
-local xprint = include("xprint")--]]
-
+local dstucts = include("dstructs")
+local xprint = include("xprint")
 
 
 -- Simple type checking.
@@ -155,7 +156,7 @@ local function test5()
   cfg = config.loadFile("nonexistent file", cfgFormat1, true)
   config.verify(cfg, cfgFormat1, {})
   print("cfgFormat1 defaults:")
-  config.saveFile(nil, cfg, cfgFormat1, {})
+  config.saveFile("-", cfg, cfgFormat1, {})
   
   local cfgFormat2 = {
     dat = {
@@ -171,12 +172,145 @@ local function test5()
   cfg = config.loadFile("nonexistent file", cfgFormat2, true)
   config.verify(cfg, cfgFormat2, {})
   print("cfgFormat2 defaults:")
-  config.saveFile(nil, cfg, cfgFormat2, {})
+  config.saveFile("-", cfg, cfgFormat2, {})
+end
+
+-- Default configuration.
+local function test6()
+  print("test6")
+  local cfgFormat1 = {
+    stuff = {"string", "abc"},
+    my_tab = {"any", {
+      shopping = {
+        "eggs",
+        "bacon",
+      },
+      [2] = 9001,
+      [math.huge] = 0/0,
+      [-math.huge] = "very smol number",
+    }},
+    list_of_things = {
+      _pairs_ = {"number", "string",
+        [0] = "zero",
+        [3] = "one",
+        [4] = "two",
+        [5.25] = "five and a quarter",
+      },
+    },
+    another_list = {
+      _ipairs_ = {"number",
+        0.1,
+        0.2,
+        0.3,
+      },
+    },
+  }
+  local cfg = config.loadDefaults(cfgFormat1)
+  --xprint({}, cfg)
+  config.verify(cfg, cfgFormat1, {})
+end
+
+-- Configuration saving with exotic values.
+local function test7()
+  print("test7")
+  local typeList = {
+    Fruits = {
+      "apple", "banana", "cherry"
+    },
+    Color = {
+      encode = function(v)
+        return string.format("0x%06X", v)
+      end,
+      verify = function(v)
+        assert(type(v) == "number" and math.floor(v) == v and v >= 0 and v <= 0xFFFFFF, "provided Color must be a 24 bit integer value.")
+      end,
+    },
+    Float2 = {
+      encode = function(v)
+        return string.format("%.2f", v)
+      end,
+      verify = function(v)
+        assert(type(v) == "number", "provided Float2 must be a number.")
+      end
+    },
+  }
+  
+  local cfgFormat1 = {
+    stuff = {"string", "abc"},
+    my_fruit = {"Fruits", "cherry"},
+    my_tab = {"table", {
+      shopping = {
+        "eggs",
+        "bacon",
+      },
+      [2] = 9001,
+      [math.huge] = 0/0,
+      [-math.huge] = "very smol number",
+    }},
+    list_of_things = {
+      _pairs_ = {"number", "Color|string",
+        [0] = "zero",
+        [3] = "one",
+        [4] = "two",
+        [5] = 0x112233,
+        [5.25] = "five and a quarter",
+      },
+    },
+    another_list = {
+      _ipairs_ = {"Float2",
+        0.10,
+        22.20,
+        0.303,
+      },
+    },
+    wildcard_value = {"any"},
+    bool = {"boolean", true},
+  }
+  local cfg = config.loadDefaults(cfgFormat1)
+  config.verify(cfg, cfgFormat1, typeList)
+  config.saveFile("test7.cfg", cfg, cfgFormat1, typeList)
+  
+  local cfgReference = {
+    stuff = "abc",
+    my_fruit = "cherry",
+    my_tab = {
+      shopping = {
+        "eggs",
+        "bacon",
+      },
+      [2] = 9001,
+      [math.huge] = 0/0,
+      [-math.huge] = "very smol number",
+    },
+    list_of_things = {
+      [0] = "zero",
+      [1] = "one",
+      [2] = "two",
+      [3] = 0x112233,
+      [5.25] = "five and a quarter",
+    },
+    another_list = {
+      0.10,
+      22.20,
+      0.30,
+    },
+    wildcard_value = nil,
+    bool = true,
+  }
+  local cfg2 = config.loadFile("test7.cfg", cfgFormat1, false)
+  --xprint({}, cfg2)
+  config.verify(cfg2, cfgFormat1, typeList)
+  
+  -- Need to compare the two tables, but NaN is not equal to itself so this hack is used.
+  cfg2.my_tab[math.huge] = "0/0"
+  cfgReference.my_tab[math.huge] = "0/0"
+  
+  assert(dstucts.rawObjectsEqual(cfgReference, cfg2))
 end
 
 -- Comprehensive test with large config format.
-local function test6()
-  print("test6")
+local function test8()
+  print("test8")
   local typeList = {
     Fruits = {
       "apple", "banana", "cherry"
@@ -188,9 +322,9 @@ local function test6()
       encode = function(v)
         return string.format("0x%06X", v)
       end,
-      decode = function(v)
-        return v
-      end,
+      --decode = function(v)
+        --return v
+      --end,
       verify = function(v)
         assert(type(v) == "number" and math.floor(v) == v and v >= 0 and v <= 0xFFFFFF, "provided Color must be a 24 bit integer value.")
       end,
@@ -347,7 +481,12 @@ local function test6()
   
   print("verify cfg2")
   config.verify(cfg2, cfgFormat, typeList)
-  config.saveFile(nil, cfg2, cfgFormat, typeList)
+  config.saveFile("test8.cfg", cfg2, cfgFormat, typeList)
+  
+  local cfg3 = config.loadFile("test8.cfg", cfgFormat, false)
+  --xprint.print({}, cfg3)
+  
+  assert(dstucts.rawObjectsEqual(cfg2, cfg3))
 end
 
 local function main()
@@ -357,8 +496,9 @@ local function main()
   test4()
   test5()
   test6()
+  test7()
+  test8()
   print("all tests passing!")
 end
---dlog.handleError(xpcall(main, debug.traceback, ...))
---dlog.osBlockNewGlobals(false)
-main()
+dlog.handleError(xpcall(main, debug.traceback, ...))
+dlog.osBlockNewGlobals(false)

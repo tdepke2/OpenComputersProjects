@@ -1,14 +1,17 @@
---[[
-for table t in cfgFormat, if t[1] is string then t represents a value definition
-
-
-
-]]
-
+--------------------------------------------------------------------------------
+-- Provides a flexible interface for defining a configuration structure, with
+-- the ability to save and load from a file. Defining the configuration format
+-- is done with a single table, and optionally a list of custom data types.
+-- Strict type checking is optional and can be used to verify the configuration
+-- for user-made errors.
+-- 
+-- @author tdepke2
+--------------------------------------------------------------------------------
 
 
 local config = {}
 
+-- Meta-fields used in defining the config format.
 local formatFields = {
   _comment_ = true,
   _order_ = true,
@@ -16,6 +19,7 @@ local formatFields = {
   _ipairs_ = true,
 }
 
+-- Lua types that type() could return, these can be used to specify key/value types in config format.
 local luaTypes = {
   ["nil"] = true,
   ["boolean"] = true,
@@ -53,6 +57,7 @@ local luaReservedWords = {
   ["while"] = true,
 }
 
+
 -- Checks if a value is a free Lua identifier (a string, contains only
 -- alphanumeric characters and underscores, doesn't start with a number, and not
 -- a reserved word). If this function returns true, the value is safe to use as
@@ -64,81 +69,39 @@ local function isFreeIdentifier(v)
   return (type(v) == "string" and string.find(v, "^[%a_][%w_]*$") and not luaReservedWords[v])
 end
 
--- Makes a deep copy of a table (or just returns the given argument otherwise).
--- This uses raw iteration (metamethods are ignored) and also makes deep copies
--- of metatables. Currently does not behave with cycles in tables.
+
+-- Load configuration from a text file and return it. The file is expected to
+-- contain executable Lua code, but doesn't need to have the structure specified
+-- in `cfgFormat` (no verification is done). If `defaultIfMissing` is true, the
+-- default config is returned if the file cannot be opened. Use `localEnv` to
+-- provide a custom environment during file code execution. This defaults to
+-- `_ENV` but an empty table could be used, for example, to prevent code in the
+-- file from accessing external globals (make sure that `math.huge` is still
+-- defined if using this method).
 -- 
----@param src any
----@return any srcCopy
-local function deepCopy(src)
-  if type(src) == "table" then
-    local srcCopy = {}
-    for k, v in next, src do
-      srcCopy[k] = deepCopy(v)
-    end
-    local meta = getmetatable(src)
-    if meta ~= nil then
-      setmetatable(srcCopy, deepCopy(meta))
-    end
-    return srcCopy
-  else
-    return src
-  end
-end
-
--- Recursively updates `dest` to become the union of tables `src` and `dest`
--- (these don't have to be tables though). Values from `src` will overwrite ones
--- in `dest`, except when `src` is nil. The same process is applied to
--- metatables in `src` and `dest`.
--- 
----@param src any
----@param dest any
----@return any merged
-local function mergeTables(src, dest)
-  if type(src) == "table" then
-    if type(dest) == "table" then
-      for k, v in next, src do
-        dest[k] = mergeTables(v, dest[k])
-      end
-      local srcMeta, destMeta = getmetatable(src), getmetatable(dest)
-      if srcMeta ~= nil or destMeta ~= nil then
-        setmetatable(dest, mergeTables(srcMeta, destMeta))
-      end
-    else
-      return deepCopy(src)
-    end
-  elseif src ~= nil then
-    return src
-  end
-  return dest
-end
-
-
 ---@param filename string
 ---@param cfgFormat table
----@param allowDefaults boolean
+---@param defaultIfMissing boolean
 ---@param localEnv table|nil
 ---@return table cfg
-function config.loadFile(filename, cfgFormat, allowDefaults, localEnv)
-  localEnv = localEnv or {}
-  local file = io.open(filename)
+function config.loadFile(filename, cfgFormat, defaultIfMissing, localEnv)
+  localEnv = localEnv or _ENV
+  local file = io.open(filename, "r")
   local cfg
   if file then
     file:close()
     cfg = {}
     
-    -- Add metamethods to localEnv so we can index back to the global
-    -- environment, and new global variables will be added in cfg instead of
-    -- modifying the environment.
-    setmetatable(localEnv, {
-      __index = _ENV,
+    -- Add new loadEnv with metamethods to index back to localEnv. New global variables in config will be added in cfg instead of modifying the current environment.
+    local loadEnv = setmetatable({}, {
+      __index = localEnv,
       __newindex = function(t, k, v)
         rawset(t, k, v)
         cfg[k] = v
       end,
     })
     
-    local fn, err = loadfile(filename, "t", localEnv)
+    local fn, err = loadfile(filename, "t", loadEnv)
     if not fn then
       error("failed to load config: " .. tostring(err) .. "\n")
     end
@@ -146,40 +109,53 @@ function config.loadFile(filename, cfgFormat, allowDefaults, localEnv)
     if not status then
       error("failed to load config: " .. tostring(result) .. "\n")
     end
-  elseif allowDefaults then
-    local function getDefaults(t)
-      if type(t[1]) == "string" then
-        return t[2]
-      end
-      
-      local result = {}
-      for k, v in pairs(t) do
-        if not formatFields[k] then
-          result[k] = getDefaults(v)
-        elseif k == "_pairs_" or k == "_ipairs_" then
-          local valueTypeIndex = (k == "_pairs_" and 2 or 1)
-          for pairKey, pairVal in pairs(v) do
-            if type(pairKey) ~= "number" then
-              result[pairKey] = pairVal
-            elseif pairKey <= 0 or pairKey > valueTypeIndex or math.floor(pairKey) ~= pairKey then
-              if pairKey > valueTypeIndex and math.floor(pairKey) == pairKey then
-                pairKey = pairKey - valueTypeIndex
-              end
-              result[pairKey] = pairVal
-            end
-          end
-        end
-      end
-      return result
-    end
-    
-    cfg = getDefaults(cfgFormat)
+  elseif defaultIfMissing then
+    cfg = config.loadDefaults(cfgFormat)
   else
     error("failed to open file \"" .. filename .. "\" for reading.")
   end
   
   return cfg
 end
+
+
+-- Get the default configuration and return it. Depending on how `cfgFormat` is
+-- structured, the result may or may not be a valid config format.
+-- 
+---@param cfgFormat table
+---@return table cfg
+function config.loadDefaults(cfgFormat)
+  local function getDefaults(t)
+    if type(t[1]) == "string" then
+      return t[2]
+    end
+    
+    local result = {}
+    for k, v in pairs(t) do
+      if not formatFields[k] then
+        result[k] = getDefaults(v)
+      elseif k == "_pairs_" or k == "_ipairs_" then
+        -- The "_ipairs_" field has value types defined in key 1, "_pairs_" has key types and value types in keys 1 and 2 respectively. Store this offset in valueTypeIndex.
+        local valueTypeIndex = (k == "_pairs_" and 2 or 1)
+        for pairKey, pairVal in pairs(v) do
+          if type(pairKey) ~= "number" then
+            result[pairKey] = pairVal
+          elseif pairKey <= 0 or pairKey > valueTypeIndex or math.floor(pairKey) ~= pairKey then
+            -- In order to allow default values at the first integer keys reserved for "_pairs_" and "_ipairs_", we subtract valueTypeIndex for larger indices to normalize the value.
+            if pairKey > valueTypeIndex and math.floor(pairKey) == pairKey then
+              pairKey = pairKey - valueTypeIndex
+            end
+            result[pairKey] = pairVal
+          end
+        end
+      end
+    end
+    return result
+  end
+  
+  return getDefaults(cfgFormat)
+end
+
 
 -- Compares the given value with the string typeNames of acceptable types. If no
 -- match is found for any of the types, this function throws an error with the
@@ -205,25 +181,42 @@ local function verifyType(value, typeNames, typeList, valueName, address)
         break
       end
     elseif typeList[typeName] then
-      local status, result = pcall(typeList[typeName].verify or function() end, value)
-      if status then
-        typeVerified = typeName
-        break
+      if typeList[typeName][1] then
+        -- The typeList for this type contains a sequence of valid values, if none of them match then the current value is invalid.
+        for _, v in ipairs(typeList[typeName]) do
+          if v == value then
+            typeVerified = typeName
+            break
+          end
+        end
+        if typeVerified then
+          break
+        else
+          typeCheckError = "no match found for options of type " .. typeName
+        end
       else
-        typeCheckError = result
+        -- The typeList for this type is not a sequence, and should define a function to handle the type checking (with table key "verify").
+        local status, result = pcall(typeList[typeName].verify or function() end, value)
+        if status then
+          typeVerified = typeName
+          break
+        else
+          typeCheckError = result
+        end
       end
     else
       error("at " .. address .. ": undefined type \"" .. typeName .. "\".")
     end
   end
   
-  if typeCheckError then
+  if typeVerified then
+    return typeVerified
+  elseif typeCheckError then
     error("at " .. address .. ": bad " .. valueName .. ": " .. tostring(typeCheckError))
-  elseif not typeVerified then
-    error("at " .. address .. ": " .. valueName .. " with type \"" .. type(value) .. "\" does not match any of the allowed types \"" .. typeNames .. "\".")
   end
-  return typeVerified
+  error("at " .. address .. ": " .. valueName .. " with type \"" .. type(value) .. "\" does not match any of the allowed types \"" .. typeNames .. "\".")
 end
+
 
 -- Helper function to concatenate the next key onto the address, using quotes
 -- for strings where appropriate.
@@ -239,6 +232,12 @@ local function nextAddress(address, key)
   end
 end
 
+
+-- Gets an iterator for looping over the union of keys in `a` and `b`.
+-- 
+---@param a table
+---@param b table
+---@return function iter
 local function keyUnionIter(a, b)
   local t, k = a, nil
   local function iter()
@@ -256,6 +255,7 @@ local function keyUnionIter(a, b)
   return iter
 end
 
+
 -- Helper function for `config.verify()` to check for errors in configuration.
 -- 
 ---@param cfg any
@@ -268,13 +268,14 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
   end
   
   -- If first index in cfgFormat is a string, the table represents a value definition.
-  -- Value format: `{<type names>, [default value], [comment]}`.
+  -- Format: `{<type names>, [default value], [comment]}`.
   if type(cfgFormat[1]) == "string" then
     verifyType(cfg, cfgFormat[1], typeList, "value", address)
     return
   end
   
   -- Check for "_ipairs_" first and iterate sequential keys in cfg. We mark these as processed so they won't get picked up a second time in the following iterations.
+  -- Format: `_ipairs_ = {<value type names>|<sub-config>, [2] = [default value 1], [3] = [default value 2], ...}`.
   local processedKeys = {}
   if cfgFormat._ipairs_ then
     local valueTypes = cfgFormat._ipairs_[1]
@@ -297,6 +298,7 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
   end
   
   -- Check for "_pairs_" third and iterate remaining keys/values in cfg.
+  -- Format: `_pairs_ = {<key type names>, <value type names>|<sub-config>, [default key 1] = [default value 1], ...}`.
   if cfgFormat._pairs_ then
     local keyTypes, valueTypes = cfgFormat._pairs_[1], cfgFormat._pairs_[2]
     for k, v in pairs(cfg) do
@@ -321,7 +323,8 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
   end
 end
 
--- Checks the format of config cfg to make sure it matches cfgFormat. An error
+
+-- Checks the format of config `cfg` to make sure it matches cfgFormat. An error
 -- is thrown if any inconsistencies with the format are found.
 -- 
 ---@param cfg any
@@ -357,9 +360,10 @@ function config.verify(cfg, cfgFormat, typeList)
 end
 
 
--- Writes a value out to the given file. This uses typeNames and verifyType() if
--- provided to determine if the value is a custom type. Includes checking when
--- valueName is the string `key` to wrap the value in brackets.
+-- Writes a value out to the given file. This uses `typeNames` and
+-- `verifyType()` if provided to determine if the value is a custom type.
+-- Includes checking when `valueName` is the string `key` to wrap the value in
+-- brackets.
 -- 
 ---@param file file*
 ---@param value any
@@ -408,6 +412,17 @@ local function writeValue(file, value, typeNames, typeList, valueName, address, 
     file:write(string.sub(spacing, 3), "}")
   elseif valueType == "string" and (valueName ~= "key" or addBrackets) then
     file:write((string.format("%q", value):gsub("\\\n","\\n")))
+  elseif valueType == "number" then
+    -- Special cases for NaN and infinity.
+    if value ~= value then
+      file:write("0/0")
+    elseif value == math.huge then
+      file:write("math.huge")
+    elseif value == -math.huge then
+      file:write("-math.huge")
+    else
+      file:write(tostring(value))
+    end
   else
     file:write(tostring(value))
   end
@@ -419,6 +434,13 @@ local function writeValue(file, value, typeNames, typeList, valueName, address, 
   end
 end
 
+
+-- Writes a string to the file, prepending a double-dash for each line (except
+-- for leading empty lines).
+-- 
+---@param file file*
+---@param comment string
+---@param spacing string
 local function writeComment(file, comment, spacing)
   local prefixNewlines = true
   for line in string.gmatch(comment .. "\n", "(.-)\n") do
@@ -431,6 +453,15 @@ local function writeComment(file, comment, spacing)
   end
 end
 
+
+-- Creates a sequence of the union of keys in `cfg` and `cfgFormat` where the
+-- keys are sorted. The sort ordering puts numeric keys first (ascending),
+-- string keys second (ascending), and all other keys last. This respects
+-- "_order_" meta-fields in the config format to provide custom ordering.
+-- 
+---@param cfg table
+---@param cfgFormat table
+---@return table sortedKeys
 local function sortKeys(cfg, cfgFormat)
   -- Collect all cfg and cfgFormat keys and sort them. Based on code used in xprint module.
   local sortedKeys, stringKeys, otherKeys = {}, {}, {}
@@ -479,11 +510,12 @@ local function sortKeys(cfg, cfgFormat)
   return sortedKeys
 end
 
+
+-- Helper function for `config.saveFile()` to write the configuration to a file.
 -- 
--- 
--- NOTE: This function is fairly similar to verifySubconfig(), it just does file
--- I/O instead of type checking. Maybe there is an elegant way to combine the
--- two (might add extra complexity and not be worth it)?
+-- NOTE: This function is fairly similar to `verifySubconfig()`, it just does
+-- file I/O instead of type checking. Maybe there is an elegant way to combine
+-- the two (might add extra complexity and not be worth it)?
 -- 
 ---@param file file*
 ---@param cfg any
@@ -502,18 +534,18 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
     endOfLine = "\n"
   end
   
+  -- If first index in cfgFormat is a string, the table represents a value definition.
   if type(cfgFormat[1]) == "string" then
     writeValue(file, cfg, cfgFormat[1], typeList, "value", address, spacing, endOfLine)
     return
   end
   
-  local sortedKeys = sortKeys(cfg, cfgFormat)
-  
+  local newSpacing = spacing .. "  "
   if spacing ~= "" then
     file:write("{\n")
   end
   
-  local newSpacing = spacing .. "  "
+  local sortedKeys = sortKeys(cfg, cfgFormat)
   
   -- Check for "_ipairs_" first and iterate sequential keys in cfg. We mark these as processed so they won't get picked up a second time in the following iterations.
   local processedKeys = {}
@@ -523,7 +555,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
       processedKeys[i] = true
       file:write(spacing)
       if type(valueTypes) == "string" then
-        writeValue(file, v, valueTypes, typeList, "value", nextAddress(address, i), newSpacing, endOfLine)
+        writeValue(file, v, valueTypes, typeList, "value", nextAddress(address, i), newSpacing, ",\n")
       else
         writeSubconfig(file, v, valueTypes, typeList, nextAddress(address, i), newSpacing)
       end
@@ -560,7 +592,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
         file:write(spacing)
         writeValue(file, k, keyTypes, typeList, "key", address2, newSpacing, " = ")
         if type(valueTypes) == "string" then
-          writeValue(file, cfg[k], valueTypes, typeList, "value", address2, newSpacing, endOfLine)
+          writeValue(file, cfg[k], valueTypes, typeList, "value", address2, newSpacing, ",\n")
         else
           writeSubconfig(file, cfg[k], valueTypes, typeList, address2, newSpacing)
         end
@@ -571,25 +603,29 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   if spacing ~= "" then
     file:write(string.sub(spacing, 3), "}", endOfLine)
   end
-  
 end
 
 
--- FIXME still need to implement decode() handling in typeList. #########################################################
-
-
-
--- 
+-- Saves the configuration to a file. The filename can be `-` to send the config
+-- to standard output instead. This does some minor verification of `cfg` to
+-- determine types and such when serializing values to strings. Errors may be
+-- thrown if the config format is not met.
 -- 
 ---@param filename string
 ---@param cfg any
 ---@param cfgFormat table
 ---@param typeList table
 function config.saveFile(filename, cfg, cfgFormat, typeList)
-  --local file = io.open(filename, "w")
-  --if not file then
-    --error("failed to open file \"" .. filename .. "\" for writing.")
-  --end
+  local file = (filename == "-" and io.stdout or io.open(filename, "w"))
+  if not file then
+    error("failed to open file \"" .. filename .. "\" for writing.")
+  end
   
-  writeSubconfig(io.stdout, cfg, cfgFormat, typeList, "config", "")
+  writeSubconfig(file, cfg, cfgFormat, typeList, "config", "")
+  
+  if filename ~= "-" then
+    file:close()
+  end
 end
+
+return config

@@ -81,6 +81,55 @@ function dstructs.moveTableReference(src, dest)
   recursiveSearch(dest)
 end
 
+-- Makes a deep copy of a table (or just returns the given argument otherwise).
+-- This uses raw iteration (metamethods are ignored) and also makes deep copies
+-- of metatables. Currently does not behave with cycles in tables.
+-- 
+---@param src any
+---@return any srcCopy
+function dstructs.deepCopy(src)
+  if type(src) == "table" then
+    local srcCopy = {}
+    for k, v in next, src do
+      srcCopy[k] = dstructs.deepCopy(v)
+    end
+    local meta = getmetatable(src)
+    if meta ~= nil then
+      setmetatable(srcCopy, dstructs.deepCopy(meta))
+    end
+    return srcCopy
+  else
+    return src
+  end
+end
+
+-- Recursively updates `dest` to become the union of tables `src` and `dest`
+-- (these don't have to be tables though). Values from `src` will overwrite ones
+-- in `dest`, except when `src` is nil. The same process is applied to
+-- metatables in `src` and `dest`.
+-- 
+---@param src any
+---@param dest any
+---@return any merged
+function dstructs.mergeTables(src, dest)
+  if type(src) == "table" then
+    if type(dest) == "table" then
+      for k, v in next, src do
+        dest[k] = dstructs.mergeTables(v, dest[k])
+      end
+      local srcMeta, destMeta = getmetatable(src), getmetatable(dest)
+      if srcMeta ~= nil or destMeta ~= nil then
+        setmetatable(dest, dstructs.mergeTables(srcMeta, destMeta))
+      end
+    else
+      return dstructs.deepCopy(src)
+    end
+  elseif src ~= nil then
+    return src
+  end
+  return dest
+end
+
 
 
 -- Array of characters with a fixed size. Similar to a string, but the
