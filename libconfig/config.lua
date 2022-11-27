@@ -344,81 +344,6 @@ function config.verify(cfg, cfgFormat, typeList)
 end
 
 
--- Writes a value out to the given file. This uses `typeNames` and
--- `verifyType()` if provided to determine if the value is a custom type.
--- Includes checking when `valueName` is the string `key` to wrap the value in
--- brackets.
--- 
----@param file file*
----@param value any
----@param typeNames string|nil
----@param typeList table
----@param valueName string
----@param address string
----@param spacing string
----@param endOfLine string
-local function writeValue(file, value, typeNames, typeList, valueName, address, spacing, endOfLine)
-  local valueType = type(value)
-  local typeVerified = typeNames and verifyType(value, typeNames, typeList, valueName, address) or "any"
-  
-  -- For custom types, use the encode() function if found to convert the value to a code chunk.
-  if typeList[typeVerified] and typeList[typeVerified].encode then
-    local status, result = pcall(typeList[typeVerified].encode, value)
-    if not status or type(result) ~= "string" then
-      if status then
-        result = "result is type " .. type(result)
-      end
-      error("at " .. address .. ": failed to convert " .. typeVerified .. " to string: " .. tostring(result))
-    end
-    value = result
-    -- Pseudo type for strings that need to be written as a Lua chunk (and not wrapped in quotes like normal strings, the below code does this).
-    valueType = "string_code"
-  end
-  
-  -- Brackets are needed for table keys (except when the key is a string, valid identifier, and not a reserved word).
-  local addBrackets = (valueName == "key")
-  if addBrackets and isFreeIdentifier(value) then
-    addBrackets = false
-  end
-  if addBrackets then
-    file:write("[")
-  end
-  
-  if valueType == "table" then
-    -- Recursively print the contents of the table. Custom types are not considered in the table (there's no way to define them in there).
-    local newSpacing = spacing .. "  "
-    file:write("{\n")
-    for k, v in pairs(value) do
-      file:write(spacing)
-      writeValue(file, k, nil, typeList, "key", address, newSpacing, " = ")
-      writeValue(file, v, nil, typeList, "value", address, newSpacing, ",\n")
-    end
-    file:write(string.sub(spacing, 3), "}")
-  elseif valueType == "string" and (valueName ~= "key" or addBrackets) then
-    file:write((string.format("%q", value):gsub("\\\n","\\n")))
-  elseif valueType == "number" then
-    -- Special cases for NaN and infinity.
-    if value ~= value then
-      file:write("0/0")
-    elseif value == math.huge then
-      file:write("math.huge")
-    elseif value == -math.huge then
-      file:write("-math.huge")
-    else
-      file:write(tostring(value))
-    end
-  else
-    file:write(tostring(value))
-  end
-  
-  if addBrackets then
-    file:write("]", endOfLine)
-  else
-    file:write(endOfLine)
-  end
-end
-
-
 -- Gets an iterator for looping over the union of keys in `a` and `b`.
 -- 
 ---@param a table
@@ -499,6 +424,82 @@ local function sortKeys(cfg, cfgFormat)
 end
 
 
+-- Writes a value out to the given file. This uses `typeNames` and
+-- `verifyType()` if provided to determine if the value is a custom type.
+-- Includes checking when `valueName` is the string `key` to wrap the value in
+-- brackets.
+-- 
+---@param file file*
+---@param value any
+---@param typeNames string|nil
+---@param typeList table
+---@param valueName string
+---@param address string
+---@param spacing string
+---@param endOfLine string
+local function writeValue(file, value, typeNames, typeList, valueName, address, spacing, endOfLine)
+  local valueType = type(value)
+  local typeVerified = typeNames and verifyType(value, typeNames, typeList, valueName, address) or "any"
+  
+  -- For custom types, use the encode() function if found to convert the value to a code chunk.
+  if typeList[typeVerified] and typeList[typeVerified].encode then
+    local status, result = pcall(typeList[typeVerified].encode, value)
+    if not status or type(result) ~= "string" then
+      if status then
+        result = "result is type " .. type(result)
+      end
+      error("at " .. address .. ": failed to convert " .. typeVerified .. " to string: " .. tostring(result))
+    end
+    value = result
+    -- Pseudo type for strings that need to be written as a Lua chunk (and not wrapped in quotes like normal strings, the below code does this).
+    valueType = "string_code"
+  end
+  
+  -- Brackets are needed for table keys (except when the key is a string, valid identifier, and not a reserved word).
+  local addBrackets = (valueName == "key")
+  if addBrackets and isFreeIdentifier(value) then
+    addBrackets = false
+  end
+  if addBrackets then
+    file:write("[")
+  end
+  
+  if valueType == "table" then
+    -- Recursively print the contents of the table. Custom types are not considered in the table (there's no way to define them in there).
+    local sortedKeys = sortKeys(value, {})
+    local newSpacing = spacing .. "  "
+    file:write("{\n")
+    for _, k in ipairs(sortedKeys) do
+      file:write(spacing)
+      writeValue(file, k, nil, typeList, "key", address, newSpacing, " = ")
+      writeValue(file, value[k], nil, typeList, "value", address, newSpacing, ",\n")
+    end
+    file:write(string.sub(spacing, 3), "}")
+  elseif valueType == "string" and (valueName ~= "key" or addBrackets) then
+    file:write((string.format("%q", value):gsub("\\\n","\\n")))
+  elseif valueType == "number" then
+    -- Special cases for NaN and infinity.
+    if value ~= value then
+      file:write("0/0")
+    elseif value == math.huge then
+      file:write("math.huge")
+    elseif value == -math.huge then
+      file:write("-math.huge")
+    else
+      file:write(tostring(value))
+    end
+  else
+    file:write(tostring(value))
+  end
+  
+  if addBrackets then
+    file:write("]", endOfLine)
+  else
+    file:write(endOfLine)
+  end
+end
+
+
 -- Writes a string to the file, prepending a double-dash for each line (except
 -- for leading empty lines).
 -- 
@@ -570,8 +571,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   end
   
   -- Match keys in cfgFormat with existing/non-existing ones in cfg second. Iterates with sortedKeys for a defined ordering.
-  for i = 1, #sortedKeys do
-    local k = sortedKeys[i]
+  for _, k in ipairs(sortedKeys) do
     local v = cfgFormat[k]
     if not processedKeys[k] and v then
       if type(v) == "table" then
@@ -591,8 +591,7 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
   -- Check for "_pairs_" third and iterate remaining keys/values in cfg (we already got all of the cfgFormat ones in above step). Iterates with sortedKeys for a defined ordering.
   if cfgFormat._pairs_ then
     local keyTypes, valueTypes = cfgFormat._pairs_[1], cfgFormat._pairs_[2]
-    for i = 1, #sortedKeys do
-      local k = sortedKeys[i]
+    for _, k in ipairs(sortedKeys) do
       if not processedKeys[k] then
         local address2 = nextAddress(address, k)
         processedKeys[k] = true
