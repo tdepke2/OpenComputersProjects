@@ -57,6 +57,34 @@ In some cases, it may be desired to use enumerated types in the config format an
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libconfig/config.lua) -->
+
+* `config.loadFile(filename: string, cfgFormat: table, defaultIfMissing: boolean, localEnv: table|nil) -> cfg: table`
+  
+  Load configuration from a text file and return it. The file is expected to
+  contain executable Lua code, but doesn't need to have the structure specified
+  in `cfgFormat` (no verification is done). If `defaultIfMissing` is true, the
+  default config is returned if the file cannot be opened. Use `localEnv` to
+  provide a custom environment during file code execution. This defaults to
+  `_ENV` but an empty table could be used, for example, to prevent code in the
+  file from accessing external globals (make sure that `math.huge` is still
+  defined if using this method).
+
+* `config.loadDefaults(cfgFormat: table) -> cfg: table`
+  
+  Get the default configuration and return it. Depending on how `cfgFormat` is
+  structured, the result may or may not be a valid config format.
+
+* `config.verify(cfg: any, cfgFormat: table, typeList: table)`
+  
+  Checks the format of config `cfg` to make sure it matches cfgFormat. An error
+  is thrown if any inconsistencies with the format are found.
+
+* `config.saveFile(filename: string, cfg: any, cfgFormat: table, typeList: table)`
+  
+  Saves the configuration to a file. The filename can be `-` to send the config
+  to standard output instead. This does some minor verification of `cfg` to
+  determine types and such when serializing values to strings. Errors may be
+  thrown if the config format is not met.
 <!-- SIMPLE-DOC:END -->
 
 ### Example usage
