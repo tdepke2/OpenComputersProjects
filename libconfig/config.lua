@@ -71,6 +71,8 @@ local function isFreeIdentifier(v)
 end
 
 
+---@docdef
+-- 
 -- Load configuration from a text file and return it. The file is expected to
 -- contain executable Lua code, but doesn't need to have the structure specified
 -- in `cfgFormat` (no verification is done). If `defaultIfMissing` is true, the
@@ -120,6 +122,8 @@ function config.loadFile(filename, cfgFormat, defaultIfMissing, localEnv)
 end
 
 
+---@docdef
+-- 
 -- Get the default configuration and return it. Depending on how `cfgFormat` is
 -- structured, the result may or may not be a valid config format.
 -- 
@@ -234,29 +238,6 @@ local function nextAddress(address, key)
 end
 
 
--- Gets an iterator for looping over the union of keys in `a` and `b`.
--- 
----@param a table
----@param b table
----@return function iter
-local function keyUnionIter(a, b)
-  local t, k = a, nil
-  local function iter()
-    k = next(t, k)
-    if t == a then
-      if k == nil then
-        t = b
-        return iter()
-      end
-    elseif a[k] ~= nil then
-      return iter()
-    end
-    return k
-  end
-  return iter
-end
-
-
 -- Helper function for `config.verify()` to check for errors in configuration.
 -- 
 ---@param cfg any
@@ -325,6 +306,8 @@ local function verifySubconfig(cfg, cfgFormat, typeList, address)
 end
 
 
+---@docdef
+-- 
 -- Checks the format of config `cfg` to make sure it matches cfgFormat. An error
 -- is thrown if any inconsistencies with the format are found.
 -- 
@@ -436,22 +419,26 @@ local function writeValue(file, value, typeNames, typeList, valueName, address, 
 end
 
 
--- Writes a string to the file, prepending a double-dash for each line (except
--- for leading empty lines).
+-- Gets an iterator for looping over the union of keys in `a` and `b`.
 -- 
----@param file file*
----@param comment string
----@param spacing string
-local function writeComment(file, comment, spacing)
-  local prefixNewlines = true
-  for line in string.gmatch(comment .. "\n", "(.-)\n") do
-    if line ~= "" or not prefixNewlines then
-      file:write(spacing, "-- ", line, "\n")
-      prefixNewlines = false
-    else
-      file:write("\n")
+---@param a table
+---@param b table
+---@return function iter
+local function keyUnionIter(a, b)
+  local t, k = a, nil
+  local function iter()
+    k = next(t, k)
+    if t == a then
+      if k == nil then
+        t = b
+        return iter()
+      end
+    elseif a[k] ~= nil then
+      return iter()
     end
+    return k
   end
+  return iter
 end
 
 
@@ -509,6 +496,25 @@ local function sortKeys(cfg, cfgFormat)
   end
   
   return sortedKeys
+end
+
+
+-- Writes a string to the file, prepending a double-dash for each line (except
+-- for leading empty lines).
+-- 
+---@param file file*
+---@param comment string
+---@param spacing string
+local function writeComment(file, comment, spacing)
+  local prefixNewlines = true
+  for line in string.gmatch(comment .. "\n", "(.-)\n") do
+    if line ~= "" or not prefixNewlines then
+      file:write(spacing, "-- ", line, "\n")
+      prefixNewlines = false
+    else
+      file:write("\n")
+    end
+  end
 end
 
 
@@ -607,6 +613,8 @@ local function writeSubconfig(file, cfg, cfgFormat, typeList, address, spacing)
 end
 
 
+---@docdef
+-- 
 -- Saves the configuration to a file. The filename can be `-` to send the config
 -- to standard output instead. This does some minor verification of `cfg` to
 -- determine types and such when serializing values to strings. Errors may be

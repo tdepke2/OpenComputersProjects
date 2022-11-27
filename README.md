@@ -23,3 +23,7 @@ TODO: Add description, setup instructions, screenshots, etc.
 [simple_preprocess](simple_preprocess)
 
 > Minimalistic preprocessor for Lua code. Use metaprogramming to let the code write new code!
+
+[libconfig](libconfig)
+
+> Define user-facing configuration structures, then save and load these from a file.
