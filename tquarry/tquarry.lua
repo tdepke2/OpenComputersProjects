@@ -25,6 +25,7 @@ potential problems:
 local component = require("component")
 local computer = require("computer")
 local crobot = component.robot
+local icontroller = component.inventory_controller
 local shell = require("shell")
 local sides = require("sides")
 
@@ -94,9 +95,6 @@ local cfgFormat = {
   },
   inventoryInput = {"Sides", "right", "The side of the robot where items will be taken from (an inventory like a chest is expected to be here). This is from the robot's perspective when at the restock point. Valid sides are: \"bottom\", \"top\", \"back\", \"front\", \"right\", \"left\"."},
   inventoryOutput = {"Sides", "right", "Similar to inventoryInput, but for the inventory robot will dump items to."},
-  --quarryLength = {"Integer", 3},
-  --quarryWidth = {"Integer", 3},
-  --quarryHeight = {"Integer", 3},
   quarryType = {"QuarryType", "Basic", "Controls mining and building patterns for the quarry, options are: \"Basic\" simply mines out the rectangular area, \"Fast\" mines three layers at a time but may not remove all liquids, \"FillFloor\" ensures a solid floor below each working layer (for when a flight upgrade is not in use), \"FillWall\" ensures a solid wall at the borders of the rectangular area (prevents liquids from spilling into quarry)."},
   buildStaircase = {"boolean", false, "When set to true, the robot will build a staircase once the quarry is finished (stairs go clockwise around edges of quarry to the top and end at the restock point). This adjusts miner.stockLevelsMax.stairBlock to stock stairs if needed."},
 }
@@ -121,11 +119,17 @@ setmetatable(Quarry, {
 ---@param length integer|nil
 ---@param width integer|nil
 ---@param height integer|nil
+---@param cfg table|nil
 ---@return Quarry
 ---@nodiscard
-function Quarry:new(length, width, height)
+function Quarry:new(length, width, height, cfg)
   self.__index = self
   self = setmetatable({}, self)
+  
+  -- A nil cfg will return a stub Quarry instance for inheritance purposes.
+  if not cfg then
+    return self
+  end
   
   length = length or 1
   width = width or 1
@@ -144,6 +148,8 @@ function Quarry:new(length, width, height)
     {1, "minecraft:stone_stairs/0"}
   }--]]
   
+  self.cfg = cfg
+  
   self.miner.toolHealthReturn = 5
   self.miner.toolHealthMin = 0
   self.miner.toolHealthBias = 5
@@ -151,8 +157,8 @@ function Quarry:new(length, width, height)
   self.miner.energyLevelMin = 1000
   self.miner.emptySlotsMin = 1
   
-  self.inventoryInput = sides.right
-  self.inventoryOutput = sides.right
+  self.inventoryInput = sides[cfg.inventoryInput]
+  self.inventoryOutput = sides[cfg.inventoryOutput]
   
   self.xDir = 1
   self.zDir = 1
@@ -314,9 +320,21 @@ function Quarry:run()
     return self.miner.ReturnReasons.minerDone
   end)
   
+  -- Confirm valid inventories are at the input and output sides.
+  robnav.turnTo(self.inventoryInput)
+  if not icontroller.getInventorySize(self.inventoryInput < 2 and self.inventoryInput or sides.front) then
+    robnav.turnTo(sides.front)
+    error("no valid input inventory found, config[\"inventoryInput\"] is set to side " .. sides[self.inventoryInput])
+  end
+  robnav.turnTo(self.inventoryOutput)
+  if not icontroller.getInventorySize(self.inventoryOutput < 2 and self.inventoryOutput or sides.front) then
+    robnav.turnTo(sides.front)
+    error("no valid output inventory found, config[\"inventoryOutput\"] is set to side " .. sides[self.inventoryOutput])
+  end
+  
   self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
   
-  local buildStairsQueued = true
+  local buildStairsQueued = self.cfg.buildStaircase
   
   while true do
     self.miner.withinMainCoroutine = true
@@ -348,24 +366,9 @@ function Quarry:run()
         end)
         
         -- Request stairs to be stocked in inventory.
-        
-        
-        
-        
-        
-        
-        
-        
-        -- FIXME skip if already nonzero
-        
-        
-        
-        
-        
-        
-        
-        
-        self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] = 3
+        if self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] < 1 then
+          self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] = 3
+        end
         
         xLast, yLast, zLast, rLast = 0, 0, 0, sides.front
         buildStairsQueued = false
@@ -616,6 +619,14 @@ local function main(...)
       return 2
     end
   end
+  
+  
+  
+  
+  -- FIXME verify hardware components, and check against 2 by 2 stairs case?
+  
+  
+  
   
   local quarryClass
   if cfg.quarryType == "Basic" then
