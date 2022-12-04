@@ -25,16 +25,81 @@ potential problems:
 local component = require("component")
 local computer = require("computer")
 local crobot = component.robot
+local shell = require("shell")
 local sides = require("sides")
 
 local include = require("include")
 local dlog = include("dlog")
 dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
+local config = include("config")
 local enum = include("enum")
 local miner = include("miner")
 local robnav = include("robnav")
 local xassert = dlog.xassert    -- this may be a good idea to do from now on? ###########################################################
+
+
+local cfgTypes = {
+  Integer = {
+    verify = function(v)
+      assert(type(v) == "number" and math.floor(v) == v, "provided Integer must not be a fractional number.")
+    end
+  },
+  Sides = {
+    "bottom", "top", "back", "front", "right", "left"
+  },
+  QuarryType = {
+    "Basic", "Fast", "FillFloor", "FillWall"
+  },
+}
+local cfgFormat = {
+  miner = {
+    maxForceAttempts = {"Integer", 50, "Maximum number of attempts for the robot to clear an obstacle until it considers it is stuck. Having a limit is important so that the robot does not continue to whittle down the equipped tool's health while whacking a mob with a massive health pool."},
+    toolHealthReturn = {"Integer", 5, "The tool health (number of uses remaining) threshold for triggering the robot to return to restock point. The return threshold is only considered if the robot is out of spare tools."},
+    toolHealthMin = {"Integer", 2, "The tool minimum health. Zero means only one use remains until the tool breaks (which is useful for keeping that precious unbreaking/efficiency/mending diamond pickaxe for repairs later). If set to negative one, tools will be used up completely."},
+    toolHealthBias = {"Integer", 5, "Bias added when robot is selecting new tools during resupply (prevents selecting poor quality tools)."},
+    energyLevelMin = {"Integer", 1000, "Minimum threshold on energy level before robot needs to resupply."},
+    emptySlotsMin = {"Integer", 1, "Minimum number of empty slots before robot needs to resupply. Setting this to zero can allow all inventory slots to fill completely, but some items that fail to stack with others in inventory will get lost."},
+    stockLevelsItems = {
+      _comment_ = "Item name patterns (supports Lua string patterns, see https://www.lua.org/manual/5.3/manual.html#6.4.1) for each type of item the robot keeps stocked. These can be exact items too, like \"minecraft:stone/5\" for andesite.",
+      buildBlock = {
+        _ipairs_ = {"string",
+          ".*stone/.*",
+          ".*dirt/.*",
+        },
+      },
+      stairBlock = {
+        _ipairs_ = {"string",
+          ".*stairs/.*",
+        },
+      },
+      mining = {
+        _ipairs_ = {"string",
+          ".*pickaxe.*",
+        },
+      },
+    },
+    stockLevelsMin = {
+      _comment_ = "Minimum number of slots the robot must fill for each stock type during resupply. Zeros are only allowed for consumable stock types that the robot does not use for construction (like fuel and tools).",
+      buildBlock = {"Integer", 1},
+      stairBlock = {"Integer", 1},
+      mining = {"Integer", 0},
+    },
+    stockLevelsMax = {
+      _comment_ = "Maximum number of slots the robot will fill for each stock type during resupply. Can be less than the minimum level, and a value of zero will skip stocking items of that type.",
+      buildBlock = {"Integer", 3},
+      stairBlock = {"Integer", 0},
+      mining = {"Integer", 2},
+    },
+  },
+  inventoryInput = {"Sides", "right", "The side of the robot where items will be taken from (an inventory like a chest is expected to be here). This is from the robot's perspective when at the restock point. Valid sides are: \"bottom\", \"top\", \"back\", \"front\", \"right\", \"left\"."},
+  inventoryOutput = {"Sides", "right", "Similar to inventoryInput, but for the inventory robot will dump items to."},
+  --quarryLength = {"Integer", 3},
+  --quarryWidth = {"Integer", 3},
+  --quarryHeight = {"Integer", 3},
+  quarryType = {"QuarryType", "Basic", "Controls mining and building patterns for the quarry, options are: \"Basic\" simply mines out the rectangular area, \"Fast\" mines three layers at a time but may not remove all liquids, \"FillFloor\" ensures a solid floor below each working layer (for when a flight upgrade is not in use), \"FillWall\" ensures a solid wall at the borders of the rectangular area (prevents liquids from spilling into quarry)."},
+  buildStaircase = {"boolean", false, "When set to true, the robot will build a staircase once the quarry is finished (stairs go clockwise around edges of quarry to the top and end at the restock point). This adjusts miner.stockLevelsMax.stairBlock to stock stairs if needed."},
+}
 
 
 -- Quarry class definition.
@@ -283,6 +348,23 @@ function Quarry:run()
         end)
         
         -- Request stairs to be stocked in inventory.
+        
+        
+        
+        
+        
+        
+        
+        
+        -- FIXME skip if already nonzero
+        
+        
+        
+        
+        
+        
+        
+        
         self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] = 3
         
         xLast, yLast, zLast, rLast = 0, 0, 0, sides.front
@@ -500,17 +582,58 @@ function FillWallQuarry:quarryStart()
 end
 
 
+local USAGE_STRING = [[Usage: tquarry [OPTION]... LENGTH WIDTH HEIGHT
+
+Options:
+  -h, --help        display help message and exit
+
+To configure, run: edit /etc/tquarry.cfg
+For more information, run: man tquarry
+]]
+
+
 local function main(...)
   -- Get command-line arguments.
-  local args = {...}
+  local args, opts = shell.parse(...)
+  
+  -- Load config file, or use default config if not found.
+  local cfgPath = "/etc/tquarry.cfg"
+  local cfg, loadedDefaults = config.loadFile(cfgPath, cfgFormat, true)
+  config.verify(cfg, cfgFormat, cfgTypes)
+  if loadedDefaults then
+    io.write("Configuration not found, saving defaults to \"", cfgPath, "\".\n")
+    config.saveFile(cfgPath, cfg, cfgFormat, cfgTypes)
+  end
+  
+  if #args ~= 3 or opts["h"] or opts["help"] then
+    io.write(USAGE_STRING)
+    return 0
+  end
+  for i = 1, 3 do
+    args[i] = tonumber(args[i])
+    if not args[i] or args[i] ~= math.floor(args[i]) or args[i] < 1 then
+      io.stderr:write("tquarry: quarry dimensions must be positive integer values\n")
+      return 2
+    end
+  end
+  
+  local quarryClass
+  if cfg.quarryType == "Basic" then
+    quarryClass = BasicQuarry
+  elseif cfg.quarryType == "Fast" then
+    quarryClass = FastQuarry
+  elseif cfg.quarryType == "FillFloor" then
+    quarryClass = FillFloorQuarry
+  elseif cfg.quarryType == "FillWall" then
+    quarryClass = FillWallQuarry
+  end
   
   io.write("Starting quarry!\n")
-  --local quarry = BasicQuarry:new(6, 6, 8)
-  local quarry = BasicQuarry:new(3, 3, 3)
-  --local quarry = FastQuarry:new(3, 2, 3)
-  
+  local quarry = quarryClass:new(args[1], args[2], args[3], cfg)
   quarry:run()
+  return 0
 end
 
-dlog.handleError(xpcall(main, debug.traceback, ...))
+local status, ret = dlog.handleError(xpcall(main, debug.traceback, ...))
 dlog.osBlockNewGlobals(false)
+os.exit(status and ret or 1)
