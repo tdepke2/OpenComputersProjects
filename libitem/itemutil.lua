@@ -21,6 +21,11 @@ local itemutil = {}
 -- used for table indexing of items and such. Note that items with different NBT
 -- can still resolve to the same identifier.
 -- 
+-- The resulting name has the pattern:
+-- `<mod name>:<item id name>/<metadata number>[n]`.
+-- For example, `minecraft:iron_pickaxe/0n` is an enchanted iron pickaxe with
+-- full durability.
+-- 
 ---@param item Item
 ---@return ItemFullName itemName
 ---@nodiscard

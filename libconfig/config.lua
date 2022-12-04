@@ -87,13 +87,13 @@ end
 ---@param defaultIfMissing boolean
 ---@param localEnv table|nil
 ---@return table cfg
+---@return boolean loadedDefaults
 function config.loadFile(filename, cfgFormat, defaultIfMissing, localEnv)
   localEnv = localEnv or _ENV
   local file = io.open(filename, "r")
-  local cfg
   if file then
     file:close()
-    cfg = {}
+    local cfg = {}
     
     -- Add new loadEnv with metamethods to index back to localEnv. New global variables in config will be added in cfg instead of modifying the current environment.
     local loadEnv = setmetatable({}, {
@@ -112,13 +112,11 @@ function config.loadFile(filename, cfgFormat, defaultIfMissing, localEnv)
     if not status then
       error("failed to load config: " .. tostring(result) .. "\n")
     end
+    return cfg, false
   elseif defaultIfMissing then
-    cfg = config.loadDefaults(cfgFormat)
-  else
-    error("failed to open file \"" .. filename .. "\" for reading.")
+    return config.loadDefaults(cfgFormat), true
   end
-  
-  return cfg
+  error("failed to open file \"" .. filename .. "\" for reading.")
 end
 
 
