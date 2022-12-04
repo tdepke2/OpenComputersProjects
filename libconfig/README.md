@@ -58,7 +58,7 @@ In some cases, it may be desired to use enumerated types in the config format an
 
 <!-- SIMPLE-DOC:START (FILE:../libconfig/config.lua) -->
 
-* `config.loadFile(filename: string, cfgFormat: table, defaultIfMissing: boolean, localEnv: table|nil) -> cfg: table`
+* `config.loadFile(filename: string, cfgFormat: table, defaultIfMissing: boolean, localEnv: table|nil) -> cfg: table, loadedDefaults: boolean`
   
   Load configuration from a text file and return it. The file is expected to
   contain executable Lua code, but doesn't need to have the structure specified
