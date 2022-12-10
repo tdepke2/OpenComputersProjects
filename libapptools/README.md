@@ -238,15 +238,31 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
 
 Module loader (improved version of `require()` function).
 
-Extends the functionality of `require()` to solve an issue with modules getting cached and not reloading. The `include()` function will reload a module (and all modules that depend on it) if it detects that the file has been modified. Any user modules that need to be loaded should use `include()` instead of `require()` for this to work properly (except for the include module itself). Using `include()` for system libraries is not necessary and may not always work. Take a look at the `package.loaded` warnings here: https://ocdoc.cil.li/api:non-standard-lua-libs
+Extends the functionality of `require()` to solve an issue with modules getting cached and not reloading. The `include()` function will reload a module (and all modules that depend on it) if it detects that the file has been modified. Any user modules that need to be loaded should always use `include()` instead of `require()` for this to work properly (except for the include module itself). Using `include()` for system libraries is not recommended and may cause problems. Take a look at the `package.loaded` warnings here: https://ocdoc.cil.li/api:non-standard-lua-libs
 
 In order for `include()` to work properly, a module must meet these requirements:
 
   1. It must return no more than one value.
   
   2. Any dependencies that the module needs should also use `include()`, and loading should not be intentionally delayed. Using a lazy-loading system can cause incorrect results during dependency calculation.
+  
+  3. The module should be loaded under the same name every time. For example, if a module is loaded with `include("my_package.stuff")` don't load it again by entering the `my_package` directory and using `include("stuff")`.
 
-Note that the tracking of dependencies and reloading parent modules is done in order to avoid stale references. If a module is simply removed from the cache and loaded again, other bits of code that use it could still reference the old version of the module. It's possible to swap the new module contents into the old location in memory with a bit of magic, but this also adds more restrictions on the modules that can be loaded.
+Note that the tracking of dependencies and reloading parent modules is done in order to avoid stale references. If a module is simply removed from the cache and loaded again, other bits of code that use it could still reference the old version of the module (meaning two different copies of the module would be in memory).
+
+> **Warning**
+> 
+> If using the lua prompt to debug modules, note that referencing a module name will invoke `require()` to load it! This is okay to use if the module in question is already loaded though. Also, be careful about messing with `package.loaded` to force unload things (see the implementation of `include.unload()`).
+
+Some side notes:
+
+> The functionality in include is fairly complicated and I keep coming back to consider if it could be made simpler. For the record, here are some alternative designs that were considered:
+> 
+> 1. Have `include()` wrap each returned module in a table to use as a proxy (using `__index` metamethod, I think we could share a single proxy table for each loaded module too). When we need to reload the module, the single reference the proxy points to can be changed. Pros are that dependency info is no longer needed but small performance hit for indexing. Also, caching stuff from a module after it has been added with include() will have problems.
+> 
+> 2. Similar to the first point, we could instead use `moveTableReference()` operation to swap table content. Now there is no performance penalty for indexing with proxy. Downside is that it requires modules to be tables.
+> 
+> 3. Use a function call at start and end of each module to define it, and always use `require()` for loading. This fixes issue with accidentally calling `require()` on a user module, but dependency tracking and error handling is more complex. The function call at the start of the module would also need to identify the name of the module that is loading (maybe passed in as a hard-coded value).
 
 Also "included" here is a source tree dependency solver. It's useful for uploading code to a device via network or other medium. This allows the user to send software with multiple dependencies to robots/drones/microcontrollers that only have a small EEPROM storage.
 
@@ -327,5 +343,10 @@ local transposer = component.transposer
 -- User libraries (must require() include first).
 local include = require("include")
 local packer = include("packer")
-local wnet = include("wnet")
+local vector = include("vector")
+local wnet = include("wnet", "optional")  -- This module is optionally loaded.
 ```
+
+### Future work
+
+Just like `require()`, the include module does not handle circular dependencies. This seems to me like a design problem to need to use a circular dependency, but there could be some legit use cases.

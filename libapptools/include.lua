@@ -11,32 +11,51 @@ local filesystem = require("filesystem")
 local include = {}
 
 local DEBUG_OUTPUT = true
+local DEBUG_MODE = true   -- FIXME add some way to turn off file checking? ###############################################################################
+
+-- FIXME there are some places in code where require() has been used instead of include(), need to fix! ########################################################
 
 
 -- Enables include() function call as a shortcut to include.load().
 setmetatable(include, {
-  __call = function(func, arg)
-    return include.load(arg)
+  __call = function(func, ...)
+    return include.load(...)
   end
 })
 
 -- Private data members:
--- Tracks loaded modules, each entry is a null-character separated list. Format is: requiresReload, modulePath, modifiedTime, and dependencies.
+-- Tracks loaded module metadata, each entry is a null-character separated list. Format is: requiresReload, modulePath, modifiedTime, and dependencies.
 include.loaded = {}
--- Current depth in the dependency traversal. Starts at 1 for a top-level module and increments for each level down.
+-- Current depth in the dependency traversal. Starts at 1 while loading a top-level module and increments for each level down.
 include.moduleDepth = 0
 -- Table of unique dependencies for each level of include.moduleDepth. Each entry is a null-character separated list.
 include.moduleDependencies = nil
 -- Table of unique modules that have been checked for a file change since the last top-level module.
 include.scannedModules = nil
+-- Tracks references to modules loaded with include. This was just used for debugging to confirm there are no dangling references after a module is unloaded and garbage collection kills it.
+--include.weakModuleReferences = setmetatable({}, {__mode = "k"})
 
 
---- `include.requireWithMemCheck(moduleName: string): table`
+---@docdef
+-- 
+-- Debugging mode prints module load status, memory allocation errors, and other
+-- things to standard output.
+-- 
+---@param mode boolean
+function include.setDebugMode(mode)
+  DEBUG_OUTPUT = mode
+end
+
+
+---@docdef
 -- 
 -- Simple wrapper for the `require()` function that suppresses errors about
 -- memory allocation while loading a module. Memory allocation errors can happen
 -- occasionally even if a given system has sufficient RAM. Up to three attempts
 -- are made, then the error is just passed along.
+-- 
+---@param moduleName string
+---@return any module
 function include.requireWithMemCheck(moduleName)
   local status, result
   local attempts = 1
@@ -46,6 +65,7 @@ function include.requireWithMemCheck(moduleName)
     end
     status, result = pcall(require, moduleName)
     if status then
+      --include.weakModuleReferences[result] = moduleName
       return result
     elseif not string.find(result, "not enough memory", 1, true) then
       error(result)
@@ -64,6 +84,8 @@ end
 -- that are descendants of moduleName (other parents are just marked as needing
 -- to reload). Modules that have already been checked since the last top-level
 -- call to include.load are ignored.
+-- 
+---@param moduleName string
 local function unloadChangedModules(moduleName)
   --print("unloadChangedModules for \"" .. moduleName .. "\"")
   if not include.loaded[moduleName] or include.scannedModules[moduleName] then
@@ -97,7 +119,7 @@ local function unloadChangedModules(moduleName)
 end
 
 
---- `include.load(moduleName: string): table`
+---@docdef
 -- 
 -- Loads a module just like `require()` does. The difference is that the module
 -- will be removed from the internal cache and loaded again if the file
@@ -107,7 +129,15 @@ end
 -- module has been cached). Normally you would have to either reboot the machine
 -- to force the module to reload, or remove the entry in `package.loaded`
 -- manually. The `include.load()` function fixes this problem.
-function include.load(moduleName)
+-- 
+-- The properties argument can be a comma-separated string of values. Currently
+-- only the string `optional` is supported which allows this function to return
+-- nil if the module is not found in the search path.
+-- 
+---@param moduleName string
+---@param properties string|nil
+---@return any module
+function include.load(moduleName, properties)
   local atTopLevel = (include.moduleDepth == 0)
   if atTopLevel then
     include.moduleDependencies = {}
@@ -123,7 +153,10 @@ function include.load(moduleName)
   end
   if not modulePath or not filesystem.exists(modulePath) then
     modulePath = package.searchpath(moduleName, package.path)
-    assert(modulePath and filesystem.exists(modulePath), "Cannot find module \"" .. moduleName .. "\" in search path.")
+    if not (modulePath and filesystem.exists(modulePath)) then
+      assert(properties and string.find(properties, "optional"), "Cannot find module \"" .. moduleName .. "\" in search path.")
+      return nil
+    end
     --print("Looked up path \"" .. modulePath .. "\"")
   end
   
@@ -133,6 +166,9 @@ function include.load(moduleName)
   -- Attempt to load module if it doesn't appear in package.
   local mod
   if not package.loaded[moduleName] then
+    if include.loaded[moduleName] and DEBUG_OUTPUT then
+      print("\27[33mWarning: module \"" .. moduleName .. "\" was forcibly removed from package.loaded\27[0m")
+    end
     local modifiedTime = filesystem.lastModified(modulePath)
     -- Catch errors from require() at the top-level only. This lets us reset the state of traversal before application receives the error.
     if atTopLevel then
@@ -152,6 +188,9 @@ function include.load(moduleName)
   else
     --print("Keeping module \"" .. moduleName .. "\" at " .. tostring(package.loaded[moduleName]))
     mod = package.loaded[moduleName]
+    if not include.loaded[moduleName] and DEBUG_OUTPUT then
+      print("\27[33mWarning: module \"" .. moduleName .. "\" already exists in package.loaded\27[0m")
+    end
   end
   
   include.moduleDependencies[include.moduleDepth] = nil
@@ -159,7 +198,7 @@ function include.load(moduleName)
   
   if atTopLevel then
     -- Make sure state has been reset to expected values, and delete unnecessary tables to save some memory.
-    assert(include.moduleDepth == 0, "Unexpected stack size while finding dependencies for module \"" .. moduleName .. "\".")
+    assert(include.moduleDepth == 0, "Unexpected moduleDepth size while finding dependencies for module \"" .. moduleName .. "\".")
     assert(next(include.moduleDependencies) == nil, "Unexpected remaining dependencies while loading module \"" .. moduleName .. "\".")
     include.moduleDependencies = nil
     include.scannedModules = nil
@@ -174,28 +213,36 @@ function include.load(moduleName)
 end
 
 
---- `include.isLoaded(moduleName: string): boolean`
+---@docdef
 -- 
 -- Check if a module is currently loaded (already in cache).
+-- 
+---@param moduleName string
+---@return boolean
 function include.isLoaded(moduleName)
   return package.loaded[moduleName] ~= nil
 end
 
 
---- `include.reload(moduleName: string): table`
+---@docdef
 -- 
 -- Forces a module to load/reload, regardless of the file modification
 -- timestamp. Be careful not to use this with system libraries!
+-- 
+---@param moduleName string
+---@return any module
 function include.reload(moduleName)
   include.unload(moduleName)
   return include.load(moduleName)
 end
 
 
---- `include.unload(moduleName: string)`
+---@docdef
 -- 
 -- Unloads the given module (removes it from the internal cache). Be careful not
 -- to use this with system libraries!
+-- 
+---@param moduleName string
 function include.unload(moduleName)
   if DEBUG_OUTPUT then
     print("Unloading module \"" .. moduleName .. "\"")
@@ -214,7 +261,7 @@ function include.unload(moduleName)
 end
 
 
---- `include.unloadAll()`
+---@docdef
 -- 
 -- Unloads all modules that have been loaded with `include()`, `include.load()`,
 -- `include.reload()`, etc. System libraries will not be touched as long as they

@@ -44,8 +44,14 @@ Dependency tree:
 local function main()
   print("running app...")
   print("first.x.thing() gives " .. first.x.thing())
-  print("fourth.first.x.thing() gives " .. fourth.first.x.thing())
-  print("fifth.third.x.thing() gives " .. fifth.third.x.thing())
+  print("first.y.thing() gives " .. first.y.thing())
+  
+  assert(first.x.thing() == third.x.thing())
+  assert(first.x.thing() == fourth.x.thing())
+  assert(first.x.thing() == fourth.first.x.thing())
+  assert(first.x.thing() == fifth.third.x.thing())
+  assert(first.y.thing() == fifth.third.first.y.thing())
+  assert(first.x.thing() ~= first.y.thing())
   
   assert(include.moduleDepth == 0)
   assert(include.moduleDependencies == nil)
@@ -54,5 +60,12 @@ local function main()
   for k, v in pairs(include.loaded) do
     print(k, v)
   end
+  
+  print("\nSave any of the files (or change the x/y thing() value) to see dependent modules reload.")
+  return 0
 end
-main()
+local status, ret = xpcall(main, debug.traceback, ...)
+if not status then
+  print("Error: " .. ret)
+end
+os.exit(status and ret or 1)
