@@ -269,14 +269,19 @@ Also "included" here is a source tree dependency solver. It's useful for uploadi
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libapptools/include.lua) -->
-* `include.requireWithMemCheck(moduleName: string): table`
+* `include.setDebugMode(mode: boolean)`
+  
+  Debugging mode prints module load status, memory allocation errors, and other
+  things to standard output.
+
+* `include.requireWithMemCheck(moduleName: string) -> module: any`
   
   Simple wrapper for the `require()` function that suppresses errors about
   memory allocation while loading a module. Memory allocation errors can happen
   occasionally even if a given system has sufficient RAM. Up to three attempts
   are made, then the error is just passed along.
 
-* `include.load(moduleName: string): table`
+* `include.load(moduleName: string, properties: string|nil) -> module: any`
   
   Loads a module just like `require()` does. The difference is that the module
   will be removed from the internal cache and loaded again if the file
@@ -286,12 +291,16 @@ Also "included" here is a source tree dependency solver. It's useful for uploadi
   module has been cached). Normally you would have to either reboot the machine
   to force the module to reload, or remove the entry in `package.loaded`
   manually. The `include.load()` function fixes this problem.
+  
+  The properties argument can be a comma-separated string of values. Currently
+  only the string `optional` is supported which allows this function to return
+  nil if the module is not found in the search path.
 
-* `include.isLoaded(moduleName: string): boolean`
+* `include.isLoaded(moduleName: string) -> boolean`
   
   Check if a module is currently loaded (already in cache).
 
-* `include.reload(moduleName: string): table`
+* `include.reload(moduleName: string) -> module: any`
   
   Forces a module to load/reload, regardless of the file modification
   timestamp. Be careful not to use this with system libraries!
@@ -306,30 +315,6 @@ Also "included" here is a source tree dependency solver. It's useful for uploadi
   Unloads all modules that have been loaded with `include()`, `include.load()`,
   `include.reload()`, etc. System libraries will not be touched as long as they
   were loaded through other means, like `require()`.
-
-* `include.iterateSrcDependencies(sourceFilename: string[,
-    modPattern: string]): function`
-  
-  Gets an iterator to walk through the library dependencies for a source code
-  file. This is designed to help with sending source code over network
-  communication (useful for remote code upload to devices that use an EEPROM
-  storage and don't have enough space to store the files themselves). The
-  iterator returns source code contents starting from the leaves and working up
-  to the root of the source tree. This means each file will at most depend on
-  previous returned files or itself.
-  
-  The sourceFilename is the path to the source code file, modPattern is a
-  pattern for the `require()` function equivalent. With the default value for
-  modPattern, the strings `require("")` and `include("")` will be scanned for
-  to find nested libraries in source code. Note that the nested libraries will
-  be searched by package name, not by file path. Also, the include module
-  itself is blacklisted from getting picked up as a dependency (to prevent some
-  complications).
-  
-  For each call to the iterator, returns the module name (string) and contents
-  of the source file (also string). The module name will be an empty string if
-  the source file corresponds to the original sourceFilename argument. Iterator
-  returns nil after last source file has been returned.
 <!-- SIMPLE-DOC:END -->
 
 ### Example usage
