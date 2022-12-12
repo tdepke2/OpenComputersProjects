@@ -269,10 +269,20 @@ Also "included" here is a source tree dependency solver. It's useful for uploadi
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libapptools/include.lua) -->
-* `include.setDebugMode(mode: boolean)`
+* `include.mode(newMode: string|nil) -> string`
   
-  Debugging mode prints module load status, memory allocation errors, and other
-  things to standard output.
+  Configure mode of operation for include. Usually the mode can be left as is,
+  but other modes allow silencing output and disabling some features for
+  performance. If newMode is provided, the mode is set to this value. The valid
+  modes are:
+  
+  * `debug` (default mode, timestamp checking and status messages are enabled)
+  * `release` (timestamp checking enabled, status messages disabled)
+  * `optimize1` (timestamp checking disabled)
+  
+  Using `optimize1` will basically make `include.load()` function the same as
+  `include.requireWithMemCheck()`. After setting the mode, the current mode is
+  returned.
 
 * `include.requireWithMemCheck(moduleName: string) -> module: any`
   
