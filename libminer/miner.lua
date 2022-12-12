@@ -12,7 +12,6 @@ dlog.osBlockNewGlobals(true)
 local enum = include("enum")
 local itemutil = include("itemutil")
 local robnav = include("robnav")
-local xassert = dlog.xassert    -- this may be a good idea to do from now on? ###########################################################
 
 
 -- Wrapper for crobot.durability() to handle case of no tool and tools without

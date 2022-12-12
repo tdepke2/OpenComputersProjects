@@ -7,6 +7,7 @@ todo:
   * support for generators?
   * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
   * dynamically compute energyLevelMin?
+  * show robot status with setLightColor().
 
 to test:
   * 
@@ -21,6 +22,7 @@ potential problems:
   * Tinker's tools? These show durability values where a zero means the tool is broken. To handle them, just set toolHealthMin to zero.
     * Small correction: a wooden pickaxe (and possibly other self-healing tools) sometimes breaks at 1 durability. To be safe, set toolHealthMin a bit above zero.
 --]]
+
 
 local component = require("component")
 local computer = require("computer")
@@ -37,13 +39,12 @@ local config = include("config")
 local enum = include("enum")
 local miner = include("miner")
 local robnav = include("robnav")
-local xassert = dlog.xassert    -- this may be a good idea to do from now on? ###########################################################
 
 
 local cfgTypes = {
   Integer = {
     verify = function(v)
-      assert(type(v) == "number" and math.floor(v) == v, "provided Integer must not be a fractional number.")
+      xassert(type(v) == "number" and math.floor(v) == v, "provided Integer must not be a fractional number.")
     end
   },
   Sides = {
