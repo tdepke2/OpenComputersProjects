@@ -6,7 +6,8 @@ local event = require("event")
 local sides = require("sides")
 local text = require("text")
 
-local dstructs = require("dstructs")
+local include = require("include")
+local dstructs = include("dstructs")
 
 local setupConfig
 -- Comment out below for interactive setup.

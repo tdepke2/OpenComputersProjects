@@ -8,11 +8,8 @@
 
 local filesystem = require("filesystem")
 
+
 local include = {}
-
-
--- FIXME there are some places in code where require() has been used instead of include(), need to fix! ########################################################
-
 
 -- Enables include() function call as a shortcut to include.load().
 setmetatable(include, {

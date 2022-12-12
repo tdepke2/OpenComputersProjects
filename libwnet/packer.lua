@@ -39,15 +39,13 @@ local serialization = require("serialization")
 -- Check for optional dependency dlog.
 local dlog, xassert
 do
-  local status, ret = pcall(require, "dlog")
+  local status, include = pcall(require, "include")
   if status then
-    dlog = ret
-    xassert = dlog.xassert
-  else
+    dlog = include("dlog", "optional")
+  end
+  xassert = dlog and dlog.xassert or function(v, ...)
     -- Fallback option for xassert if dlog not found.
-    xassert = function(v, ...)
-      assert(v, string.rep("%s", select("#", ...)):format(...))
-    end
+    assert(v, string.rep("%s", select("#", ...)):format(...))
   end
 end
 

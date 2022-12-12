@@ -6,7 +6,11 @@
 --------------------------------------------------------------------------------
 
 
-local xprint = require("xprint")
+local xprint
+do
+  local status, include = pcall(require, "include")
+  xprint = status and include("xprint") or require("xprint")
+end
 
 local args = {...}
 

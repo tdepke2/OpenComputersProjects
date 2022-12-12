@@ -8,10 +8,11 @@ local term = require("term")
 local thread = require("thread")
 local unicode = require("unicode")
 
-local dlog = require("dlog")
+local include = require("include")
+local dlog = include("dlog")
 dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
-local dstructs = require("dstructs")
+local dstructs = include("dstructs")
 
 -- Wrapper for gpu.setBackground() that prevents the direct (slow) GPU call if
 -- background already set to the desired color.

@@ -25,8 +25,6 @@ https://en.cppreference.com/w/cpp/container/vector/vector
 https://github.com/g-truc/glm
 
 Example usage:
-local vector = require("vector")
-
 local v1 = vector(9, 10, 21)
 local v2 = vector(-3.02, 5, 6.7) * vector(11, 12, 5.5) + v1
 local v3 = vector("foo", "bar", 9000)
@@ -45,17 +43,16 @@ end
 -- Check for optional dependency dlog.
 local dlog, xassert
 do
-  local status, ret = pcall(require, "dlog")
+  local status, include = pcall(require, "include")
   if status then
-    dlog = ret
-    xassert = dlog.xassert
-  else
+    dlog = include("dlog", "optional")
+  end
+  xassert = dlog and dlog.xassert or function(v, ...)
     -- Fallback option for xassert if dlog not found.
-    xassert = function(v, ...)
-      assert(v, string.rep("%s", select("#", ...)):format(...))
-    end
+    assert(v, string.rep("%s", select("#", ...)):format(...))
   end
 end
+
 
 local vector = {}
 
