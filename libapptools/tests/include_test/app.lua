@@ -43,6 +43,14 @@ Dependency tree:
 
 local function main()
   print("running app...")
+  if first.x == nil then
+    -- If x has been marked as an optional dependency, it could be nil.
+    print("first.x was nil, updating the value...")
+    first.x = {thing = function() return "sample text" end}
+    assert(third.x == nil and fourth.x == nil)
+    third.x = first.x
+    fourth.x = first.x
+  end
   print("first.x.thing() gives " .. first.x.thing())
   print("first.y.thing() gives " .. first.y.thing())
   

@@ -10,8 +10,6 @@ local filesystem = require("filesystem")
 
 local include = {}
 
-local DEBUG_OUTPUT = true
-local DEBUG_MODE = true   -- FIXME add some way to turn off file checking? ###############################################################################
 
 -- FIXME there are some places in code where require() has been used instead of include(), need to fix! ########################################################
 
@@ -24,6 +22,10 @@ setmetatable(include, {
 })
 
 -- Private data members:
+-- When enabled, status messages are printed to standard output.
+local includeVerboseOutput = true
+-- When enabled, file timestamp checking and dependency tracking are disabled for performance.
+local includeOptimizeMode = false
 -- Tracks loaded module metadata, each entry is a null-character separated list. Format is: requiresReload, modulePath, modifiedTime, and dependencies.
 include.loaded = {}
 -- Current depth in the dependency traversal. Starts at 1 while loading a top-level module and increments for each level down.
@@ -38,12 +40,40 @@ include.scannedModules = nil
 
 ---@docdef
 -- 
--- Debugging mode prints module load status, memory allocation errors, and other
--- things to standard output.
+-- Configure mode of operation for include. Usually the mode can be left as is,
+-- but other modes allow silencing output and disabling some features for
+-- performance. If newMode is provided, the mode is set to this value. The valid
+-- modes are:
 -- 
----@param mode boolean
-function include.setDebugMode(mode)
-  DEBUG_OUTPUT = mode
+-- * `debug` (default mode, timestamp checking and status messages are enabled)
+-- * `release` (timestamp checking enabled, status messages disabled)
+-- * `optimize1` (timestamp checking disabled)
+-- 
+-- Using `optimize1` will basically make `include.load()` function the same as
+-- `include.requireWithMemCheck()`. After setting the mode, the current mode is
+-- returned.
+-- 
+---@param newMode string|nil
+---@return string
+function include.mode(newMode)
+  local modes = {"debug", "release", "optimize1"}
+  if not newMode then
+    return modes[(includeVerboseOutput and 0 or 1) + (includeOptimizeMode and 1 or 0) + 1]
+  end
+  
+  if newMode == modes[1] then
+    includeVerboseOutput = true
+    includeOptimizeMode = false
+  elseif newMode == modes[2] then
+    includeVerboseOutput = false
+    includeOptimizeMode = false
+  elseif newMode == modes[3] then
+    includeVerboseOutput = false
+    includeOptimizeMode = true
+  else
+    error("specified mode \"" .. tostring(newMode) .. "\" is not a valid mode.")
+  end
+  return newMode
 end
 
 
@@ -60,7 +90,7 @@ function include.requireWithMemCheck(moduleName)
   local status, result
   local attempts = 1
   while attempts <= 3 do
-    if DEBUG_OUTPUT then
+    if includeVerboseOutput then
       print("Loading module \"" .. tostring(moduleName) .. "\"")
     end
     status, result = pcall(require, moduleName)
@@ -70,7 +100,7 @@ function include.requireWithMemCheck(moduleName)
     elseif not string.find(result, "not enough memory", 1, true) then
       error(result)
     end
-    if DEBUG_OUTPUT then
+    if includeVerboseOutput then
       print("\27[31mFailed to allocate enough memory, retrying...\27[0m")
     end
     attempts = attempts + 1
@@ -138,6 +168,22 @@ end
 ---@param properties string|nil
 ---@return any module
 function include.load(moduleName, properties)
+  if includeOptimizeMode then
+    -- If running in optimized mode, bypass all of the timestamp and dependency checking behavior.
+    if not package.loaded[moduleName] then
+      local modulePath = package.searchpath(moduleName, package.path)
+      if not (modulePath and filesystem.exists(modulePath)) then
+        assert(properties and string.find(properties, "optional"), "cannot find module \"" .. moduleName .. "\" in search path.")
+        return nil
+      end
+      local mod = include.requireWithMemCheck(moduleName)
+      include.loaded[moduleName] = "0\0" .. modulePath .. "\0" .. "0"
+      return mod
+    else
+      return package.loaded[moduleName]
+    end
+  end
+  
   local atTopLevel = (include.moduleDepth == 0)
   if atTopLevel then
     include.moduleDependencies = {}
@@ -154,7 +200,7 @@ function include.load(moduleName, properties)
   if not modulePath or not filesystem.exists(modulePath) then
     modulePath = package.searchpath(moduleName, package.path)
     if not (modulePath and filesystem.exists(modulePath)) then
-      assert(properties and string.find(properties, "optional"), "Cannot find module \"" .. moduleName .. "\" in search path.")
+      assert(properties and string.find(properties, "optional"), "cannot find module \"" .. moduleName .. "\" in search path.")
       return nil
     end
     --print("Looked up path \"" .. modulePath .. "\"")
@@ -166,7 +212,7 @@ function include.load(moduleName, properties)
   -- Attempt to load module if it doesn't appear in package.
   local mod
   if not package.loaded[moduleName] then
-    if include.loaded[moduleName] and DEBUG_OUTPUT then
+    if include.loaded[moduleName] and includeVerboseOutput then
       print("\27[33mWarning: module \"" .. moduleName .. "\" was forcibly removed from package.loaded\27[0m")
     end
     local modifiedTime = filesystem.lastModified(modulePath)
@@ -188,7 +234,7 @@ function include.load(moduleName, properties)
   else
     --print("Keeping module \"" .. moduleName .. "\" at " .. tostring(package.loaded[moduleName]))
     mod = package.loaded[moduleName]
-    if not include.loaded[moduleName] and DEBUG_OUTPUT then
+    if not include.loaded[moduleName] and includeVerboseOutput then
       print("\27[33mWarning: module \"" .. moduleName .. "\" already exists in package.loaded\27[0m")
     end
   end
@@ -198,8 +244,8 @@ function include.load(moduleName, properties)
   
   if atTopLevel then
     -- Make sure state has been reset to expected values, and delete unnecessary tables to save some memory.
-    assert(include.moduleDepth == 0, "Unexpected moduleDepth size while finding dependencies for module \"" .. moduleName .. "\".")
-    assert(next(include.moduleDependencies) == nil, "Unexpected remaining dependencies while loading module \"" .. moduleName .. "\".")
+    assert(include.moduleDepth == 0, "unexpected moduleDepth size while finding dependencies for module \"" .. moduleName .. "\".")
+    assert(next(include.moduleDependencies) == nil, "unexpected remaining dependencies while loading module \"" .. moduleName .. "\".")
     include.moduleDependencies = nil
     include.scannedModules = nil
   else
@@ -244,10 +290,10 @@ end
 -- 
 ---@param moduleName string
 function include.unload(moduleName)
-  if DEBUG_OUTPUT then
+  if includeVerboseOutput then
     print("Unloading module \"" .. moduleName .. "\"")
   end
-  if include.loaded[moduleName] then
+  if not includeOptimizeMode and include.loaded[moduleName] then
     -- Set all immediate dependents as requiring a reload.
     for k, v in pairs(include.loaded) do
       if string.find(v .. "\0", "\0" .. moduleName .. "\0", 1, true) then
