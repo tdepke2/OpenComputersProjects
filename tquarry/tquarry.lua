@@ -217,9 +217,6 @@ end
 -- (going clockwise if moving up). The stairs end at the top directly below the
 -- robot in the home position.
 function Quarry:buildStairs()
-  
-  -- FIXME the min area to build stairs is 2 by 2, recommended angel upgrade
-  
   self.miner:selectStockType(self.miner.StockTypes.stairBlock)
   
   -- Simulate starting the robot from the home position, then follow the path the stairs will take to reach the bottom.
@@ -622,12 +619,34 @@ local function main(...)
   end
   
   
+  -- FIXME maybe just get rid of this, doesn't seem like this lists everything, also slow #########################################
+  --[[
+  local hardwareList = {}
+  for _, v in pairs(computer.getDeviceInfo()) do
+    hardwareList[v.description] = (hardwareList[v.description] or 0) + 1
+  end
   
+  for k, v in pairs(hardwareList) do
+    print(k, v)
+  end
+  ]]
   
-  -- FIXME verify hardware components, and check against 2 by 2 stairs case?
-  
-  
-  
+  -- Check hardware and config options for problems.
+  if crobot.inventorySize() <= 0 then
+    io.stderr:write("tquarry: robot is missing inventory upgrade\n")
+    return 2
+  end
+  if component.isAvailable("chunkloader") then
+    -- Activate the chunkloader if disabled, the chunkloader is automatically enabled during boot so usually this isn't necessary.
+    if not (component.chunkloader.isActive() or component.chunkloader.setActive(true)) then
+      io.stderr:write("tquarry: chunkloader failed to acquire chunk loading ticket\n")
+      return 2
+    end
+  end
+  if cfg.buildStaircase and (args[1] < 2 or args[2] < 2) then
+    io.stderr:write("tquarry: building a staircase requires at least 2 blocks space for width and height\n")
+    return 2
+  end
   
   local quarryClass
   if cfg.quarryType == "Basic" then

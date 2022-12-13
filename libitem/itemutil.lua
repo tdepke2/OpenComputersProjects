@@ -7,11 +7,8 @@
 
 local component = require("component")
 -- Check for optional dependencies component.robot and component.inventory_controller.
-local crobot, icontroller
-do
-  pcall(function() crobot = component.robot end)
-  pcall(function() icontroller = component.inventory_controller end)
-end
+local crobot = component.isAvailable("robot") and component.robot or nil
+local icontroller = component.isAvailable("inventory_controller") and component.inventory_controller or nil
 
 local itemutil = {}
 
