@@ -41,66 +41,6 @@ local miner = include("miner")
 local robnav = include("robnav")
 
 
-local cfgTypes = {
-  Integer = {
-    verify = function(v)
-      xassert(type(v) == "number" and math.floor(v) == v, "provided Integer must not be a fractional number.")
-    end
-  },
-  Sides = {
-    "bottom", "top", "back", "front", "right", "left"
-  },
-  QuarryType = {
-    "Basic", "Fast", "FillFloor", "FillWall"
-  },
-}
-local cfgFormat = {
-  miner = {
-    maxForceAttempts = {"Integer", 50, "Maximum number of attempts for the robot to clear an obstacle until it considers it is stuck. Having a limit is important so that the robot does not continue to whittle down the equipped tool's health while whacking a mob with a massive health pool."},
-    toolHealthReturn = {"Integer", 5, "The tool health (number of uses remaining) threshold for triggering the robot to return to restock point. The return threshold is only considered if the robot is out of spare tools."},
-    toolHealthMin = {"Integer", 2, "The tool minimum health. Zero means only one use remains until the tool breaks (which is useful for keeping that precious unbreaking/efficiency/mending diamond pickaxe for repairs later). If set to negative one, tools will be used up completely."},
-    toolHealthBias = {"Integer", 5, "Bias added when robot is selecting new tools during resupply (prevents selecting poor quality tools)."},
-    energyLevelMin = {"Integer", 1000, "Minimum threshold on energy level before robot needs to resupply."},
-    emptySlotsMin = {"Integer", 1, "Minimum number of empty slots before robot needs to resupply. Setting this to zero can allow all inventory slots to fill completely, but some items that fail to stack with others in inventory will get lost."},
-    stockLevelsItems = {
-      _comment_ = "Item name patterns (supports Lua string patterns, see https://www.lua.org/manual/5.3/manual.html#6.4.1) for each type of item the robot keeps stocked. These can be exact items too, like \"minecraft:stone/5\" for andesite.",
-      buildBlock = {
-        _ipairs_ = {"string",
-          ".*stone/.*",
-          ".*dirt/.*",
-        },
-      },
-      stairBlock = {
-        _ipairs_ = {"string",
-          ".*stairs/.*",
-        },
-      },
-      mining = {
-        _ipairs_ = {"string",
-          ".*pickaxe.*",
-        },
-      },
-    },
-    stockLevelsMin = {
-      _comment_ = "Minimum number of slots the robot must fill for each stock type during resupply. Zeros are only allowed for consumable stock types that the robot does not use for construction (like fuel and tools).",
-      buildBlock = {"Integer", 1},
-      stairBlock = {"Integer", 1},
-      mining = {"Integer", 0},
-    },
-    stockLevelsMax = {
-      _comment_ = "Maximum number of slots the robot will fill for each stock type during resupply. Can be less than the minimum level, and a value of zero will skip stocking items of that type.",
-      buildBlock = {"Integer", 3},
-      stairBlock = {"Integer", 0},
-      mining = {"Integer", 2},
-    },
-  },
-  inventoryInput = {"Sides", "right", "The side of the robot where items will be taken from (an inventory like a chest is expected to be here). This is from the robot's perspective when at the restock point. Valid sides are: \"bottom\", \"top\", \"back\", \"front\", \"right\", \"left\"."},
-  inventoryOutput = {"Sides", "right", "Similar to inventoryInput, but for the inventory robot will dump items to."},
-  quarryType = {"QuarryType", "Basic", "Controls mining and building patterns for the quarry, options are: \"Basic\" simply mines out the rectangular area, \"Fast\" mines three layers at a time but may not remove all liquids, \"FillFloor\" ensures a solid floor below each working layer (for when a flight upgrade is not in use), \"FillWall\" ensures a solid wall at the borders of the rectangular area (prevents liquids from spilling into quarry)."},
-  buildStaircase = {"boolean", false, "When set to true, the robot will build a staircase once the quarry is finished (stairs go clockwise around edges of quarry to the top and end at the restock point). This adjusts miner.stockLevelsMax.stairBlock to stock stairs if needed."},
-}
-
-
 -- Quarry class definition.
 ---@class Quarry
 local Quarry = {}
@@ -111,6 +51,81 @@ setmetatable(Quarry, {
     error("attempt to read undefined member " .. tostring(k) .. " in Quarry class.", 2)
   end
 })
+
+
+-- Create tables to describe the configuration format. This is used in
+-- conjunction with the config module to save/load/verify the configuration.
+-- 
+---@return table cfgTypes
+---@return table cfgFormat
+---@nodiscard
+function Quarry.makeConfigTemplate()
+  local cfgTypes, minerCfgFormat = miner.makeConfigTemplate()
+  cfgTypes.Sides = {
+    "bottom", "top", "back", "front", "right", "left"
+  }
+  cfgTypes.QuarryType = {
+    "Basic", "Fast", "FillFloor", "FillWall"
+  }
+  
+  -- Configure new stock types we add in addition to the mining type.
+  minerCfgFormat._order_ = 1
+  minerCfgFormat.stockLevelsItems.buildBlock = {
+    _order_ = 1,
+    _ipairs_ = {"string",
+      ".*stone/.*",
+      ".*dirt/.*",
+    },
+  }
+  minerCfgFormat.stockLevelsItems.stairBlock = {
+    _order_ = 2,
+    _ipairs_ = {"string",
+      ".*stairs/.*",
+    },
+  }
+  minerCfgFormat.stockLevelsItems.mining._order_ = 3
+  
+  minerCfgFormat.stockLevelsMin.buildBlock = {_order_ = 1, "Integer", 1}
+  minerCfgFormat.stockLevelsMin.stairBlock = {_order_ = 2, "Integer", 1}
+  minerCfgFormat.stockLevelsMin.mining._order_ = 3
+  
+  minerCfgFormat.stockLevelsMax.buildBlock = {_order_ = 1, "Integer", 3}
+  minerCfgFormat.stockLevelsMax.stairBlock = {_order_ = 2, "Integer", 0}
+  minerCfgFormat.stockLevelsMax.mining._order_ = 3
+  
+  local cfgFormat = {
+    miner = minerCfgFormat,
+    inventoryInput = {_order_ = 2, "Sides", "right", [[
+
+The side of the robot where items will be taken from (an inventory like a
+chest is expected to be here). This is from the robot's perspective when at
+the restock point. Valid sides are: "bottom", "top", "back", "front",
+"right", and "left".]],
+    },
+    inventoryOutput = {_order_ = 3, "Sides", "right", [[
+
+Similar to inventoryInput, but for the inventory robot will dump items to.]]
+    },
+    quarryType = {_order_ = 4, "QuarryType", "Basic", [[
+
+Controls mining and building patterns for the quarry, options are: "Basic"
+simply mines out the rectangular area, "Fast" mines three layers at a time
+but may not remove all liquids, "FillFloor" ensures a solid floor below each
+working layer (for when a flight upgrade is not in use), "FillWall" ensures a
+solid wall at the borders of the rectangular area (prevents liquids from
+spilling into quarry).]]
+    },
+    buildStaircase = {_order_ = 5, "boolean", false, [[
+
+When set to true, the robot will build a staircase once the quarry is
+finished (stairs go clockwise around edges of quarry to the top and end at
+the restock point). This adjusts miner.stockLevelsMax.stairBlock to stock
+stairs if needed.]]
+    },
+  }
+  
+  return cfgTypes, cfgFormat
+end
 
 
 -- Construct a new Quarry object with the given length, width, and height mining
@@ -140,23 +155,10 @@ function Quarry:new(length, width, height, cfg)
   
   self.miner = miner:new(
     enum {"buildBlock", "stairBlock", "mining"},
-    {{3, ".*stone/.*"}, {0, ".*stairs/.*"}, {2, ".*pickaxe.*"}},
-    {1, 1, 0}
+    cfg.miner
   )
   
-  --[[self.stockLevels = {
-    {2, "minecraft:stone/0", "minecraft:cobblestone/0"},
-    {1, "minecraft:stone_stairs/0"}
-  }--]]
-  
   self.cfg = cfg
-  
-  self.miner.toolHealthReturn = 5
-  self.miner.toolHealthMin = 0
-  self.miner.toolHealthBias = 5
-  
-  self.miner.energyLevelMin = 1000
-  self.miner.emptySlotsMin = 1
   
   self.inventoryInput = sides[cfg.inventoryInput]
   self.inventoryOutput = sides[cfg.inventoryOutput]
@@ -599,6 +601,7 @@ local function main(...)
   
   -- Load config file, or use default config if not found.
   local cfgPath = "/etc/tquarry.cfg"
+  local cfgTypes, cfgFormat = Quarry.makeConfigTemplate()
   local cfg, loadedDefaults = config.loadFile(cfgPath, cfgFormat, true)
   config.verify(cfg, cfgFormat, cfgTypes)
   if loadedDefaults then

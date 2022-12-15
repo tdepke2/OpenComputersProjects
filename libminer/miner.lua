@@ -9,6 +9,7 @@ local include = require("include")
 local dlog = include("dlog")
 dlog.mode("debug")
 dlog.osBlockNewGlobals(true)
+local config = include("config")
 local enum = include("enum")
 local itemutil = include("itemutil")
 local robnav = include("robnav")
@@ -45,6 +46,94 @@ setmetatable(Miner, {
 })
 
 
+-- Create tables to describe the configuration format for the Miner. This is
+-- used in conjunction with the config module to save/load/verify the
+-- configuration.
+-- 
+---@return table cfgTypes
+---@return table cfgFormat
+---@nodiscard
+function Miner.makeConfigTemplate()
+  local cfgTypes = {
+    Integer = {
+      verify = function(v)
+        xassert(type(v) == "number" and math.floor(v) == v, "provided Integer must not be a fractional number.")
+      end
+    },
+  }
+  local cfgFormat = {
+    maxForceAttempts = {_order_ = 1, "Integer", 50, [[
+
+Maximum number of attempts for the robot to clear an obstacle until it
+considers it is stuck. Having a limit is important so that the robot does not
+continue to whittle down the equipped tool's health while whacking a mob with
+a massive health pool.]]
+    },
+    toolHealthReturn = {_order_ = 2, "Integer", 5, [[
+
+The tool health (number of uses remaining) threshold for triggering the robot
+to return to restock point. The return threshold is only considered if the
+robot is out of spare tools.]]
+    },
+    toolHealthMin = {_order_ = 3, "Integer", 2, [[
+
+The tool minimum health. Zero means only one use remains until the tool
+breaks (which is good for keeping that precious unbreaking/efficiency/mending
+diamond pickaxe for repairs later). If set to negative one, tools will be
+used up completely.]]
+    },
+    toolHealthBias = {_order_ = 4, "Integer", 5, [[
+
+Bias added when robot is selecting new tools during resupply (prevents
+selecting poor quality tools).]]
+    },
+    energyLevelMin = {_order_ = 5, "Integer", 1000, [[
+
+Minimum threshold on energy level before robot needs to resupply.]]
+    },
+    emptySlotsMin = {_order_ = 6, "Integer", 1, [[
+
+Minimum number of empty slots before robot needs to resupply. Setting this to
+zero can allow all inventory slots to fill completely, but some items that
+fail to stack with others in inventory will get lost.]]
+    },
+    stockLevelsItems = {
+      _order_ = 7,
+      _comment_ = [[
+
+Item name patterns (supports Lua string patterns, see
+https://www.lua.org/manual/5.3/manual.html#6.4.1) for each type of item the
+robot keeps stocked. These can be exact items too, like "minecraft:stone/5"
+for andesite.]],
+      mining = {
+        _ipairs_ = {"string",
+          ".*pickaxe.*",
+        },
+      },
+    },
+    stockLevelsMin = {
+      _order_ = 8,
+      _comment_ = [[
+
+Minimum number of slots the robot must fill for each stock type during
+resupply. Zeros are only allowed for consumable stock types that the robot
+does not use for construction (like fuel and tools).]],
+      mining = {"Integer", 0},
+    },
+    stockLevelsMax = {
+      _order_ = 9,
+      _comment_ = [[
+
+Maximum number of slots the robot will fill for each stock type during
+resupply. Can be less than the minimum level, and a value of zero will skip
+stocking items of that type.]],
+      mining = {"Integer", 2},
+    },
+  }
+  return cfgTypes, cfgFormat
+end
+
+
 -- Creates a Miner instance. This provides safe wrappers for robot actions,
 -- inventory and tool management, and utilizes robnav for navigation. The miner
 -- is also able to cache the state it was in when a sudden resupply trip is
@@ -54,11 +143,10 @@ setmetatable(Miner, {
 -- will yield with a value from `self.ReturnReasons` if a resupply event occurs.
 -- 
 ---@param stockTypes Enum|nil
----@param stockLevels table[]|nil
----@param stockLevelsMinimum integer[]|nil
+---@param cfg table|nil
 ---@return Miner
 ---@nodiscard
-function Miner:new(stockTypes, stockLevels, stockLevelsMinimum)
+function Miner:new(stockTypes, cfg)
   self.__index = self
   self = setmetatable({}, self)
   
@@ -80,33 +168,26 @@ function Miner:new(stockTypes, stockLevels, stockLevelsMinimum)
   }
   xassert(self.StockTypes.mining, "provided stockTypes enum must define \"mining\".")
   
-  -- Maximum number of attempts for the Miner:force* functions. If one of these
-  -- functions goes over the limit, the operation throws to indicate that the
-  -- robot is stuck. Having a limit is important so that the robot does not
-  -- continue to whittle down the equipped tool's health while whacking a mob
-  -- with a massive health pool.
-  self.maxForceAttempts = 50
+  -- If config not provided, get the default values.
+  ---@cast cfg -nil
+  if not cfg then
+    local _, cfgFormat = Miner.makeConfigTemplate()
+    cfg = config.loadDefaults(cfgFormat)
+  end
   
-  -- The tool health (number of uses remaining) threshold for triggering the
-  -- robot to return to restock point, and minimum allowed health. The return
-  -- threshold is only considered if the robot is out of spare tools. Tools
-  -- generally wear down to the minimum level (or if -1, the tool is used
-  -- completely).
-  self.toolHealthReturn = 5
-  self.toolHealthMin = 0
-  -- Bias added to self.toolHealthReturn/Min when robot is selecting new tools
-  -- during resupply.
-  self.toolHealthBias = 5
+  -- The following values are pulled straight from the config, see `Miner.makeConfigTemplate()` for descriptions.
+  self.maxForceAttempts = cfg.maxForceAttempts
+  self.toolHealthReturn = cfg.toolHealthReturn
+  self.toolHealthMin = cfg.toolHealthMin
+  self.toolHealthBias = cfg.toolHealthBias
+  self.energyLevelMin = cfg.energyLevelMin
+  self.emptySlotsMin = cfg.emptySlotsMin
+  
   -- Similar to tool health, but calculated as a float value in range [0, 1] per
   -- tool.
   self.toolDurabilityReturn = 0.0
   self.toolDurabilityMin = 0.0
   self.lastToolDurability = -1.0
-  
-  -- Minimum threshold on energy level before robot needs to resupply.
-  self.energyLevelMin = 1000
-  -- Minimum number of empty slots before robot needs to resupply.
-  self.emptySlotsMin = 1
   
   -- Indicates if functions are running within a coroutine or not. The coroutine
   -- should be created and this value set by external code.
@@ -130,18 +211,26 @@ function Miner:new(stockTypes, stockLevels, stockLevelsMinimum)
   }
   ```
   ]]
-  self.stockLevels = stockLevels or {
-    {2, ".*pickaxe.*"}
-  }
+  self.stockLevels = {}
+  for i, v in ipairs(self.StockTypes) do
+    local stockEntry = {cfg.stockLevelsMax[v]}
+    for j, itemNamePattern in ipairs(cfg.stockLevelsItems[v]) do
+      stockEntry[j + 1] = itemNamePattern
+    end
+    self.stockLevels[i] = stockEntry
+  end
+  dlog.out("Miner:new", "self.stockLevels:", self.stockLevels)
   xassert(#self.stockLevels == #self.StockTypes, "length of stockLevels and StockTypes must match (", #self.StockTypes, " expected, got ", #self.stockLevels, ")")
   
   -- For each of the StockTypes, defines the minimum number of slots that must
   -- contain items for that type before the robot can finish resupply. Note that
   -- zeros are only allowed for temporary stock types that the robot does not
   -- use for construction (like fuel and tools).
-  self.stockLevelsMinimum = stockLevelsMinimum or {
-    0
-  }
+  self.stockLevelsMinimum = {}
+  for i, v in ipairs(self.StockTypes) do
+    self.stockLevelsMinimum[i] = cfg.stockLevelsMin[v]
+  end
+  dlog.out("Miner:new", "self.stockLevelsMinimum:", self.stockLevelsMinimum)
   xassert(#self.stockLevelsMinimum == #self.StockTypes, "length of stockLevelsMinimum and StockTypes must match (", #self.StockTypes, " expected, got ", #self.stockLevelsMinimum, ")")
   
   self.currentStockSlots = setmetatable({}, {
