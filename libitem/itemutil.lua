@@ -33,17 +33,16 @@ end
 -- FIXME getItemFullName() used elsewhere should be replaced with this one ##########################################
 -- FIXME these are the real iterators that should be used in storage.lua and related! still need to check if skipping empty is valid in the use cases there, and also the item/slot are swapped around. ####################################################################################################
 
--- Iterator wrapper for the itemIter returned from icontroller.getAllStacks().
+-- Iterator wrapper for the itemIter returned from `icontroller.getAllStacks()`.
 -- Returns the current slot number and item with each call, skipping over empty
 -- slots.
 -- 
----@param itemIter fun(): Item
+---@param itemIter fun():Item
+---@return fun(itemIter: function, slot: integer):integer, Item
+---@return fun():Item
+---@return integer
 ---@nodiscard
 function itemutil.invIterator(itemIter)
-  ---@param itemIter fun(): Item
-  ---@param slot integer
-  ---@return integer|nil slot
-  ---@return Item|nil item
   local function iter(itemIter, slot)
     slot = slot + 1
     local item = itemIter()
@@ -63,13 +62,12 @@ end
 -- Iterator wrapper similar to invIterator(), but does not skip empty slots.
 -- Returns the current slot number and item with each call.
 -- 
----@param itemIter fun(): Item
+---@param itemIter fun():Item
+---@return fun(itemIter: function, slot: integer):integer, Item
+---@return fun():Item
+---@return integer
 ---@nodiscard
 function itemutil.invIteratorNoSkip(itemIter)
-  ---@param itemIter fun(): Item
-  ---@param slot integer
-  ---@return integer|nil slot
-  ---@return Item|nil item
   local function iter(itemIter, slot)
     slot = slot + 1
     local item = itemIter()
@@ -88,12 +86,11 @@ end
 -- with each call, skipping over empty slots.
 -- 
 ---@param invSize number
+---@return fun(invSize: number, slot: integer):integer, Item
+---@return number
+---@return integer
 ---@nodiscard
 function itemutil.internalInvIterator(invSize)
-  ---@param invSize number
-  ---@param slot integer
-  ---@return integer|nil slot
-  ---@return Item|nil item
   local function iter(invSize, slot)
     local item
     while slot < invSize do
