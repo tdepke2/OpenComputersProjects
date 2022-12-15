@@ -84,8 +84,8 @@ used up completely.]]
     },
     toolHealthBias = {_order_ = 4, "Integer", 5, [[
 
-Bias added when robot is selecting new tools during resupply (prevents
-selecting poor quality tools).]]
+Bias added to the health return/min values when robot is selecting new tools
+during resupply (prevents selecting poor quality tools).]]
     },
     energyLevelMin = {_order_ = 5, "Integer", 1000, [[
 
@@ -335,8 +335,9 @@ end
 ---@param toolItem Item
 local function computeDurabilityThresholds(self, toolItem)
   if toolItem.maxDamage > 0 then
-    self.toolDurabilityReturn = self.toolHealthReturn / toolItem.maxDamage
-    self.toolDurabilityMin = self.toolHealthMin / toolItem.maxDamage
+    -- A small bias of half a health unit is added to deal with rounding errors.
+    self.toolDurabilityReturn = (self.toolHealthReturn + 0.5) / toolItem.maxDamage
+    self.toolDurabilityMin = (self.toolHealthMin + 0.5) / toolItem.maxDamage
     self.lastToolDurability = (toolItem.maxDamage - toolItem.damage) / toolItem.maxDamage
   else
     self.toolDurabilityReturn = 0.0

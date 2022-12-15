@@ -1,13 +1,16 @@
 --[[
 todo:
-  * convert the coroutine checks to a function? maybe nah
-  * move iterators and item rearrange logic into separate module.
-  * need to build staircase and walls if enabled.
-  * load data from config file (and generate one if not found).
   * support for generators?
   * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
   * dynamically compute energyLevelMin?
   * show robot status with setLightColor().
+  * we could get a bit more speed by suppressing some of the durability checks done in Miner:forceSwing(). for example, if lastToolDurability > toolDurabilityReturn * 2.0 then count every toolHealthReturn ticks before sampling the durability.
+
+done:
+  * convert the coroutine checks to a function? maybe nah
+  * move iterators and item rearrange logic into separate module.
+  * need to build staircase and walls if enabled.
+  * load data from config file (and generate one if not found).
 
 to test:
   * 
