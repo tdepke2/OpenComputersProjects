@@ -403,7 +403,7 @@ end
 ---@param direction Sides
 ---@param side Sides|nil
 ---@param sneaky boolean|nil
-function Miner:forceMine(direction, side, sneaky)
+function Miner:forceDig(direction, side, sneaky)
   local preSwingTime = computer.uptime()
   local _, msg = self:forceSwing(direction, side, sneaky)
   if msg == "entity" then

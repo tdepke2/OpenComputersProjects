@@ -413,23 +413,23 @@ end
 local BasicQuarry = Quarry:new()
 function BasicQuarry:layerMine()
   if (robnav.z ~= self.zMax or self.zDir ~= 1) and (robnav.z ~= 0 or self.zDir ~= -1) then
-    self.miner:forceMine(sides.front)
+    self.miner:forceDig(sides.front)
   end
 end
 function BasicQuarry:layerTurn(turnDir)
   self.miner:forceTurn(turnDir)
-  self.miner:forceMine(sides.front)
+  self.miner:forceDig(sides.front)
   self.miner:forceMove(sides.front)
   self.miner:forceTurn(turnDir)
 end
 function BasicQuarry:layerDown()
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
   self.miner:forceTurn(true)
   self.miner:forceTurn(true)
 end
 function BasicQuarry:quarryStart()
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
 end
 
@@ -437,29 +437,29 @@ end
 -- Fast quarry mines three layers at a time, may not clear all liquids.
 local FastQuarry = Quarry:new()
 function FastQuarry:layerMine()
-  self.miner:forceMine(sides.top)
+  self.miner:forceDig(sides.top)
   if (robnav.z ~= self.zMax or self.zDir ~= 1) and (robnav.z ~= 0 or self.zDir ~= -1) then
-    self.miner:forceMine(sides.front)
+    self.miner:forceDig(sides.front)
   end
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
 end
 function FastQuarry:layerTurn(turnDir)
   self.miner:forceTurn(turnDir)
-  self.miner:forceMine(sides.front)
+  self.miner:forceDig(sides.front)
   self.miner:forceMove(sides.front)
   self.miner:forceTurn(turnDir)
 end
 function FastQuarry:layerDown()
   self.miner:forceMove(sides.bottom)
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
   self.miner:forceTurn(true)
   self.miner:forceTurn(true)
 end
 function FastQuarry:quarryStart()
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
   if robnav.y <= self.yMin + 1 then
     FastQuarry.layerMine = BasicQuarry.layerMine
@@ -467,7 +467,7 @@ function FastQuarry:quarryStart()
     FastQuarry.layerDown = BasicQuarry.layerDown
     FastQuarry.quarryMain = Quarry.quarryMain
   else
-    self.miner:forceMine(sides.bottom)
+    self.miner:forceDig(sides.bottom)
     self.miner:forceMove(sides.bottom)
   end
 end
@@ -510,24 +510,24 @@ function FillFloorQuarry:layerMine()
     self.miner:forcePlace(sides.bottom)
   end
   if (robnav.z ~= self.zMax or self.zDir ~= 1) and (robnav.z ~= 0 or self.zDir ~= -1) then
-    self.miner:forceMine(sides.front)
+    self.miner:forceDig(sides.front)
   end
 end
 function FillFloorQuarry:layerTurn(turnDir)
   self.miner:forceTurn(turnDir)
-  self.miner:forceMine(sides.front)
+  self.miner:forceDig(sides.front)
   self.miner:forceMove(sides.front)
   self.miner:forceTurn(turnDir)
 end
 function FillFloorQuarry:layerDown()
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
   self.miner:forceTurn(true)
   self.miner:forceTurn(true)
 end
 function FillFloorQuarry:quarryStart()
   self.miner:selectStockType(self.miner.StockTypes.buildBlock)
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
 end
 
@@ -551,12 +551,12 @@ function FillWallQuarry:layerMine()
       self.miner:forcePlace(sides.front)
     end
   else
-    self.miner:forceMine(sides.front)
+    self.miner:forceDig(sides.front)
   end
 end
 function FillWallQuarry:layerTurn(turnDir)
   self.miner:forceTurn(turnDir)
-  self.miner:forceMine(sides.front)
+  self.miner:forceDig(sides.front)
   self.miner:forceMove(sides.front)
   self.miner:forceTurn(not turnDir)
   if select(2, crobot.detect(sides.front)) ~= "solid" then
@@ -566,7 +566,7 @@ function FillWallQuarry:layerTurn(turnDir)
   self.miner:forceTurn(turnDir)
 end
 function FillWallQuarry:layerDown()
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
   if select(2, crobot.detect(sides.front)) ~= "solid" then
     self.miner:forcePlace(sides.front)
@@ -576,7 +576,7 @@ function FillWallQuarry:layerDown()
 end
 function FillWallQuarry:quarryStart()
   self.miner:selectStockType(self.miner.StockTypes.buildBlock)
-  self.miner:forceMine(sides.bottom)
+  self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
   self.miner:forceTurn(true)
   self.miner:forceTurn(true)
