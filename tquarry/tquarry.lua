@@ -131,17 +131,17 @@ stairs if needed.]]
 end
 
 
--- Construct a new Quarry object with the given length, width, and height mining
+-- Construct a new Quarry object with the given length, width, and depth mining
 -- dimensions. These correspond to the positive-x, positive-z, and negative-y
 -- dimensions with the robot facing in the positive-z direction.
 -- 
 ---@param length integer|nil
 ---@param width integer|nil
----@param height integer|nil
+---@param depth integer|nil
 ---@param cfg table|nil
 ---@return Quarry
 ---@nodiscard
-function Quarry:new(length, width, height, cfg)
+function Quarry:new(length, width, depth, cfg)
   self.__index = self
   self = setmetatable({}, self)
   
@@ -152,7 +152,7 @@ function Quarry:new(length, width, height, cfg)
   
   length = length or 1
   width = width or 1
-  height = height or 1
+  depth = depth or 1
   
   robnav.setCoords(0, 0, 0, sides.front)
   
@@ -170,7 +170,7 @@ function Quarry:new(length, width, height, cfg)
   self.zDir = 1
   
   self.xMax = length - 1
-  self.yMin = -height
+  self.yMin = -depth
   self.zMax = width - 1
   
   return self
@@ -624,7 +624,7 @@ function MoveTestQuarry:quarryMain()
 end
 
 
-local USAGE_STRING = [[Usage: tquarry [OPTION]... LENGTH WIDTH HEIGHT
+local USAGE_STRING = [[Usage: tquarry [OPTION]... LENGTH WIDTH DEPTH
 
 Options:
   -h, --help        display help message and exit
@@ -686,7 +686,7 @@ local function main(...)
     end
   end
   if cfg.buildStaircase and (args[1] < 2 or args[2] < 2) then
-    io.stderr:write("tquarry: building a staircase requires at least 2 blocks space for width and height\n")
+    io.stderr:write("tquarry: building a staircase requires at least 2 blocks space for length and width\n")
     return 2
   end
   
