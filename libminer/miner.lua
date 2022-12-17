@@ -7,8 +7,6 @@ local sides = require("sides")
 
 local include = require("include")
 local dlog = include("dlog")
-dlog.mode("debug")
-dlog.osBlockNewGlobals(true)
 local config = include("config")
 local enum = include("enum")
 local itemutil = include("itemutil")
@@ -87,9 +85,17 @@ used up completely.]]
 Bias added to the health return/min values when robot is selecting new tools
 during resupply (prevents selecting poor quality tools).]]
     },
-    energyLevelMin = {_order_ = 5, "Integer", 1000, [[
+    energyPerBlock = {_order_ = 5, "number", 26, [[
 
-Minimum threshold on energy level before robot needs to resupply.]]
+Estimate of the energy units consumed for the robot to move one block. This
+is used to call the robot back to the resupply point if the energy required
+to get back there is almost more than what the robot has available.
+
+Assuming: basic screen and fully lit (1 energy/s), chunkloader active
+(1.2 energy/s), runtime cost (0.5 energy/s), a little extra (0.5 energy/s),
+robot uses 15 energy to move, and robot pauses 0.4s each movement.
+Therefore, N blocks requires N * 15 energy/block + N * 0.4 s/block * 3.2
+energy/s or 16.28 energy/block, which we arbitrarily round to 26 for safety.]]
     },
     emptySlotsMin = {_order_ = 6, "Integer", 1, [[
 
@@ -174,13 +180,14 @@ function Miner:new(stockTypes, cfg)
     local _, cfgFormat = Miner.makeConfigTemplate()
     cfg = config.loadDefaults(cfgFormat)
   end
+  self.cfg = cfg
   
   -- The following values are pulled straight from the config, see `Miner.makeConfigTemplate()` for descriptions.
   self.maxForceAttempts = cfg.maxForceAttempts
   self.toolHealthReturn = cfg.toolHealthReturn
   self.toolHealthMin = cfg.toolHealthMin
   self.toolHealthBias = cfg.toolHealthBias
-  self.energyLevelMin = cfg.energyLevelMin
+  self.energyLevelReturn = cfg.energyPerBlock
   self.emptySlotsMin = cfg.emptySlotsMin
   
   -- Similar to tool health, but calculated as a float value in range [0, 1] per
@@ -284,21 +291,37 @@ function Miner:stockSlotDepleted()
 end
 
 
+-- Get robnav coordinates of the restock point. This is assumed to be at zero
+-- all the time, override this function if that's not the case.
+-- 
+---@return integer x
+---@return integer y
+---@return integer z
+---@return Sides r
+---@nodiscard
+function Miner:getRestockCoords()
+  return 0, 0, 0, sides.front
+end
+
+
 -- Wrapper for robnav.move(), throws an exception on failure. Tries to clear
 -- obstacles in the way (entities or blocks) until the movement succeeds or a
 -- limit is reached.
 -- 
 ---@param direction Sides
 function Miner:forceMove(direction)
-  if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+  if self.withinMainCoroutine and computer.energy() <= self.energyLevelReturn then
     coroutine.yield(self.ReturnReasons.energyLow)
   end
   local result, err = robnav.move(direction)
+  -- Assuming we moved, recompute the energyLevelReturn based on the Manhattan distance to the restock point and cfg.energyPerBlock.
+  local xOrigin, yOrigin, zOrigin = self:getRestockCoords()
+  self.energyLevelReturn = self.cfg.energyPerBlock * (math.abs(robnav.x - xOrigin) + math.abs(robnav.y - yOrigin) + math.abs(robnav.z - zOrigin))
   if not result then
     for i = 1, self.maxForceAttempts do
       if err == "entity" or err == "solid" or err == "replaceable" or err == "passable" then
         self:forceSwing(direction)
-      elseif self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+      elseif self.withinMainCoroutine and computer.energy() <= self.energyLevelReturn then
         coroutine.yield(self.ReturnReasons.energyLow)
       end
       result, err = robnav.move(direction)
@@ -321,7 +344,7 @@ end
 -- 
 ---@param clockwise boolean
 function Miner:forceTurn(clockwise)
-  if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+  if self.withinMainCoroutine and computer.energy() <= self.energyLevelReturn then
     coroutine.yield(self.ReturnReasons.energyLow)
   end
   local result, err = robnav.turn(clockwise)
@@ -386,7 +409,7 @@ function Miner:forceSwing(direction, side, sneaky)
   end
   
   if self.withinMainCoroutine then
-    if computer.energy() <= self.energyLevelMin then
+    if computer.energy() <= self.energyLevelReturn then
       coroutine.yield(self.ReturnReasons.energyLow)
     elseif (self.emptySlotsMin > 0 and crobot.count(self.internalInventorySize - self.emptySlotsMin + 1) > 0) or crobot.space(self.internalInventorySize - self.emptySlotsMin) == 0 then
       coroutine.yield(self.ReturnReasons.inventoryFull)
@@ -429,7 +452,7 @@ end
 ---@param side Sides|nil
 ---@param sneaky boolean|nil
 function Miner:forcePlace(direction, side, sneaky)
-  if self.withinMainCoroutine and computer.energy() <= self.energyLevelMin then
+  if self.withinMainCoroutine and computer.energy() <= self.energyLevelReturn then
     coroutine.yield(self.ReturnReasons.energyLow)
   end
   local result, err = crobot.place(direction, side, sneaky)

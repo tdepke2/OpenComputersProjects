@@ -9,7 +9,7 @@
   
   Before running this program, a robot is needed with these components (use an Electronics Assembler to build the robot):
   
-  * Computer Case (at least tier 1)
+  * Computer Case (at least tier 1, recommended higher tier if possible)
   
   * Central Processing Unit (at least tier 1, recommended architecture is Lua 5.3)
   
@@ -31,7 +31,7 @@
   
   Optional components:
   
-  * Hover Upgrade (at least tier 1, recommended if the robot could be digging near large caves)
+  * Hover Upgrade (at least tier 1, highly recommended in general and necessary if the robot could be digging near large caves)
   
   * Angel Upgrade (highly recommended if the robot needs to place any blocks, such as with the `FillFloor` and `FillWall` quarry types or when staircase building is enabled)
   

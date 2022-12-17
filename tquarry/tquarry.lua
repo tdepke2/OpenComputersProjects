@@ -2,7 +2,6 @@
 todo:
   * support for generators?
   * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
-  * dynamically compute energyLevelMin?
   * show robot status with setLightColor().
   * we could get a bit more speed by suppressing some of the durability checks done in Miner:forceSwing(). for example, if lastToolDurability > toolDurabilityReturn * 2.0 then count every toolHealthReturn ticks before sampling the durability.
 
@@ -11,6 +10,7 @@ done:
   * move iterators and item rearrange logic into separate module.
   * need to build staircase and walls if enabled.
   * load data from config file (and generate one if not found).
+  * dynamically compute energyLevelMin?
 
 to test:
   * 
@@ -68,7 +68,7 @@ function Quarry.makeConfigTemplate()
     "bottom", "top", "back", "front", "right", "left"
   }
   cfgTypes.QuarryType = {
-    "Basic", "Fast", "FillFloor", "FillWall"
+    "Basic", "Fast", "FillFloor", "FillWall", "MoveTest"
   }
   
   -- Configure new stock types we add in addition to the mining type.
@@ -176,22 +176,35 @@ function Quarry:new(length, width, height, cfg)
   return self
 end
 
+-- Mines a block in the layer. This can mine more blocks, but shouldn't move the
+-- robot.
 function Quarry:layerMine()
   xassert(false, "Abstract method Quarry:layerMine() not implemented.")
 end
 
+-- Turns the robot around (usually 180 degrees) to start on the next row in the
+-- layer. The convention is to make a clockwise turn when turnDir is true.
+-- 
+---@param turnDir boolean
 function Quarry:layerTurn(turnDir)
   xassert(false, "Abstract method Quarry:layerTurn() not implemented.")
 end
 
+-- Moves the robot down to start on the first row in the next layer.
 function Quarry:layerDown()
   xassert(false, "Abstract method Quarry:layerDown() not implemented.")
 end
 
+-- Puts the robot in position for the first row on the first layer. This is a
+-- no-op by default.
 function Quarry:quarryStart()
   
 end
 
+-- Called after quarryStart() to mine the full area, layer by layer.
+-- Implementations are free to change this to whatever. By default this will
+-- move the robot in a zig-zag pattern, going left-to-right on one layer
+-- followed by right-to-left on the next.
 function Quarry:quarryMain()
   while true do
     self:layerMine()
@@ -213,6 +226,8 @@ function Quarry:quarryMain()
   end
 end
 
+-- Applies any finishing actions the robot should take at the end. This is a
+-- no-op by default.
 function Quarry:quarryEnd()
   
 end
@@ -588,6 +603,27 @@ function FillWallQuarry:quarryStart()
 end
 
 
+-- Move test just moves straight to the end corner of the rectangular area. It's
+-- useful for testing safe energy-level thresholds, chunkloading, generator
+-- performance, etc.
+local MoveTestQuarry = Quarry:new()
+function MoveTestQuarry:quarryStart()
+  self.miner:forceMove(sides.bottom)
+end
+function MoveTestQuarry:quarryMain()
+  while robnav.z < self.zMax do
+    self.miner:forceMove(sides.front)
+  end
+  self.miner:forceTurn(false)
+  while robnav.x < self.xMax do
+    self.miner:forceMove(sides.front)
+  end
+  while robnav.y > self.yMin do
+    self.miner:forceMove(sides.bottom)
+  end
+end
+
+
 local USAGE_STRING = [[Usage: tquarry [OPTION]... LENGTH WIDTH HEIGHT
 
 Options:
@@ -663,6 +699,8 @@ local function main(...)
     quarryClass = FillFloorQuarry
   elseif cfg.quarryType == "FillWall" then
     quarryClass = FillWallQuarry
+  elseif cfg.quarryType == "MoveTest" then
+    quarryClass = MoveTestQuarry
   end
   
   io.write("Starting quarry!\n")
