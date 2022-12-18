@@ -4,6 +4,7 @@ todo:
   * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
   * show robot status with setLightColor().
   * we could get a bit more speed by suppressing some of the durability checks done in Miner:forceSwing(). for example, if lastToolDurability > toolDurabilityReturn * 2.0 then count every toolHealthReturn ticks before sampling the durability.
+  * do not stock building blocks if we are not building anything
 
 done:
   * convert the coroutine checks to a function? maybe nah
@@ -71,7 +72,7 @@ function Quarry.makeConfigTemplate()
     "Basic", "Fast", "FillFloor", "FillWall", "MoveTest"
   }
   
-  -- Configure new stock types we add in addition to the mining type.
+  -- Configure new stock types we add in addition to the mining and fuel types.
   minerCfgFormat._order_ = 1
   minerCfgFormat.stockLevelsItems.buildBlock = {
     _order_ = 1,
@@ -87,14 +88,17 @@ function Quarry.makeConfigTemplate()
     },
   }
   minerCfgFormat.stockLevelsItems.mining._order_ = 3
+  minerCfgFormat.stockLevelsItems.fuel._order_ = 4
   
   minerCfgFormat.stockLevelsMin.buildBlock = {_order_ = 1, "Integer", 1}
   minerCfgFormat.stockLevelsMin.stairBlock = {_order_ = 2, "Integer", 1}
   minerCfgFormat.stockLevelsMin.mining._order_ = 3
+  minerCfgFormat.stockLevelsMin.fuel._order_ = 4
   
   minerCfgFormat.stockLevelsMax.buildBlock = {_order_ = 1, "Integer", 3}
   minerCfgFormat.stockLevelsMax.stairBlock = {_order_ = 2, "Integer", 0}
   minerCfgFormat.stockLevelsMax.mining._order_ = 3
+  minerCfgFormat.stockLevelsMax.fuel._order_ = 4
   
   local cfgFormat = {
     miner = minerCfgFormat,
@@ -157,7 +161,7 @@ function Quarry:new(length, width, depth, cfg)
   robnav.setCoords(0, 0, 0, sides.front)
   
   self.miner = miner:new(
-    enum {"buildBlock", "stairBlock", "mining"},
+    enum {"buildBlock", "stairBlock", "mining", "fuel"},
     cfg.miner
   )
   

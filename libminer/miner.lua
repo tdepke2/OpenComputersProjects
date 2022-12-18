@@ -65,25 +65,25 @@ function Miner.makeConfigTemplate()
 Maximum number of attempts for the robot to clear an obstacle until it
 considers it is stuck. Having a limit is important so that the robot does not
 continue to whittle down the equipped tool's health while whacking a mob with
-a massive health pool.]]
+a massive health pool.]],
     },
     toolHealthReturn = {_order_ = 2, "Integer", 5, [[
 
 The tool health (number of uses remaining) threshold for triggering the robot
 to return to restock point. The return threshold is only considered if the
-robot is out of spare tools.]]
+robot is out of spare tools.]],
     },
     toolHealthMin = {_order_ = 3, "Integer", 2, [[
 
 The tool minimum health. Zero means only one use remains until the tool
 breaks (which is good for keeping that precious unbreaking/efficiency/mending
 diamond pickaxe for repairs later). If set to negative one, tools will be
-used up completely.]]
+used up completely.]],
     },
     toolHealthBias = {_order_ = 4, "Integer", 5, [[
 
 Bias added to the health return/min values when robot is selecting new tools
-during resupply (prevents selecting poor quality tools).]]
+during resupply (prevents selecting poor quality tools).]],
     },
     energyPerBlock = {_order_ = 5, "number", 26, [[
 
@@ -95,16 +95,40 @@ Assuming: basic screen and fully lit (1 energy/s), chunkloader active
 (1.2 energy/s), runtime cost (0.5 energy/s), a little extra (0.5 energy/s),
 robot uses 15 energy to move, and robot pauses 0.4s each movement.
 Therefore, N blocks requires N * 15 energy/block + N * 0.4 s/block * 3.2
-energy/s or 16.28 energy/block, which we arbitrarily round to 26 for safety.]]
+energy/s or 16.28 energy/block, which we arbitrarily round to 26 for safety.]],
     },
     emptySlotsMin = {_order_ = 6, "Integer", 1, [[
 
 Minimum number of empty slots before robot needs to resupply. Setting this to
 zero can allow all inventory slots to fill completely, but some items that
-fail to stack with others in inventory will get lost.]]
+fail to stack with others in inventory will get lost.]],
+    },
+    generator = {
+      _order_ = 7,
+      _comment_ = [[
+
+Settings for generator upgrade. These only apply if one or more generators
+are installed in the robot.]],
+      enableLevel = {_order_ = 1, "string|number", "80%", [[
+
+Energy level for generators to kick in. This can be a number that specifies
+the exact energy amount, or a string value with percent sign for a percentage
+level.]],
+      },
+      batchSize = {_order_ = 2, "Integer", 2, [[
+
+Number of items to insert into each generator at once. Set this higher if
+using fuel with a low burn time.]],
+      },
+      batchInterval = {_order_ = 3, "Integer", 1600, [[
+
+Number of ticks to wait in-between each batch before checking if the next one
+can be sent. The generator functions just like a furnace burning fuel, so we
+use the burn time of coal here.]],
+      },
     },
     stockLevelsItems = {
-      _order_ = 7,
+      _order_ = 8,
       _comment_ = [[
 
 Item name patterns (supports Lua string patterns, see
@@ -116,24 +140,32 @@ for andesite.]],
           ".*pickaxe.*",
         },
       },
+      fuel = {
+        _ipairs_ = {"string",
+          "minecraft:coal/.*",
+          "minecraft:coal_block/0",
+        },
+      },
     },
     stockLevelsMin = {
-      _order_ = 8,
+      _order_ = 9,
       _comment_ = [[
 
 Minimum number of slots the robot must fill for each stock type during
 resupply. Zeros are only allowed for consumable stock types that the robot
 does not use for construction (like fuel and tools).]],
       mining = {"Integer", 0},
+      fuel = {"Integer", 0},
     },
     stockLevelsMax = {
-      _order_ = 9,
+      _order_ = 10,
       _comment_ = [[
 
 Maximum number of slots the robot will fill for each stock type during
 resupply. Can be less than the minimum level, and a value of zero will skip
 stocking items of that type.]],
       mining = {"Integer", 2},
+      fuel = {"Integer", 1},
     },
   }
   return cfgTypes, cfgFormat
@@ -170,9 +202,9 @@ function Miner:new(stockTypes, cfg)
   -- blocks, etc). All other items get dumped into the output inventory when
   -- robot returns home to resupply.
   self.StockTypes = stockTypes or enum {
-    "mining"
+    "mining", "fuel"
   }
-  xassert(self.StockTypes.mining, "provided stockTypes enum must define \"mining\".")
+  xassert(self.StockTypes.mining and self.StockTypes.fuel, "provided stockTypes enum must define \"mining\" and \"fuel\".")
   
   -- If config not provided, get the default values.
   ---@cast cfg -nil
@@ -189,6 +221,16 @@ function Miner:new(stockTypes, cfg)
   self.toolHealthBias = cfg.toolHealthBias
   self.energyLevelReturn = cfg.energyPerBlock
   self.emptySlotsMin = cfg.emptySlotsMin
+  self.generatorEnableLevel = cfg.generator.enableLevel
+  if type(self.generatorEnableLevel) == "string" then
+    if string.find(self.generatorEnableLevel, "%%") then
+      self.generatorEnableLevel = tonumber((string.gsub(self.generatorEnableLevel, "%%", ""))) * 0.01 * computer.maxEnergy()
+    else
+      self.generatorEnableLevel = tonumber(self.generatorEnableLevel)
+    end
+  end
+  self.generatorBatchSize = cfg.generator.batchSize
+  self.generatorBatchInterval = cfg.generator.batchInterval
   
   -- Similar to tool health, but calculated as a float value in range [0, 1] per
   -- tool.
@@ -196,11 +238,24 @@ function Miner:new(stockTypes, cfg)
   self.toolDurabilityMin = 0.0
   self.lastToolDurability = -1.0
   
+  -- Suppresses self:updateGenerators() calls based on self.generatorBatchInterval.
+  self.generatorBatchTimeout = 0
+  
   -- Indicates if functions are running within a coroutine or not. The coroutine
   -- should be created and this value set by external code.
   self.withinMainCoroutine = false
   
   self.internalInventorySize = crobot.inventorySize()
+  
+  -- Collect all of the generators if the hardware is available.
+  if component.isAvailable("generator") then
+    self.generators = {}
+    for address, _ in component.list("generator", true) do
+      self.generators[address] = component.proxy(address)
+    end
+  else
+    self.generators = false
+  end
   
   --[[
   For each of the StockTypes, defines how many slots in the robot inventory will
@@ -279,6 +334,9 @@ function Miner:selectStockType(stockType)
 end
 
 
+-- FIXME i feel like we need a better interface for this, maybe make an extra parameter to choose if the selection is required? add a function to check if stock items are available? ##########################################
+
+
 -- Marks a slot previously selected with Miner:selectStockType() as empty. This
 -- removes the slot from stock items tracking, and a new slot can be selected
 -- with Miner:selectStockType().
@@ -288,6 +346,47 @@ function Miner:stockSlotDepleted()
   xassert(self.selectedStockType > 0 and stockSlots[#stockSlots] == crobot.select())
   stockSlots[#stockSlots] = nil
   stockSlots.n = stockSlots.n - 1
+end
+
+
+-- Adds fuel to generators on the robot if generators and fuel are available,
+-- and the current energy level drops below a threshold. Fuel gets added in a
+-- batch because generators aren't very fast and we can't query how long the
+-- fuel will last. We can only check how many items are queued up to burn in the
+-- generator's inventory. The batch also helps ensure that each generator can
+-- run with 100% uptime without constantly trying to count or insert fuel (both
+-- are non-direct calls).
+function Miner:updateGenerators()
+  if not self.generators or not self.currentStockSlots[self.StockTypes.fuel][1] or computer.energy() > self.generatorEnableLevel or self.generatorBatchTimeout > computer.uptime() then
+    return
+  end
+  self.generatorBatchTimeout = computer.uptime() + self.generatorBatchInterval / 20.0
+  
+  self:selectStockType(self.StockTypes.fuel)
+  for _, generator in pairs(self.generators) do
+    local batchAmount = self.generatorBatchSize - math.floor(generator.count())
+    if batchAmount > 0 then
+      local status, err = generator.insert(batchAmount)
+      while not status do
+        if string.find(err, "slot is empty") or string.find(err, "slot does not contain fuel") then
+          self:stockSlotDepleted()
+          if self.currentStockSlots[self.StockTypes.fuel][1] then
+            self:selectStockType(self.StockTypes.fuel)
+          else
+            break
+          end
+        else
+          dlog.out("Miner:updateGenerators", "Unable to insert fuel: ", err)
+          break
+        end
+        status, err = generator.insert(batchAmount)
+      end
+      if not self.currentStockSlots[self.StockTypes.fuel][1] then
+        break
+      end
+    end
+    dlog.out("Miner:updateGenerators", "batchAmount = ", batchAmount)
+  end
 end
 
 
@@ -314,9 +413,12 @@ function Miner:forceMove(direction)
     coroutine.yield(self.ReturnReasons.energyLow)
   end
   local result, err = robnav.move(direction)
+  
   -- Assuming we moved, recompute the energyLevelReturn based on the Manhattan distance to the restock point and cfg.energyPerBlock.
   local xOrigin, yOrigin, zOrigin = self:getRestockCoords()
   self.energyLevelReturn = self.cfg.energyPerBlock * (math.abs(robnav.x - xOrigin) + math.abs(robnav.y - yOrigin) + math.abs(robnav.z - zOrigin))
+  self:updateGenerators()
+  
   if not result then
     for i = 1, self.maxForceAttempts do
       if err == "entity" or err == "solid" or err == "replaceable" or err == "passable" then
