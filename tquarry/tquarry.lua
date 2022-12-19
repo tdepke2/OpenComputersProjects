@@ -1,6 +1,5 @@
 --[[
 todo:
-  * support for generators?
   * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
   * show robot status with setLightColor().
   * we could get a bit more speed by suppressing some of the durability checks done in Miner:forceSwing(). for example, if lastToolDurability > toolDurabilityReturn * 2.0 then count every toolHealthReturn ticks before sampling the durability.
@@ -12,6 +11,7 @@ done:
   * need to build staircase and walls if enabled.
   * load data from config file (and generate one if not found).
   * dynamically compute energyLevelMin?
+  * support for generators?
 
 to test:
   * 
@@ -241,7 +241,7 @@ end
 -- (going clockwise if moving up). The stairs end at the top directly below the
 -- robot in the home position.
 function Quarry:buildStairs()
-  self.miner:selectStockType(self.miner.StockTypes.stairBlock)
+  self.miner:selectStockType(self.miner.StockTypes.stairBlock, true)
   
   -- Simulate starting the robot from the home position, then follow the path the stairs will take to reach the bottom.
   local position = {
@@ -545,7 +545,7 @@ function FillFloorQuarry:layerDown()
   self.miner:forceTurn(true)
 end
 function FillFloorQuarry:quarryStart()
-  self.miner:selectStockType(self.miner.StockTypes.buildBlock)
+  self.miner:selectStockType(self.miner.StockTypes.buildBlock, true)
   self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
 end
@@ -594,7 +594,7 @@ function FillWallQuarry:layerDown()
   self.miner:forceTurn(true)
 end
 function FillWallQuarry:quarryStart()
-  self.miner:selectStockType(self.miner.StockTypes.buildBlock)
+  self.miner:selectStockType(self.miner.StockTypes.buildBlock, true)
   self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
   self.miner:forceTurn(true)

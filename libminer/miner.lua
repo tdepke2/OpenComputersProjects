@@ -304,21 +304,34 @@ function Miner:new(stockTypes, cfg)
 end
 
 
--- Selects the next available slot (starting from the highest index) for one of
--- the StockTypes items. The special value zero just selects the first slot in
--- inventory. Returns true if slot was available and selected, and false
--- otherwise.
+-- Checks if items of the given StockTypes kind are currently available.
 -- 
 ---@param stockType integer
 ---@return boolean
-function Miner:selectStockType(stockType)
+function Miner:isStockTypeAvailable(stockType)
+  return self.currentStockSlots[stockType][1] ~= nil
+end
+
+
+-- Selects the next available slot (starting from the highest index) for one of
+-- the StockTypes items. The special value zero just selects the first slot in
+-- inventory. If required is true, this function will trigger a coroutine yield
+-- if stock is not available so that the robot can run a trip to resupply.
+-- Returns true if slot was available and selected, and false otherwise.
+-- 
+---@param stockType integer
+---@param required boolean|nil
+---@return boolean
+function Miner:selectStockType(stockType, required)
   if stockType == 0 then
     crobot.select(1)
     self.selectedStockType = 0
     return true
   end
-  if self.withinMainCoroutine and not self.currentStockSlots[stockType][1] then
+  -- Check if stock is empty and do coroutine yield here, because we better find that stock is available after resupply.
+  if required and self.withinMainCoroutine and not self.currentStockSlots[stockType][1] then
     coroutine.yield(self.ReturnReasons.blocksLow)
+    xassert(self.currentStockSlots[stockType][1], "unable to select stock type ", self.StockTypes[stockType], " after finishing resupply.")
   end
   local stockSlots = self.currentStockSlots[stockType]
   for i = #stockSlots, 1, -1 do
@@ -329,12 +342,11 @@ function Miner:selectStockType(stockType)
     end
     stockSlots[i] = nil
   end
-  self.selectedStockType = 0
+  if self.selectedStockType == stockType then
+    self.selectedStockType = 0
+  end
   return false
 end
-
-
--- FIXME i feel like we need a better interface for this, maybe make an extra parameter to choose if the selection is required? add a function to check if stock items are available? ##########################################
 
 
 -- Marks a slot previously selected with Miner:selectStockType() as empty. This
@@ -357,12 +369,13 @@ end
 -- run with 100% uptime without constantly trying to count or insert fuel (both
 -- are non-direct calls).
 function Miner:updateGenerators()
-  if not self.generators or not self.currentStockSlots[self.StockTypes.fuel][1] or computer.energy() > self.generatorEnableLevel or self.generatorBatchTimeout > computer.uptime() then
+  if not self.generators or not self:isStockTypeAvailable(self.StockTypes.fuel) or computer.energy() > self.generatorEnableLevel or self.generatorBatchTimeout > computer.uptime() then
     return
   end
   self.generatorBatchTimeout = computer.uptime() + self.generatorBatchInterval / 20.0
-  
+  local lastSelectedStockType = self.selectedStockType
   self:selectStockType(self.StockTypes.fuel)
+  
   for _, generator in pairs(self.generators) do
     local batchAmount = self.generatorBatchSize - math.floor(generator.count())
     if batchAmount > 0 then
@@ -370,9 +383,7 @@ function Miner:updateGenerators()
       while not status do
         if string.find(err, "slot is empty") or string.find(err, "slot does not contain fuel") then
           self:stockSlotDepleted()
-          if self.currentStockSlots[self.StockTypes.fuel][1] then
-            self:selectStockType(self.StockTypes.fuel)
-          else
+          if not self:selectStockType(self.StockTypes.fuel) then
             break
           end
         else
@@ -381,12 +392,13 @@ function Miner:updateGenerators()
         end
         status, err = generator.insert(batchAmount)
       end
-      if not self.currentStockSlots[self.StockTypes.fuel][1] then
+      if not self:isStockTypeAvailable(self.StockTypes.fuel) then
         break
       end
     end
     dlog.out("Miner:updateGenerators", "batchAmount = ", batchAmount)
   end
+  self:selectStockType(lastSelectedStockType, true)
 end
 
 
@@ -494,8 +506,8 @@ function Miner:forceSwing(direction, side, sneaky)
   self.lastToolDurability = equipmentDurability()
   
   -- Check if the current tool is almost/all used up and needs to be replaced.
-  if self.lastToolDurability <= (self.currentStockSlots[self.StockTypes.mining][1] and self.toolDurabilityMin or self.toolDurabilityReturn) then
-    if self.currentStockSlots[self.StockTypes.mining][1] then
+  if self.lastToolDurability <= (self:isStockTypeAvailable(self.StockTypes.mining) and self.toolDurabilityMin or self.toolDurabilityReturn) then
+    if self:isStockTypeAvailable(self.StockTypes.mining) then
       -- Select the next available mining tool, and swap it into the equipment slot.
       -- The old tool (now in current slot) gets removed from stock items.
       local lastSelectedStockType = self.selectedStockType
@@ -504,7 +516,7 @@ function Miner:forceSwing(direction, side, sneaky)
       icontroller.equip()
       self:stockSlotDepleted()
       computeDurabilityThresholds(self, toolItem)
-      self:selectStockType(lastSelectedStockType)
+      self:selectStockType(lastSelectedStockType, true)
     elseif self.withinMainCoroutine then
       coroutine.yield(self.ReturnReasons.toolLow)
     end
@@ -564,7 +576,7 @@ function Miner:forcePlace(direction, side, sneaky)
         local stockSlots = self.currentStockSlots[self.selectedStockType]
         xassert(stockSlots[#stockSlots], "attempt to place block with nothing selected.")
         self:stockSlotDepleted()
-        self:selectStockType(self.selectedStockType)
+        self:selectStockType(self.selectedStockType, true)
       else
         local preSwingTime = computer.uptime()
         self:forceSwing(direction)
