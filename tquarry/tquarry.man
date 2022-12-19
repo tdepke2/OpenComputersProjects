@@ -45,9 +45,11 @@
   
   * Solar Generator Upgrade
   
-  Once the robot is assembled, it should be placed at the quarry "restock point" (also called the home position). The restock point should have a Charger (provided with RF and activated with a redstone signal) and an inventory or two (like a Chest). These blocks can be adjacent to the top or sides of the robot (but not the bottom since the robot digs this direction). With the robot at the restock point, running the program will mine out the rectangular area immediately below the robot defined by LENGTH, WIDTH, and DEPTH. From the robot's perspective, these dimensions correspond to the number of blocks to the left-side (minus 1), in front of (minus 1), and below the robot.
+  Once the robot is assembled, it should be placed at the quarry "restock point" (also called the home position). The restock point should have a Charger (provided with RF and activated with a redstone signal) and an inventory or two (like a Chest). These blocks can be adjacent to the top or sides of the robot (but not the bottom since the robot digs this direction). The default configuration assumes that the input inventory (full of pickaxes and coal/charcoal fuel) is on the right side of the robot, and the output inventory is behind the robot.
   
-  The first time the program is run, it will create a configuration file in `/etc/tquarry.cfg`. Edit this file to tweak various settings, such as which sides the input/output inventories are located, what items the robot considers as digging tools, whether to build a staircase when finished, etc. The default configuration can be restored by deleting/renaming this file.
+  With the robot at the restock point, running the program will mine out the rectangular area immediately below the robot defined by LENGTH, WIDTH, and DEPTH. From the robot's perspective, these dimensions correspond to the number of blocks to the left-side (minus 1), in front of (minus 1), and below the robot.
+  
+  The first time the program is run, it will create a configuration file in `/etc/tquarry.cfg`. Edit this file to tweak various settings, such as what type of quarry is dug, which sides the input/output inventories are located, what items the robot considers as digging tools, whether to build a staircase when finished, etc. The default configuration can be restored by deleting/renaming this file.
 
 ## OPTIONS
   `-h`, `--help`  display help message and exit

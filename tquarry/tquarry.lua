@@ -3,7 +3,6 @@ todo:
   * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
   * show robot status with setLightColor().
   * we could get a bit more speed by suppressing some of the durability checks done in Miner:forceSwing(). for example, if lastToolDurability > toolDurabilityReturn * 2.0 then count every toolHealthReturn ticks before sampling the durability.
-  * do not stock building blocks if we are not building anything
 
 done:
   * convert the coroutine checks to a function? maybe nah
@@ -12,6 +11,7 @@ done:
   * load data from config file (and generate one if not found).
   * dynamically compute energyLevelMin?
   * support for generators?
+  * do not stock building blocks if we are not building anything
 
 to test:
   * 
@@ -95,7 +95,7 @@ function Quarry.makeConfigTemplate()
   minerCfgFormat.stockLevelsMin.mining._order_ = 3
   minerCfgFormat.stockLevelsMin.fuel._order_ = 4
   
-  minerCfgFormat.stockLevelsMax.buildBlock = {_order_ = 1, "Integer", 3}
+  minerCfgFormat.stockLevelsMax.buildBlock = {_order_ = 1, "Integer", 0}
   minerCfgFormat.stockLevelsMax.stairBlock = {_order_ = 2, "Integer", 0}
   minerCfgFormat.stockLevelsMax.mining._order_ = 3
   minerCfgFormat.stockLevelsMax.fuel._order_ = 4
@@ -109,11 +109,11 @@ chest is expected to be here). This is from the robot's perspective when at
 the restock point. Valid sides are: "bottom", "top", "back", "front",
 "right", and "left".]],
     },
-    inventoryOutput = {_order_ = 3, "Sides", "right", [[
+    inventoryOutput = {_order_ = 3, "Sides", "back", [[
 
 Similar to inventoryInput, but for the inventory robot will dump items to.]]
     },
-    quarryType = {_order_ = 4, "QuarryType", "Basic", [[
+    quarryType = {_order_ = 4, "QuarryType", "Fast", [[
 
 Controls mining and building patterns for the quarry, options are: "Basic"
 simply mines out the rectangular area, "Fast" mines three layers at a time
@@ -664,19 +664,6 @@ local function main(...)
     end
   end
   
-  
-  -- FIXME maybe just get rid of this, doesn't seem like this lists everything, also slow #########################################
-  --[[
-  local hardwareList = {}
-  for _, v in pairs(computer.getDeviceInfo()) do
-    hardwareList[v.description] = (hardwareList[v.description] or 0) + 1
-  end
-  
-  for k, v in pairs(hardwareList) do
-    print(k, v)
-  end
-  ]]
-  
   -- Check hardware and config options for problems.
   if crobot.inventorySize() <= 0 then
     io.stderr:write("tquarry: robot is missing inventory upgrade\n")
@@ -692,6 +679,30 @@ local function main(...)
   if cfg.buildStaircase and (args[1] < 2 or args[2] < 2) then
     io.stderr:write("tquarry: building a staircase requires at least 2 blocks space for length and width\n")
     return 2
+  end
+  if cfg.quarryType == "FillFloor" or cfg.quarryType == "FillWall" or cfg.buildStaircase then
+    -- Confirm that we have an angel upgrade installed.
+    local hardwareList = {}
+    for _, v in pairs(computer.getDeviceInfo()) do
+      hardwareList[v.description] = (hardwareList[v.description] or 0) + 1
+    end
+    if not hardwareList["Angel upgrade"] then
+      io.write("Current configuration meets requirements for an\n")
+      io.write("Angel Upgrade, but this upgrade was not found.\n")
+      io.write("Do you want to continue anyways? (Y/n): ")
+      local input = io.read()
+      if type(input) ~= "string" or string.lower(input) == "n" or string.lower(input) == "no" then
+        io.write("Exiting...\n")
+        return 0
+      end
+    end
+    
+    -- Request construction blocks to be stocked in inventory if needed.
+    if cfg.quarryType == "FillFloor" or cfg.quarryType == "FillWall" then
+      if cfg.miner.stockLevelsMax.buildBlock < 1 then
+        cfg.miner.stockLevelsMax.buildBlock = 3
+      end
+    end
   end
   
   local quarryClass
