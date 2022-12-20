@@ -205,7 +205,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   output is enabled/disabled based on the value. Returns true if logging to
   standard output is enabled and false otherwise.
 
-* `dlog.subsystems: table|nil(subsystems) -> table`
+* `dlog.subsystems(subsystems: table|nil) -> table`
   
   Set the subsystems to log from the provided table. The table keys are the
   subsystem names (strings, case sensitive) and the values should be true or
@@ -214,7 +214,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   subsystems are provided, these overwrite the old table contents. Returns the
   current subsystems table.
 
-* `dlog.t: tableableToString(t) -> string`
+* `dlog.tableToString(t: table) -> string`
   
   Serializes a table to a string using a user-facing format. String keys/values
   in the table are escaped and enclosed in double quotes. Handles nested tables
