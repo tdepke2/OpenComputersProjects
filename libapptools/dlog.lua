@@ -9,20 +9,18 @@
 local dlog = {}
 
 
---- **Configuration options:**
-
---- `dlog.logErrorsToOutput = true`
+---@docdef
 -- 
 -- Set errors to direct to `dlog.out()` using the `error` subsystem.
 dlog.logErrorsToOutput = true
 
---- `dlog.defineGlobalXassert = true`
+---@docdef
 -- 
 -- Enables the `xassert()` call as a global function. To disable, this must be
 -- set to false here before loading dlog module.
 dlog.defineGlobalXassert = true
 
---- `dlog.maxMessageLength = nil`
+---@docdef
 -- 
 -- Sets a maximum string length on the output from `dlog.out()`. A message that
 -- exceeds this size will be trimmed to fit. Set this value to nil for unlimited
@@ -39,25 +37,30 @@ local dlogMode = 2
 local dlogFunctionBackups = {}
 
 
---- `dlog.mode([newMode: string]): string`
+---@docdef
 -- 
--- Configure mode of operation for dlog. The mode sets defaults for logging and
--- can disable some dlog features completely to increase performance. If newMode
--- is provided, the mode is set to this value. The valid modes are:
---   * debug (all subsystems on, logging enabled for stdout and `/tmp/messages`)
---   * release (default mode, only error logging to stdout)
---   * optimize1 (function `dlog.osBlockNewGlobals()` is disabled)
---   * optimize2 (function `dlog.checkArgs()` is disabled)
---   * optimize3 (functions `dlog.out()` and `dlog.fileOutput()` are disabled)
---   * optimize4 (functions `xassert()` and `dlog.xassert()` are disabled)
+-- Configure mode of operation for dlog. This should get called only in the main
+-- application, not in library code. The mode sets defaults for logging and can
+-- disable some dlog features completely to increase performance. If newMode is
+-- provided, the mode is set to this value. The valid modes are:
 -- 
--- Each mode includes behavior from the previous modes (optimize4 pretty much
+-- * `debug` (all subsystems on, logging enabled for stdout and `/tmp/messages`)
+-- * `release` (default mode, only error logging to stdout)
+-- * `optimize1` (function `dlog.osBlockNewGlobals()` is disabled)
+-- * `optimize2` (function `dlog.checkArgs()` is disabled)
+-- * `optimize3` (functions `dlog.out()` and `dlog.fileOutput()` are disabled)
+-- * `optimize4` (functions `xassert()` and `dlog.xassert()` are disabled)
+-- 
+-- Each mode includes behavior from the previous modes (`optimize4` pretty much
 -- disables everything). The mode is intended to be set once right after dlog is
 -- loaded in the main program, it can be changed at any time though. Returns the
 -- current mode.
 -- 
 -- Note: when using debug mode with multiple threads, be careful to call this
 -- function in the right place (see warnings in `dlog.fileOutput()`).
+-- 
+---@param newMode string|nil
+---@return string
 function dlog.mode(newMode)
   local modes = {"debug", "release", "optimize1", "optimize2", "optimize3", "optimize4"}
   if not newMode then
@@ -136,15 +139,20 @@ function dlog.mode(newMode)
 end
 
 
---- `dlog.xassert(v: boolean, ...): ...`<br>
--- `xassert(v: boolean, ...): ...`
+---@docdef `dlog.xassert(v, ...)`<br>
+---@docdef `xassert(v, ...)`
 -- 
 -- Extended assert, a global replacement for the standard `assert()` function.
 -- This improves performance by delaying the concatenation of strings to form
 -- the message until the message is actually needed. The arguments after v are
 -- optional and can be anything that `tostring()` will convert. Returns v and
 -- all other arguments.
--- Original idea from: http://lua.space/general/assert-usage-caveat
+-- Original idea from: <http://lua.space/general/assert-usage-caveat>
+-- 
+---@param v boolean
+---@param ... any
+---@return boolean
+---@return ...
 function dlog.xassert(v, ...)
   if not v then
     local argc = select("#", ...)
@@ -161,12 +169,17 @@ if dlog.defineGlobalXassert then
 end
 
 
---- `dlog.handleError(status: boolean, ...): boolean, ...`
+---@docdef
 -- 
 -- Logs an error message/object if status is false and `dlog.logErrorsToOutput`
 -- is enabled. This is designed to be called with the results of `pcall()` or
 -- `xpcall()` to echo any errors that occurred. Returns the same arguments
 -- passed to the function.
+-- 
+---@param status boolean
+---@param ... any
+---@return boolean
+---@return ...
 function dlog.handleError(status, ...)
   if not status and dlog.logErrorsToOutput then
     local message = select(1, ...)
@@ -183,8 +196,11 @@ function dlog.handleError(status, ...)
 end
 
 
--- FIXME this should be used everywhere and same for the block globals stuff #############################################################################################################
---- `dlog.checkArgs(val: any, typ: string, ...)`
+
+-- FIXME the below should be used everywhere and same for the block globals stuff #############################################################################################################
+
+local checkArgsHelper
+---@docdef
 -- 
 -- Re-implementation of the `checkArg()` built-in function. Asserts that the
 -- given arguments match the types they are supposed to. This version fixes
@@ -193,7 +209,9 @@ end
 -- 
 -- Example:
 -- `dlog.checkArgs(my_first_arg, "number", my_second_arg, "table,nil")`
-local checkArgsHelper
+-- 
+---@param val any
+---@param typ string
 function dlog.checkArgs(val, typ, ...)
   if not string.find(typ, type(val), 1, true) and typ ~= "any" then
     error("bad argument at index #1 (" .. typ .. " expected, got " .. type(val) .. ")", 2)
@@ -210,18 +228,20 @@ checkArgsHelper = function(i, val, typ, ...)
 end
 
 
---- `dlog.osBlockNewGlobals(state: boolean)`
+---@docdef
 -- 
 -- Modifies the global environment to stop creation/access to new global
 -- variables. This is to help prevent typos in code from unintentionally
 -- creating new global variables that cause bugs later on (also, globals are
 -- generally a bad practice). In the case that some globals are needed in the
 -- code, they can be safely declared before calling this function. Also see
--- https://www.lua.org/pil/14.2.html for other options and the following link:
--- https://stackoverflow.com/questions/35910099/how-special-is-the-global-variable-g
+-- <https://www.lua.org/pil/14.2.html> for other options and the following link:
+-- <https://stackoverflow.com/questions/35910099/how-special-is-the-global-variable-g>
 -- 
 -- Note: this function uses some extreme fuckery and modifies the system
 -- behavior, use at your own risk!
+-- 
+---@param state boolean
 function dlog.osBlockNewGlobals(state)
   local environmentMetatable = getmetatable(_ENV)    -- Module-level ENV.
   
@@ -265,11 +285,13 @@ function dlog.osBlockNewGlobals(state)
 end
 
 
---- `dlog.osGetGlobalsList(): table`
+---@docdef
 -- 
 -- Collects a table of all global variables currently defined. Specifically,
 -- this shows the contents of `_G` and any globals accessible by the running
 -- process. This function is designed for debugging purposes only.
+-- 
+---@return table
 function dlog.osGetGlobalsList()
   local envLevel = _ENV
   local result = {}
@@ -297,7 +319,7 @@ function dlog.osGetGlobalsList()
 end
 
 
---- `dlog.fileOutput([filename: string[, mode: string]]): table|nil`
+---@docdef
 -- 
 -- Open/close a file to output logging data to. If filename is provided then
 -- this file is opened (an empty string will close any opened one instead).
@@ -307,6 +329,10 @@ end
 -- Note: keep in mind that Lua will close files automatically as part of garbage
 -- collection. If working with detached threads or processes, make sure your log
 -- file is open in the correct thread/process or it might close suddenly!
+-- 
+---@param filename string|nil
+---@param mode string|nil
+---@return file*|nil
 function dlog.fileOutput(filename, mode)
   if filename ~= nil then
     if dlogFileOutput then
@@ -324,12 +350,15 @@ function dlog.fileOutput(filename, mode)
 end
 
 
---- `dlog.standardOutput([state: boolean]): boolean`
+---@docdef
 -- 
 -- Set output of logging data to standard output. This can be used in
 -- conjunction with file output. If state is provided, logging to standard
 -- output is enabled/disabled based on the value. Returns true if logging to
 -- standard output is enabled and false otherwise.
+-- 
+---@param state boolean|nil
+---@return boolean
 function dlog.standardOutput(state)
   if state ~= nil then
     dlogStandardOutput = state
@@ -338,7 +367,7 @@ function dlog.standardOutput(state)
 end
 
 
---- `dlog.subsystems([subsystems: table]): table`
+---@docdef
 -- 
 -- Set the subsystems to log from the provided table. The table keys are the
 -- subsystem names (strings, case sensitive) and the values should be true or
@@ -346,6 +375,9 @@ end
 -- except ones that are explicitly disabled with the value of false. If the
 -- subsystems are provided, these overwrite the old table contents. Returns the
 -- current subsystems table.
+-- 
+---@param subsystems table|nil
+---@return table
 function dlog.subsystems(subsystems)
   if subsystems ~= nil then
     dlogSubsystems = subsystems
@@ -354,12 +386,15 @@ function dlog.subsystems(subsystems)
 end
 
 
---- `dlog.tableToString(t: table): string`
+local tableToStringHelper
+---@docdef
 -- 
 -- Serializes a table to a string using a user-facing format. String keys/values
 -- in the table are escaped and enclosed in double quotes. Handles nested tables
 -- and tables with cycles. This is just a helper function for `dlog.out()`.
-local tableToStringHelper
+-- 
+---@param t table
+---@return string
 function dlog.tableToString(t)
   local tableData = {"\n", n = 1}
   tableToStringHelper(tableData, t, "")
@@ -400,18 +435,22 @@ tableToStringHelper = function(tableData, t, spacing)
 end
 
 
---- `dlog.out(subsystem: string, ...)`
+---@docdef
 -- 
 -- Writes a string to active logging outputs (the output is suppressed if the
 -- subsystem is not currently being monitored). To enable monitoring of a
 -- subsystem, use `dlog.subsystems()`. The arguments provided after the
 -- subsystem can be anything that can be passed through `tostring()` with a
 -- couple exceptions:
+-- 
 -- 1. Tables will be printed recursively and show key-value pairs.
 -- 2. Functions are evaluated and their return value gets output instead of the
 --    function pointer. This is handy to wrap some potentially slow debugging
 --    info in an anonymous function and pass it into `dlog.out()` to prevent
 --    execution if logging is not enabled.
+-- 
+---@param subsystem string
+---@param ... any
 function dlog.out(subsystem, ...)
   if (dlogStandardOutput or dlogFileOutput) and (dlogSubsystems[subsystem] or (dlogSubsystems["*"] and dlogSubsystems[subsystem] == nil)) then
     local varargs = table.pack(...)
