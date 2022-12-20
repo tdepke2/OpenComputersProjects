@@ -104,8 +104,6 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libapptools/dlog.lua) -->
-**Configuration options:**
-
 * `dlog.logErrorsToOutput = true`
   
   Set errors to direct to `dlog.out()` using the `error` subsystem.
@@ -121,19 +119,21 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   exceeds this size will be trimmed to fit. Set this value to nil for unlimited
   size messages.
 
-* `dlog.mode([newMode: string]): string`
+* `dlog.mode(newMode: string|nil) -> string`
   
-  Configure mode of operation for dlog. The mode sets defaults for logging and
-  can disable some dlog features completely to increase performance. If newMode
-  is provided, the mode is set to this value. The valid modes are:
-    * debug (all subsystems on, logging enabled for stdout and `/tmp/messages`)
-    * release (default mode, only error logging to stdout)
-    * optimize1 (function `dlog.osBlockNewGlobals()` is disabled)
-    * optimize2 (function `dlog.checkArgs()` is disabled)
-    * optimize3 (functions `dlog.out()` and `dlog.fileOutput()` are disabled)
-    * optimize4 (functions `xassert()` and `dlog.xassert()` are disabled)
+  Configure mode of operation for dlog. This should get called only in the main
+  application, not in library code. The mode sets defaults for logging and can
+  disable some dlog features completely to increase performance. If newMode is
+  provided, the mode is set to this value. The valid modes are:
   
-  Each mode includes behavior from the previous modes (optimize4 pretty much
+  * `debug` (all subsystems on, logging enabled for stdout and `/tmp/messages`)
+  * `release` (default mode, only error logging to stdout)
+  * `optimize1` (function `dlog.osBlockNewGlobals()` is disabled)
+  * `optimize2` (function `dlog.checkArgs()` is disabled)
+  * `optimize3` (functions `dlog.out()` and `dlog.fileOutput()` are disabled)
+  * `optimize4` (functions `xassert()` and `dlog.xassert()` are disabled)
+  
+  Each mode includes behavior from the previous modes (`optimize4` pretty much
   disables everything). The mode is intended to be set once right after dlog is
   loaded in the main program, it can be changed at any time though. Returns the
   current mode.
@@ -141,17 +141,17 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   Note: when using debug mode with multiple threads, be careful to call this
   function in the right place (see warnings in `dlog.fileOutput()`).
 
-* `dlog.xassert(v: boolean, ...): ...`<br>
-  `xassert(v: boolean, ...): ...`
+* `dlog.xassert(v: boolean, ...: any) -> boolean, ...`<br>
+  `xassert(v: boolean, ...: any) -> boolean, ...`
   
   Extended assert, a global replacement for the standard `assert()` function.
   This improves performance by delaying the concatenation of strings to form
   the message until the message is actually needed. The arguments after v are
   optional and can be anything that `tostring()` will convert. Returns v and
   all other arguments.
-  Original idea from: http://lua.space/general/assert-usage-caveat
+  Original idea from: <http://lua.space/general/assert-usage-caveat>
 
-* `dlog.handleError(status: boolean, ...): boolean, ...`
+* `dlog.handleError(status: boolean, ...: any) -> boolean, ...`
   
   Logs an error message/object if status is false and `dlog.logErrorsToOutput`
   is enabled. This is designed to be called with the results of `pcall()` or
@@ -175,19 +175,19 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   creating new global variables that cause bugs later on (also, globals are
   generally a bad practice). In the case that some globals are needed in the
   code, they can be safely declared before calling this function. Also see
-  https://www.lua.org/pil/14.2.html for other options and the following link:
-  https://stackoverflow.com/questions/35910099/how-special-is-the-global-variable-g
+  <https://www.lua.org/pil/14.2.html> for other options and the following link:
+  <https://stackoverflow.com/questions/35910099/how-special-is-the-global-variable-g>
   
   Note: this function uses some extreme fuckery and modifies the system
   behavior, use at your own risk!
 
-* `dlog.osGetGlobalsList(): table`
+* `dlog.osGetGlobalsList() -> table`
   
   Collects a table of all global variables currently defined. Specifically,
   this shows the contents of `_G` and any globals accessible by the running
   process. This function is designed for debugging purposes only.
 
-* `dlog.fileOutput([filename: string[, mode: string]]): table|nil`
+* `dlog.fileOutput(filename: string|nil, mode: string|nil) -> file*|nil`
   
   Open/close a file to output logging data to. If filename is provided then
   this file is opened (an empty string will close any opened one instead).
@@ -198,14 +198,14 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   collection. If working with detached threads or processes, make sure your log
   file is open in the correct thread/process or it might close suddenly!
 
-* `dlog.standardOutput([state: boolean]): boolean`
+* `dlog.standardOutput(state: boolean|nil) -> boolean`
   
   Set output of logging data to standard output. This can be used in
   conjunction with file output. If state is provided, logging to standard
   output is enabled/disabled based on the value. Returns true if logging to
   standard output is enabled and false otherwise.
 
-* `dlog.subsystems([subsystems: table]): table`
+* `dlog.subsystems: table|nil(subsystems) -> table`
   
   Set the subsystems to log from the provided table. The table keys are the
   subsystem names (strings, case sensitive) and the values should be true or
@@ -214,19 +214,20 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   subsystems are provided, these overwrite the old table contents. Returns the
   current subsystems table.
 
-* `dlog.tableToString(t: table): string`
+* `dlog.t: tableableToString(t) -> string`
   
   Serializes a table to a string using a user-facing format. String keys/values
   in the table are escaped and enclosed in double quotes. Handles nested tables
   and tables with cycles. This is just a helper function for `dlog.out()`.
 
-* `dlog.out(subsystem: string, ...)`
+* `dlog.out(subsystem: string, ...: any)`
   
   Writes a string to active logging outputs (the output is suppressed if the
   subsystem is not currently being monitored). To enable monitoring of a
   subsystem, use `dlog.subsystems()`. The arguments provided after the
   subsystem can be anything that can be passed through `tostring()` with a
   couple exceptions:
+  
   1. Tables will be printed recursively and show key-value pairs.
   2. Functions are evaluated and their return value gets output instead of the
      function pointer. This is handy to wrap some potentially slow debugging
