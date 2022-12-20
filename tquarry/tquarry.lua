@@ -371,10 +371,10 @@ function Quarry:run()
     dlog.out("run", "moving to home position.")
     local xLast, yLast, zLast, rLast = robnav.getCoords()
     local lastSelectedStockType = self.miner.selectedStockType
-    if robnav.y < 0 then
+    if robnav.y < -1 then
       self.miner:forceMove(sides.top)
     end
-    if robnav.y < 0 then
+    if robnav.y < -1 then
       self.miner:forceMove(sides.top)
     end
     self:moveTo(0, 0, 0)
@@ -415,7 +415,7 @@ function Quarry:run()
     -- Go back to working area.
     dlog.out("run", "moving back to working position.")
     self.miner:selectStockType(lastSelectedStockType)
-    self:moveTo(xLast, math.min(yLast + 2, 0), zLast)
+    self:moveTo(xLast, math.min(yLast + 2, -1), zLast)
     if robnav.y > yLast then
       self.miner:forceMove(sides.bottom)
     end
