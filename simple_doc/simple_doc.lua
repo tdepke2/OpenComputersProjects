@@ -104,7 +104,7 @@ local function formatAnnotations(contextLine, docSection)
     for _, index in ipairs(funcs) do
       -- Substitute function parameter names with the annotated version where applicable.
       if params then
-        local funcParams = string.match(docSection[index], "%(.*%)")
+        local funcParamsIndex, funcParams = string.match(docSection[index], "()(%(.*%))")
         if funcParams then
           local annotatedParams = ""
           for p in string.gmatch(funcParams, "[%w_%.]+") do
@@ -115,7 +115,7 @@ local function formatAnnotations(contextLine, docSection)
             end
             annotatedParams = annotatedParams .. p .. ", "
           end
-          docSection[index] = string.gsub(docSection[index], funcParams, string.sub(annotatedParams, 1, -3), 1)
+          docSection[index] = string.sub(docSection[index], 1, funcParamsIndex) .. string.sub(annotatedParams, 1, -3) .. string.sub(docSection[index], funcParamsIndex + #funcParams - 1)
         end
       end
       
