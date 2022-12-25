@@ -421,6 +421,7 @@ end
 -- 
 ---@param direction Sides
 function Miner:forceMove(direction)
+  computer.pullSignal(0)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelReturn then
     coroutine.yield(self.ReturnReasons.energyLow)
   end
@@ -458,6 +459,7 @@ end
 -- 
 ---@param clockwise boolean
 function Miner:forceTurn(clockwise)
+  computer.pullSignal(0)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelReturn then
     coroutine.yield(self.ReturnReasons.energyLow)
   end
@@ -494,6 +496,7 @@ end
 ---@return boolean result
 ---@return string|nil message
 function Miner:forceSwing(direction, side, sneaky)
+  computer.pullSignal(0)
   local result, msg
   if self.lastToolDurability <= self.toolDurabilityMin and self.lastToolDurability ~= -1.0 then
     xassert(icontroller.equip())

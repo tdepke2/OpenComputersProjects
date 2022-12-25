@@ -2,7 +2,7 @@
 todo:
   * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
   * show robot status with setLightColor().
-  * we could get a bit more speed by suppressing some of the durability checks done in Miner:forceSwing(). for example, if lastToolDurability > toolDurabilityReturn * 2.0 then count every toolHealthReturn ticks before sampling the durability.
+  * config option to use generators only, ignore any chargers. also should have robot wait for energy to fill completely at start.
 
 done:
   * convert the coroutine checks to a function? maybe nah
@@ -25,13 +25,22 @@ potential problems:
   * Tools must all be strong enough to mine blocks in the way.
   * Tinker's tools? These show durability values where a zero means the tool is broken. To handle them, just set toolHealthMin to zero.
     * Small correction: a wooden pickaxe (and possibly other self-healing tools) sometimes breaks at 1 durability. To be safe, set toolHealthMin a bit above zero.
+
+future work:
+  * option for 3 x 3 mining tools? this could be tricky to make sure all of the blocks get mined, might require a geolyzer to scan area.
+  * currently all mining tools are considered the same, but we could use specific tools depending on the material to dig (shovels and axes). an easy solution is to always use multi-purpose tools like a paxel or AIOT, but these are provided by other mods. other options could be predicting the tool to use based on a geolyzer hardness scan, or measure the time taken to mine a block and decide if another tool should be attempted.
+  * we could get a bit more speed by suppressing some of the durability checks done in Miner:forceSwing(). for example, if lastToolDurability > toolDurabilityReturn * 2.0 then count every toolHealthReturn ticks before sampling the durability.
+  * the CrashHandler is far from perfect, and has required that a lot of functionality be replaced with ugly state machines. maybe there is a better way to implement this? it seems like a general problem of caching the current program state (call stack and everything) and returning to this later.
 --]]
 
 
 local component = require("component")
 local computer = require("computer")
 local crobot = component.robot
+local event = require("event")
+local filesystem = require("filesystem")
 local icontroller = component.inventory_controller
+local serialization = require("serialization")
 local shell = require("shell")
 local sides = require("sides")
 
@@ -43,6 +52,15 @@ local config = include("config")
 local enum = include("enum")
 local miner = include("miner")
 local robnav = include("robnav")
+
+
+-- Quarry states used by Quarry:run().
+local QuarryStatus = enum {
+  "init",
+  "working",
+  "resupply",
+  "returnToWork",
+}
 
 
 -- Quarry class definition.
@@ -167,15 +185,29 @@ function Quarry:new(length, width, depth, cfg)
   
   self.cfg = cfg
   
+  -- Sides where robot will look to transfer items at the restock point.
   self.inventoryInput = sides[cfg.inventoryInput]
   self.inventoryOutput = sides[cfg.inventoryOutput]
   
+  -- Direction robot is moving in the current layer (position delta).
   self.xDir = 1
   self.zDir = 1
   
+  -- Bounds for mining area.
   self.xMax = length - 1
   self.yMin = -depth
   self.zMax = width - 1
+  
+  -- Various properties about the current quarry state. These are pretty much
+  -- exclusively used in Quarry:run() and related functions for caching and
+  -- restoring state in the CrashHandler.
+  self.quarryStatus = QuarryStatus.init
+  self.quarryWorkingStage = 0
+  self.mainCoroutine = false
+  self.xLast, self.yLast, self.zLast, self.rLast = robnav.getCoords()
+  self.lastSelectedStockType = self.miner.selectedStockType
+  self.lastReturnReason = 0
+  self.buildStairsStage = 0
   
   return self
 end
@@ -207,8 +239,8 @@ end
 
 -- Called after quarryStart() to mine the full area, layer by layer.
 -- Implementations are free to change this to whatever. By default this will
--- move the robot in a zig-zag pattern, going left-to-right on one layer
--- followed by right-to-left on the next.
+-- move the robot in a zig-zag pattern, going right-to-left on one layer
+-- followed by left-to-right on the next.
 function Quarry:quarryMain()
   while true do
     self:layerMine()
@@ -329,101 +361,154 @@ function Quarry:moveTo(x, y, z)
 end
 
 
+-- Sends the robot back to the restock point to clean up items in inventory and
+-- recharge. Returns true if the quarry is not yet done working.
+-- 
+---@return boolean continueWork
+function Quarry:resupply()
+  dlog.out("run", "moving to home position.")
+  
+  if robnav.y < -1 then
+    self.miner:forceMove(sides.top)
+  end
+  if robnav.y < -1 then
+    self.miner:forceMove(sides.top)
+  end
+  self:moveTo(0, 0, 0)
+  
+  if self.lastReturnReason == self.miner.ReturnReasons.minerDone then
+    if self.cfg.buildStaircase and self.buildStairsStage == 0 then
+      -- Queue the replacement of the old coroutine with new tasks to build staircase. The coroutine will start after the resupply finishes.
+      self.mainCoroutine = false
+      
+      -- Request stairs to be stocked in inventory.
+      if self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] < 1 then
+        self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] = 3
+      end
+      
+      self.xLast, self.yLast, self.zLast, self.rLast = 0, 0, 0, sides.front
+      self.buildStairsStage = 1
+    else
+      -- Operations finished, dump inventory and return.
+      self.miner:itemDeposit({}, self.inventoryOutput)
+      crobot.select(1)
+      robnav.turnTo(sides.front)
+      io.write("Quarry finished!\n")
+      return false
+    end
+  end
+  
+  self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
+  
+  -- Wait until fully recharged.
+  while computer.maxEnergy() - computer.energy() > 100 do
+    os.sleep(2.0)
+    dlog.out("run", "waiting for energy...")
+  end
+  return true
+end
+
+
+-- Sends the robot to the last working position to continue where it left off.
+function Quarry:returnToWork()
+  dlog.out("run", "moving back to working position.")
+  self.miner:selectStockType(self.lastSelectedStockType)
+  self:moveTo(self.xLast, math.min(self.yLast + 2, -1), self.zLast)
+  if robnav.y > self.yLast then
+    self.miner:forceMove(sides.bottom)
+  end
+  if robnav.y > self.yLast then
+    self.miner:forceMove(sides.bottom)
+  end
+  robnav.turnTo(self.rLast)
+  xassert(robnav.x == self.xLast and robnav.y == self.yLast and robnav.z == self.zLast and robnav.r == self.rLast)
+end
+
+
 -- Starts the quarry process so that the robot mines out the rectangular area.
 -- The mining actions run within a coroutine so that any problems that occur
 -- (tools depleted, energy low, etc.) will cause the robot to return home for
 -- resupply and then go back to the working area. When the robot is finished, it
 -- dumps its inventory and this function returns.
+-- 
+-- This function makes heavy use of tail calls so that it behaves like a state
+-- machine. This allows us to recover the state later with the CrashHandler.
 function Quarry:run()
-  local co = coroutine.create(function()
-    self:quarryStart()
-    self:quarryMain()
-    self:quarryEnd()
-    return self.miner.ReturnReasons.minerDone
-  end)
-  
-  -- Confirm valid inventories are at the input and output sides.
-  robnav.turnTo(self.inventoryInput)
-  if not icontroller.getInventorySize(self.inventoryInput < 2 and self.inventoryInput or sides.front) then
-    robnav.turnTo(sides.front)
-    error("no valid input inventory found, config[\"inventoryInput\"] is set to side " .. sides[self.inventoryInput])
-  end
-  robnav.turnTo(self.inventoryOutput)
-  if not icontroller.getInventorySize(self.inventoryOutput < 2 and self.inventoryOutput or sides.front) then
-    robnav.turnTo(sides.front)
-    error("no valid output inventory found, config[\"inventoryOutput\"] is set to side " .. sides[self.inventoryOutput])
-  end
-  
-  self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
-  
-  local buildStairsQueued = self.cfg.buildStaircase
-  
-  while true do
-    self.miner.withinMainCoroutine = true
-    local status, ret = coroutine.resume(co)
-    self.miner.withinMainCoroutine = false
-    if not status then
-      error(ret)
-    end
-    dlog.out("run", "return reason = ", self.miner.ReturnReasons[ret])
-    
-    -- Return to home position.
-    dlog.out("run", "moving to home position.")
-    local xLast, yLast, zLast, rLast = robnav.getCoords()
-    local lastSelectedStockType = self.miner.selectedStockType
-    if robnav.y < -1 then
-      self.miner:forceMove(sides.top)
-    end
-    if robnav.y < -1 then
-      self.miner:forceMove(sides.top)
-    end
-    self:moveTo(0, 0, 0)
-    
-    if ret == self.miner.ReturnReasons.minerDone then
-      if buildStairsQueued then
-        -- Replace the old coroutine with new tasks to build staircase. The coroutine will start after the resupply finishes.
-        co = coroutine.create(function()
-          self:buildStairs()
-          return self.miner.ReturnReasons.minerDone
-        end)
-        
-        -- Request stairs to be stocked in inventory.
-        if self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] < 1 then
-          self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] = 3
+  if not self.mainCoroutine then
+    if self.buildStairsStage ~= 1 then
+      self.mainCoroutine = coroutine.create(function()
+        if self.quarryWorkingStage == 0 then
+          self:quarryStart()
+          self.quarryWorkingStage = 1
         end
-        
-        xLast, yLast, zLast, rLast = 0, 0, 0, sides.front
-        buildStairsQueued = false
-      else
-        -- Operations finished, dump inventory and return.
-        self.miner:itemDeposit({}, self.inventoryOutput)
-        crobot.select(1)
-        robnav.turnTo(sides.front)
-        io.write("Quarry finished!\n")
-        return
+        if self.quarryWorkingStage == 1 then
+          self:quarryMain()
+          self.quarryWorkingStage = 2
+        end
+        if self.quarryWorkingStage == 2 then
+          self:quarryEnd()
+          self.quarryWorkingStage = 3
+        end
+        return self.miner.ReturnReasons.minerDone
+      end)
+    else
+      self.mainCoroutine = coroutine.create(function()
+        self:buildStairs()
+        return self.miner.ReturnReasons.minerDone
+      end)
+      
+      -- Request stairs to be stocked in inventory (should already be done in Quarry:resupply() but we may recover from a crash during stair building).
+      if self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] < 1 then
+        self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] = 3
       end
+    end
+  end
+  
+  if self.quarryStatus == QuarryStatus.init then
+    -- Confirm valid inventories are at the input and output sides.
+    robnav.turnTo(self.inventoryInput)
+    if not icontroller.getInventorySize(self.inventoryInput < 2 and self.inventoryInput or sides.front) then
+      robnav.turnTo(sides.front)
+      error("no valid input inventory found, config[\"inventoryInput\"] is set to side " .. sides[self.inventoryInput])
+    end
+    robnav.turnTo(self.inventoryOutput)
+    if not icontroller.getInventorySize(self.inventoryOutput < 2 and self.inventoryOutput or sides.front) then
+      robnav.turnTo(sides.front)
+      error("no valid output inventory found, config[\"inventoryOutput\"] is set to side " .. sides[self.inventoryOutput])
     end
     
     self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
     
-    -- Wait until fully recharged.
-    while computer.maxEnergy() - computer.energy() > 50 do
-      os.sleep(2.0)
-      dlog.out("run", "waiting for energy...")
-    end
+    self.quarryStatus = QuarryStatus.working
+    return self:run()
     
-    -- Go back to working area.
-    dlog.out("run", "moving back to working position.")
-    self.miner:selectStockType(lastSelectedStockType)
-    self:moveTo(xLast, math.min(yLast + 2, -1), zLast)
-    if robnav.y > yLast then
-      self.miner:forceMove(sides.bottom)
+  elseif self.quarryStatus == QuarryStatus.working then
+    self.miner.withinMainCoroutine = true
+    local status, result = coroutine.resume(self.mainCoroutine)
+    self.miner.withinMainCoroutine = false
+    if not status then
+      error(result)
     end
-    if robnav.y > yLast then
-      self.miner:forceMove(sides.bottom)
+    dlog.out("run", "return reason = ", self.miner.ReturnReasons[result])
+    self.lastReturnReason = result
+    self.xLast, self.yLast, self.zLast, self.rLast = robnav.getCoords()
+    self.lastSelectedStockType = self.miner.selectedStockType
+    
+    self.quarryStatus = QuarryStatus.resupply
+    return self:run()
+    
+  elseif self.quarryStatus == QuarryStatus.resupply then
+    if not self:resupply() then
+      return
     end
-    robnav.turnTo(rLast)
-    xassert(robnav.x == xLast and robnav.y == yLast and robnav.z == zLast and robnav.r == rLast)
+    self.quarryStatus = QuarryStatus.returnToWork
+    return self:run()
+    
+  elseif self.quarryStatus == QuarryStatus.returnToWork then
+    self:returnToWork()
+    self.quarryStatus = QuarryStatus.working
+    return self:run()
+    
   end
 end
 
@@ -477,8 +562,8 @@ function FastQuarry:layerDown()
   self.miner:forceTurn(true)
   self.miner:forceTurn(true)
 end
-function FastQuarry:quarryStart()
-  self.miner:forceDig(sides.bottom)
+function FastQuarry:quarryStart()      -- FIXME this could potentially use some improvement, need to test ##############################################################################
+  self.miner:forceDig(sides.bottom)    -- we may want some of this code to run regardless of whether quarryStart() has been already called, right now it would get suppressed with the quarryWorkingStage logic
   self.miner:forceMove(sides.bottom)
   if robnav.y <= self.yMin + 1 then
     FastQuarry.layerMine = BasicQuarry.layerMine
@@ -628,7 +713,129 @@ function MoveTestQuarry:quarryMain()
 end
 
 
-local USAGE_STRING = [[Usage: tquarry [OPTION]... LENGTH WIDTH DEPTH
+-- CrashHandler class. FIXME comments ############################################
+---@class CrashHandler
+local CrashHandler = {}
+
+-- Hook up errors to throw on access to nil class members.
+setmetatable(CrashHandler, {
+  __index = function(t, k)
+    error("attempt to read undefined member " .. tostring(k) .. " in CrashHandler class.", 2)
+  end
+})
+
+function CrashHandler:new(reportFilename)
+  self.__index = self
+  self = setmetatable({}, self)
+  
+  self.reportFilename = reportFilename
+  self.state = {}
+  
+  return self
+end
+
+function CrashHandler:register(quarry, robnav)
+  self.state.quarry = quarry
+  self.state.robnav = robnav
+end
+
+function CrashHandler:createReport(message)
+  if next(self.state) == nil then
+    return false, "CrashHandler not yet registered."
+  end
+  local reportData = {}
+  
+  local quarryState, quarryReport = self.state.quarry, {}
+  local quarryTrackedVars = [[
+    xDir zDir
+    xMax yMin zMax
+    quarryStatus
+    quarryWorkingStage
+    xLast yLast zLast rLast
+    lastSelectedStockType
+    lastReturnReason
+    buildStairsStage
+  ]]
+  for k in string.gmatch(quarryTrackedVars, "%S+") do
+    quarryReport[k] = quarryState[k]
+  end
+  reportData.quarry = quarryReport
+  
+  local minerState, minerReport = self.state.quarry.miner, {}
+  local minerTrackedVars = [[
+    toolDurabilityReturn toolDurabilityMin lastToolDurability
+    currentStockSlots
+    selectedStockType
+  ]]
+  for k in string.gmatch(minerTrackedVars, "%S+") do
+    minerReport[k] = minerState[k]
+  end
+  reportData.miner = minerReport
+  
+  local robnavState, robnavReport = self.state.robnav, {}
+  for k in string.gmatch("x y z r", "%S+") do
+    robnavReport[k] = robnavState[k]
+  end
+  reportData.robnav = robnavReport
+  
+  local file = io.open(self.reportFilename, "w")
+  if not file then
+    return false, "Failed to write to file \"" .. self.reportFilename .. "\"."
+  end
+  file:write("-- Last error (", os.date(), "):\n")
+  message = string.gsub(message, "\t", "  ")
+  file:write("-- ", string.gsub(message, "\n", "\n-- "), "\n\n")
+  
+  file:write(serialization.serialize(reportData), "\n")
+  file:close()
+  
+  return true
+end
+
+function CrashHandler:restoreReport()
+  if next(self.state) == nil then
+    return false, "CrashHandler not yet registered."
+  end
+  
+  local file = io.open(self.reportFilename, "r")
+  if not file then
+    return false, "Failed to read from file \"" .. self.reportFilename .. "\"."
+  end
+  
+  local reportData
+  local lineNum = 1
+  for line in file:lines() do
+    if line ~= "" and not string.find(line, "^%s*%-%-") then
+      if reportData then
+        return false, "In file " .. self.reportFilename .. ":" .. lineNum .. ": Unexpected data."
+      end
+      reportData = serialization.unserialize(line)
+    end
+    lineNum = lineNum + 1
+  end
+  file:close()
+  if not reportData then
+    return false, "In file " .. self.reportFilename .. ":" .. lineNum .. ": End of file reached, no report data found."
+  end
+  
+  dlog.out("CrashHandler:restoreReport", "reportData:", reportData)
+  
+  local quarryState = self.state.quarry
+  for k, v in pairs(reportData.quarry) do
+    quarryState[k] = v
+  end
+  local minerState = self.state.quarry.miner
+  for k, v in pairs(reportData.miner) do
+    minerState[k] = v
+  end
+  self.state.robnav.setCoords(reportData.robnav.x, reportData.robnav.y, reportData.robnav.z, reportData.robnav.r)
+  
+  return true
+end
+
+
+local USAGE_STRING = [[
+Usage: tquarry [OPTION]... LENGTH WIDTH DEPTH
 
 Options:
   -h, --help        display help message and exit
@@ -636,6 +843,16 @@ Options:
 To configure, run: edit /etc/tquarry.cfg
 For more information, run: man tquarry
 ]]
+
+local crashHandler = CrashHandler:new("/home/tquarry.crash")
+
+local function interruptHandler()
+  dlog.out("interruptHandler", "Caught SIGINT.")
+  crashHandler:createReport("received interrupt signal.")
+  dlog.osBlockNewGlobals(false)
+  computer.shutdown()
+  return false
+end
 
 
 local function main(...)
@@ -718,12 +935,39 @@ local function main(...)
     quarryClass = MoveTestQuarry
   end
   
-  io.write("Starting quarry!\n")
   local quarry = quarryClass:new(args[1], args[2], args[3], cfg)
+  crashHandler:register(quarry, robnav)
+  if filesystem.exists(crashHandler.reportFilename) then
+    io.write("Found previous state cached in \"", crashHandler.reportFilename, "\".\n")
+    io.write("Do you want to continue from the last position?\n(Y/n): ")
+    local input = io.read()
+    if not (type(input) ~= "string" or string.lower(input) == "n" or string.lower(input) == "no") then
+      io.write("Restoring quarry state...\n")
+      local status, err = crashHandler:restoreReport()
+      if not status then
+        io.stderr:write("tquarry: unable to restore state: ", err)
+        return 2
+      end
+    end
+    
+    
+    -- FIXME remove the state file here and continue main program #############################################
+    return 0
+    
+    
+  end
+  
+  event.listen("interrupted", interruptHandler)
+  io.write("Starting quarry!\n")
+  io.write("Press Ctrl+C for emergency shutdown.\n")
   quarry:run()
   return 0
 end
 
 local status, ret = dlog.handleError(xpcall(main, debug.traceback, ...))
+event.ignore("interrupted", interruptHandler)
+if not status then
+  crashHandler:createReport(tostring(ret))
+end
 dlog.osBlockNewGlobals(false)
 os.exit(status and ret or 1)
