@@ -421,6 +421,7 @@ end
 -- 
 ---@param direction Sides
 function Miner:forceMove(direction)
+  -- Start by pulling events to allow a context switch before the robot actually moves.
   computer.pullSignal(0)
   if self.withinMainCoroutine and computer.energy() <= self.energyLevelReturn then
     coroutine.yield(self.ReturnReasons.energyLow)

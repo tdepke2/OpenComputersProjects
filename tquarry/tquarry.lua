@@ -40,6 +40,7 @@ local crobot = component.robot
 local event = require("event")
 local filesystem = require("filesystem")
 local icontroller = component.inventory_controller
+local keyboard = require("keyboard")
 local serialization = require("serialization")
 local shell = require("shell")
 local sides = require("sides")
@@ -713,7 +714,11 @@ function MoveTestQuarry:quarryMain()
 end
 
 
--- CrashHandler class. FIXME comments ############################################
+-- The CrashHandler runs right before the program ends in a failed state. This
+-- captures a detailed error and the current state of the system, which are
+-- written to a file. The state can be restored the next time the program runs
+-- to pick up where it was stopped previously. In order for this to work, state
+-- machines need to be used quite frequently in the program control flow.
 ---@class CrashHandler
 local CrashHandler = {}
 
@@ -724,6 +729,12 @@ setmetatable(CrashHandler, {
   end
 })
 
+
+-- Create a new CrashHandler instance. The `reportFilename` is the path to the
+-- crash report that will be generated.
+-- 
+---@param reportFilename string
+---@return CrashHandler
 function CrashHandler:new(reportFilename)
   self.__index = self
   self = setmetatable({}, self)
@@ -734,11 +745,25 @@ function CrashHandler:new(reportFilename)
   return self
 end
 
+
+-- Sets up data structures that reports will pull state from. If this is not
+-- set, attempting to create or restore reports will have no effect.
+-- 
+---@param quarry Quarry
+---@param robnav table
 function CrashHandler:register(quarry, robnav)
   self.state.quarry = quarry
   self.state.robnav = robnav
 end
 
+
+-- Serializes state from cached data structures and writes this to a file. The
+-- `message` is written in a comment at the top, it can contain a full stack
+-- trace of the error. If unsuccessful, returns false and an error message.
+-- 
+---@param message string
+---@return boolean success
+---@return string|nil err
 function CrashHandler:createReport(message)
   if next(self.state) == nil then
     return false, "CrashHandler not yet registered."
@@ -792,6 +817,14 @@ function CrashHandler:createReport(message)
   return true
 end
 
+
+-- Deserializes state saved in an error report file and writes this back into
+-- cached data structures. Not all of the state is written over as-is, some of
+-- the cached data requires modification through specific functions so there is
+-- some flexibility here. If unsuccessful, returns false and an error message.
+-- 
+---@return boolean success
+---@return string|nil err
 function CrashHandler:restoreReport()
   if next(self.state) == nil then
     return false, "CrashHandler not yet registered."
@@ -846,12 +879,26 @@ For more information, run: man tquarry
 
 local crashHandler = CrashHandler:new("/home/tquarry.crash")
 
-local function interruptHandler()
-  dlog.out("interruptHandler", "Caught SIGINT.")
-  crashHandler:createReport("received interrupt signal.")
-  dlog.osBlockNewGlobals(false)
-  computer.shutdown()
-  return false
+-- Waits for an interrupt signal to create a CrashHandler report before shutting
+-- down the system. Using a shutdown to stop the program isn't ideal, but it
+-- allows the main program to run without depending on the thread library (which
+-- would add a bit of memory overhead). Also note that we bind this to signals
+-- of type "key_down" instead of "interrupted". Some experiments have shown that
+-- the "interrupted" signal is very unlikely to get processed while the robot is
+-- constantly doing work (like mining and moving).
+local function interruptHandler(_, _, char, code, _)
+  if keyboard.isControl(char) then
+    if code == keyboard.keys.c then
+      dlog.out("interruptHandler", "Caught SIGINT.")
+      crashHandler:createReport("received interrupt signal.")
+      dlog.osBlockNewGlobals(false)
+      computer.shutdown()
+      return false
+    elseif code == keyboard.keys.lcontrol then
+      -- Pull events for a little bit since we anticipate the control-c combo.
+      computer.pullSignal(0.1)
+    end
+  end
 end
 
 
@@ -952,12 +999,13 @@ local function main(...)
     
     
     -- FIXME remove the state file here and continue main program #############################################
-    return 0
+    --return 0
+    -- FIXME need to move this logic up so that running "tquarry" without args will still work.
     
     
   end
   
-  event.listen("interrupted", interruptHandler)
+  event.listen("key_down", interruptHandler)
   io.write("Starting quarry!\n")
   io.write("Press Ctrl+C for emergency shutdown.\n")
   quarry:run()
@@ -965,7 +1013,7 @@ local function main(...)
 end
 
 local status, ret = dlog.handleError(xpcall(main, debug.traceback, ...))
-event.ignore("interrupted", interruptHandler)
+event.ignore("key_down", interruptHandler)
 if not status then
   crashHandler:createReport(tostring(ret))
 end
