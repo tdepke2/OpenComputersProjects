@@ -1,6 +1,5 @@
 --[[
 todo:
-  * cache state to file (for current level) and prompt to pick up at that point so some state is remembered during sudden program halt?
   * show robot status with setLightColor().
   * config option to use generators only, ignore any chargers. also should have robot wait for energy to fill completely at start.
 
@@ -12,6 +11,7 @@ done:
   * dynamically compute energyLevelMin?
   * support for generators?
   * do not stock building blocks if we are not building anything
+  * cache state to file and prompt to pick up at that point so some state is remembered during sudden program halt.
 
 to test:
   * 
@@ -235,7 +235,10 @@ end
 -- Puts the robot in position for the first row on the first layer. This is a
 -- no-op by default.
 function Quarry:quarryStart()
-  
+  if self.quarryWorkingStage ~= 0 then
+    return
+  end
+  self.quarryWorkingStage = 1
 end
 
 -- Called after quarryStart() to mine the full area, layer by layer.
@@ -243,11 +246,15 @@ end
 -- move the robot in a zig-zag pattern, going right-to-left on one layer
 -- followed by left-to-right on the next.
 function Quarry:quarryMain()
+  if self.quarryWorkingStage ~= 1 then
+    return
+  end
   while true do
     self:layerMine()
-    if (robnav.z == self.zMax and self.zDir == 1) or (robnav.z == 0 and self.zDir == -1) then
-      if (robnav.x == self.xMax and self.xDir == 1) or (robnav.x == 0 and self.xDir == -1) then
-        if robnav.y == self.yMin then
+    if (robnav.z >= self.zMax and self.zDir == 1) or (robnav.z <= 0 and self.zDir == -1) then
+      if (robnav.x >= self.xMax and self.xDir == 1) or (robnav.x <= 0 and self.xDir == -1) then
+        if robnav.y <= self.yMin then
+          self.quarryWorkingStage = 2
           return
         end
         self:layerDown()
@@ -266,7 +273,10 @@ end
 -- Applies any finishing actions the robot should take at the end. This is a
 -- no-op by default.
 function Quarry:quarryEnd()
-  
+  if self.quarryWorkingStage ~= 2 then
+    return
+  end
+  self.quarryWorkingStage = 3
 end
 
 
@@ -438,18 +448,9 @@ function Quarry:run()
   if not self.mainCoroutine then
     if self.buildStairsStage ~= 1 then
       self.mainCoroutine = coroutine.create(function()
-        if self.quarryWorkingStage == 0 then
-          self:quarryStart()
-          self.quarryWorkingStage = 1
-        end
-        if self.quarryWorkingStage == 1 then
-          self:quarryMain()
-          self.quarryWorkingStage = 2
-        end
-        if self.quarryWorkingStage == 2 then
-          self:quarryEnd()
-          self.quarryWorkingStage = 3
-        end
+        self:quarryStart()
+        self:quarryMain()
+        self:quarryEnd()
         return self.miner.ReturnReasons.minerDone
       end)
     else
@@ -534,8 +535,12 @@ function BasicQuarry:layerDown()
   self.miner:forceTurn(true)
 end
 function BasicQuarry:quarryStart()
+  if self.quarryWorkingStage ~= 0 then
+    return
+  end
   self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
+  self.quarryWorkingStage = 1
 end
 
 
@@ -563,26 +568,35 @@ function FastQuarry:layerDown()
   self.miner:forceTurn(true)
   self.miner:forceTurn(true)
 end
-function FastQuarry:quarryStart()      -- FIXME this could potentially use some improvement, need to test ##############################################################################
-  self.miner:forceDig(sides.bottom)    -- we may want some of this code to run regardless of whether quarryStart() has been already called, right now it would get suppressed with the quarryWorkingStage logic
-  self.miner:forceMove(sides.bottom)
-  if robnav.y <= self.yMin + 1 then
+function FastQuarry:quarryStart()
+  if self.yMin >= -2 then
     FastQuarry.layerMine = BasicQuarry.layerMine
     FastQuarry.layerTurn = BasicQuarry.layerTurn
     FastQuarry.layerDown = BasicQuarry.layerDown
     FastQuarry.quarryMain = Quarry.quarryMain
-  else
+  end
+  if self.quarryWorkingStage ~= 0 then
+    return
+  end
+  self.miner:forceDig(sides.bottom)
+  self.miner:forceMove(sides.bottom)
+  if self.yMin < -2 then
     self.miner:forceDig(sides.bottom)
     self.miner:forceMove(sides.bottom)
   end
+  self.quarryWorkingStage = 1
 end
 function FastQuarry:quarryMain()
+  if self.quarryWorkingStage ~= 1 then
+    return
+  end
   local useBasicQuarryMain = false
   while true do
     self:layerMine()
-    if (robnav.z == self.zMax and self.zDir == 1) or (robnav.z == 0 and self.zDir == -1) then
-      if (robnav.x == self.xMax and self.xDir == 1) or (robnav.x == 0 and self.xDir == -1) then
-        if robnav.y == self.yMin + (useBasicQuarryMain and 0 or 1) then
+    if (robnav.z >= self.zMax and self.zDir == 1) or (robnav.z <= 0 and self.zDir == -1) then
+      if (robnav.x >= self.xMax and self.xDir == 1) or (robnav.x <= 0 and self.xDir == -1) then
+        if robnav.y <= self.yMin + (useBasicQuarryMain and 0 or 1) then
+          self.quarryWorkingStage = 2
           return
         elseif not useBasicQuarryMain and robnav.y <= self.yMin + 3 then
           FastQuarry.layerMine = BasicQuarry.layerMine
@@ -631,9 +645,13 @@ function FillFloorQuarry:layerDown()
   self.miner:forceTurn(true)
 end
 function FillFloorQuarry:quarryStart()
+  if self.quarryWorkingStage ~= 0 then
+    return
+  end
   self.miner:selectStockType(self.miner.StockTypes.buildBlock, true)
   self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
+  self.quarryWorkingStage = 1
 end
 
 
@@ -680,6 +698,9 @@ function FillWallQuarry:layerDown()
   self.miner:forceTurn(true)
 end
 function FillWallQuarry:quarryStart()
+  if self.quarryWorkingStage ~= 0 then
+    return
+  end
   self.miner:selectStockType(self.miner.StockTypes.buildBlock, true)
   self.miner:forceDig(sides.bottom)
   self.miner:forceMove(sides.bottom)
@@ -690,6 +711,7 @@ function FillWallQuarry:quarryStart()
   end
   self.miner:forceTurn(false)
   self.miner:forceTurn(false)
+  self.quarryWorkingStage = 1
 end
 
 
@@ -701,6 +723,9 @@ function MoveTestQuarry:quarryStart()
   self.miner:forceMove(sides.bottom)
 end
 function MoveTestQuarry:quarryMain()
+  if self.quarryWorkingStage ~= 1 then
+    return
+  end
   while robnav.z < self.zMax do
     self.miner:forceMove(sides.front)
   end
@@ -711,6 +736,7 @@ function MoveTestQuarry:quarryMain()
   while robnav.y > self.yMin do
     self.miner:forceMove(sides.bottom)
   end
+  self.quarryWorkingStage = 2
 end
 
 
@@ -818,18 +844,12 @@ function CrashHandler:createReport(message)
 end
 
 
--- Deserializes state saved in an error report file and writes this back into
--- cached data structures. Not all of the state is written over as-is, some of
--- the cached data requires modification through specific functions so there is
--- some flexibility here. If unsuccessful, returns false and an error message.
+-- Returns state that was saved in an error report file. If unsuccessful,
+-- returns false and an error message.
 -- 
 ---@return boolean success
----@return string|nil err
-function CrashHandler:restoreReport()
-  if next(self.state) == nil then
-    return false, "CrashHandler not yet registered."
-  end
-  
+---@return string|table
+function CrashHandler:loadReport()
   local file = io.open(self.reportFilename, "r")
   if not file then
     return false, "Failed to read from file \"" .. self.reportFilename .. "\"."
@@ -851,7 +871,29 @@ function CrashHandler:restoreReport()
     return false, "In file " .. self.reportFilename .. ":" .. lineNum .. ": End of file reached, no report data found."
   end
   
-  dlog.out("CrashHandler:restoreReport", "reportData:", reportData)
+  dlog.out("CrashHandler:loadReport", "reportData:", reportData)
+  
+  return true, reportData
+end
+
+
+-- Deserializes state saved in an error report file and writes this back into
+-- cached data structures. Not all of the state is written over as-is, some of
+-- the cached data requires modification through specific functions so there is
+-- some flexibility here. If unsuccessful, returns false and an error message.
+-- 
+---@return boolean success
+---@return string|nil err
+function CrashHandler:restoreReport()
+  if next(self.state) == nil then
+    return false, "CrashHandler not yet registered."
+  end
+  
+  local status, reportData = self:loadReport()
+  if not status then
+    return false, reportData
+  end
+  ---@cast reportData -string
   
   local quarryState = self.state.quarry
   for k, v in pairs(reportData.quarry) do
@@ -916,7 +958,37 @@ local function main(...)
     config.saveFile(cfgPath, cfg, cfgFormat, cfgTypes)
   end
   
-  if #args ~= 3 or opts["h"] or opts["help"] then
+  if opts["h"] or opts["help"] then
+    io.write(USAGE_STRING)
+    return 0
+  end
+  
+  -- Check for a crash report from a previous run of the program.
+  local restoreFromCrash = false
+  if filesystem.exists(crashHandler.reportFilename) then
+    local status, reportData = crashHandler:loadReport()
+    xassert(status, reportData)
+    ---@cast reportData -string
+    io.write("Found previous state cached in \"", crashHandler.reportFilename, "\".\n")
+    io.write("Quarry size: ", reportData.quarry.xMax + 1, " ", reportData.quarry.zMax + 1, " ", -reportData.quarry.yMin, "\n")
+    io.write("Position: ", reportData.robnav.x, ", ", reportData.robnav.y, ", ", reportData.robnav.z, ", ", sides[reportData.robnav.r], "\n")
+    io.write("Do you want to continue from this state?\n(Y/n): ")
+    local input = io.read()
+    if type(input) ~= "string" then
+      io.write("Exiting...\n")
+      return 0
+    elseif string.lower(input) ~= "n" and string.lower(input) ~= "no" then
+      io.write("Restoring quarry state...\n")
+      restoreFromCrash = true
+      args[1] = reportData.quarry.xMax + 1
+      args[2] = reportData.quarry.zMax + 1
+      args[3] = -reportData.quarry.yMin
+    else
+      filesystem.remove(crashHandler.reportFilename)
+    end
+  end
+  
+  if #args ~= 3 then
     io.write(USAGE_STRING)
     return 0
   end
@@ -984,25 +1056,13 @@ local function main(...)
   
   local quarry = quarryClass:new(args[1], args[2], args[3], cfg)
   crashHandler:register(quarry, robnav)
-  if filesystem.exists(crashHandler.reportFilename) then
-    io.write("Found previous state cached in \"", crashHandler.reportFilename, "\".\n")
-    io.write("Do you want to continue from the last position?\n(Y/n): ")
-    local input = io.read()
-    if not (type(input) ~= "string" or string.lower(input) == "n" or string.lower(input) == "no") then
-      io.write("Restoring quarry state...\n")
-      local status, err = crashHandler:restoreReport()
-      if not status then
-        io.stderr:write("tquarry: unable to restore state: ", err)
-        return 2
-      end
+  if restoreFromCrash then
+    local status, err = crashHandler:restoreReport()
+    if not status then
+      io.stderr:write("tquarry: unable to restore state: ", err)
+      return 2
     end
-    
-    
-    -- FIXME remove the state file here and continue main program #############################################
-    --return 0
-    -- FIXME need to move this logic up so that running "tquarry" without args will still work.
-    
-    
+    filesystem.remove(crashHandler.reportFilename)
   end
   
   event.listen("key_down", interruptHandler)
