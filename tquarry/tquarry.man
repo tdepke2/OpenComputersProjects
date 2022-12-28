@@ -41,15 +41,19 @@
   
   * Experience Upgrade (improves robot stats while it digs)
   
-  * Generator Upgrade (refuels the robot on the go, see `tquarry.cfg` for details)
+  * Generator Upgrade (refuels the robot on the go, see configuration file for details)
   
   * Solar Generator Upgrade
   
-  Once the robot is assembled, it should be placed at the quarry "restock point" (also called the home position). The restock point should have a Charger (provided with RF and activated with a redstone signal) and an inventory or two (like a Chest). These blocks can be adjacent to the top or sides of the robot (but not the bottom since the robot digs this direction). The default configuration assumes that the input inventory (full of pickaxes and coal/charcoal fuel) is on the right side of the robot, and the output inventory is behind the robot.
+  Once the robot is assembled, it should be placed at the quarry "restock point" (also called the home position). The restock point should have a Charger (provided with RF and activated with a redstone signal) and an inventory or two (like a Chest). These blocks can be adjacent to the top or sides of the robot (but not the bottom since the robot digs this direction). The default configuration assumes that the input inventory (full of pickaxes and coal/charcoal fuel) is on the right side of the robot, and the output inventory is behind the robot. If the robot is equipped with generator upgrades, the Charger can be skipped (see `energyStartLevel` in the configuration).
   
   With the robot at the restock point, running the program will mine out the rectangular area immediately below the robot defined by LENGTH, WIDTH, and DEPTH. From the robot's perspective, these dimensions correspond to the number of blocks to the left-side (minus 1), in front of (minus 1), and below the robot.
-  
+
+## CONFIGURATION
   The first time the program is run, it will create a configuration file in `/etc/tquarry.cfg`. Edit this file to tweak various settings, such as what type of quarry is dug, which sides the input/output inventories are located, what items the robot considers as digging tools, whether to build a staircase when finished, etc. The default configuration can be restored by deleting/renaming this file.
 
 ## OPTIONS
   `-h`, `--help`  display help message and exit
+
+## ERRORS
+  The robot will do what it can to remove obstacles and knock entities out of the way, but it's possible to get stuck in some cases. If the robot encounters immobile entities with a lot of health, unbreakable blocks, regenerating blocks, etc. then it will stop where it is and create a crash report (and eventually shut down as the energy drains). Crash reports are saved in `/home/tquarry.crash` and contain details about the error as well as the state the robot was in before failure. If the robot is left where it is, it can be recovered and continue mining where it left off by running the program again. The crash recovery system is not perfect, but it can get the robot working again in most cases.

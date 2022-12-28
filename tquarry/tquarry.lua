@@ -1,7 +1,6 @@
 --[[
 todo:
-  * show robot status with setLightColor().
-  * config option to use generators only, ignore any chargers. also should have robot wait for energy to fill completely at start.
+  
 
 done:
   * convert the coroutine checks to a function? maybe nah
@@ -12,6 +11,8 @@ done:
   * support for generators?
   * do not stock building blocks if we are not building anything
   * cache state to file and prompt to pick up at that point so some state is remembered during sudden program halt.
+  * config option to use generators only, ignore any chargers. also should have robot wait for energy to fill completely at start.
+  * show robot status with setLightColor().
 
 to test:
   * 
@@ -132,7 +133,14 @@ the restock point. Valid sides are: "bottom", "top", "back", "front",
 
 Similar to inventoryInput, but for the inventory robot will dump items to.]]
     },
-    quarryType = {_order_ = 4, "QuarryType", "Fast", [[
+    energyStartLevel = {_order_ = 4, "string|number", "99%", [[
+
+Minimum energy level for quarry to start running or finish a resupply trip.
+If using only generators on the robot and no charger, set this below the
+generator.enableLevel value. This can be a number that specifies the exact
+energy amount, or a string value with percent sign for a percentage level.]]
+    },
+    quarryType = {_order_ = 5, "QuarryType", "Fast", [[
 
 Controls mining and building patterns for the quarry, options are: "Basic"
 simply mines out the rectangular area, "Fast" mines three layers at a time
@@ -141,7 +149,7 @@ working layer (for when a flight upgrade is not in use), "FillWall" ensures a
 solid wall at the borders of the rectangular area (prevents liquids from
 spilling into quarry).]]
     },
-    buildStaircase = {_order_ = 5, "boolean", false, [[
+    buildStaircase = {_order_ = 6, "boolean", false, [[
 
 When set to true, the robot will build a staircase once the quarry is
 finished (stairs go clockwise around edges of quarry to the top and end at
@@ -189,6 +197,16 @@ function Quarry:new(length, width, depth, cfg)
   -- Sides where robot will look to transfer items at the restock point.
   self.inventoryInput = sides[cfg.inventoryInput]
   self.inventoryOutput = sides[cfg.inventoryOutput]
+  
+  -- Energy level required to start working.
+  self.energyStartLevel = cfg.energyStartLevel
+  if type(self.energyStartLevel) == "string" then
+    if string.find(self.energyStartLevel, "%%") then
+      self.energyStartLevel = tonumber((string.gsub(self.energyStartLevel, "%%", ""))) * 0.01 * computer.maxEnergy()
+    else
+      self.energyStartLevel = tonumber(self.energyStartLevel)
+    end
+  end
   
   -- Direction robot is moving in the current layer (position delta).
   self.xDir = 1
@@ -412,9 +430,10 @@ function Quarry:resupply()
   self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
   
   -- Wait until fully recharged.
-  while computer.maxEnergy() - computer.energy() > 100 do
+  while computer.energy() < self.energyStartLevel do
+    dlog.out("resupply", "waiting for energy...")
+    self.miner:updateGenerators()
     os.sleep(2.0)
-    dlog.out("run", "waiting for energy...")
   end
   return true
 end
@@ -467,6 +486,8 @@ function Quarry:run()
   end
   
   if self.quarryStatus == QuarryStatus.init then
+    crobot.setLightColor(0x00FFFF)  -- Cyan
+    
     -- Confirm valid inventories are at the input and output sides.
     robnav.turnTo(self.inventoryInput)
     if not icontroller.getInventorySize(self.inventoryInput < 2 and self.inventoryInput or sides.front) then
@@ -481,10 +502,18 @@ function Quarry:run()
     
     self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
     
+    -- Wait until fully recharged.
+    while computer.energy() < self.energyStartLevel do
+      dlog.out("run", "waiting for energy...")
+      self.miner:updateGenerators()
+      os.sleep(2.0)
+    end
+    
     self.quarryStatus = QuarryStatus.working
     return self:run()
     
   elseif self.quarryStatus == QuarryStatus.working then
+    crobot.setLightColor(0x00FF00)  -- Green
     self.miner.withinMainCoroutine = true
     local status, result = coroutine.resume(self.mainCoroutine)
     self.miner.withinMainCoroutine = false
@@ -500,6 +529,7 @@ function Quarry:run()
     return self:run()
     
   elseif self.quarryStatus == QuarryStatus.resupply then
+    crobot.setLightColor(0x00FFFF)  -- Cyan
     if not self:resupply() then
       return
     end
@@ -507,6 +537,7 @@ function Quarry:run()
     return self:run()
     
   elseif self.quarryStatus == QuarryStatus.returnToWork then
+    crobot.setLightColor(0xFF00FF)  -- Magenta
     self:returnToWork()
     self.quarryStatus = QuarryStatus.working
     return self:run()
@@ -934,6 +965,7 @@ local function interruptHandler(_, _, char, code, _)
       dlog.out("interruptHandler", "Caught SIGINT.")
       crashHandler:createReport("received interrupt signal.")
       dlog.osBlockNewGlobals(false)
+      crobot.setLightColor(0xF23030)
       computer.shutdown()
       return false
     elseif code == keyboard.keys.lcontrol then
@@ -1078,4 +1110,5 @@ if not status then
   crashHandler:createReport(tostring(ret))
 end
 dlog.osBlockNewGlobals(false)
+crobot.setLightColor(0xF23030)
 os.exit(status and ret or 1)

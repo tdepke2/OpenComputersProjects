@@ -705,8 +705,9 @@ function Miner:itemDeposit(stockedItems, outputSide)
       crobot.select(slot)
       crobot.drop(outputSide)
       while crobot.count() > 0 do
-        os.sleep(2.0)
         dlog.out("itemDeposit", "sleep...")
+        self:updateGenerators()
+        os.sleep(2.0)
         crobot.drop(outputSide)
       end
     end
@@ -720,8 +721,9 @@ function Miner:itemDeposit(stockedItems, outputSide)
   if toolItem and toolItem.maxDamage > 0 and toolItem.maxDamage - toolItem.damage <= self.toolHealthReturn + self.toolHealthBias then
     crobot.drop(outputSide)
     while crobot.count() > 0 do
-      os.sleep(2.0)
       dlog.out("itemDeposit", "sleep...")
+      self:updateGenerators()
+      os.sleep(2.0)
       crobot.drop(outputSide)
     end
   end
@@ -767,8 +769,9 @@ function Miner:itemRestock(stockedItems, inputSide)
       if bestToolSlot ~= -1 then
         break
       end
-      os.sleep(2.0)
       dlog.out("itemRestock", "waiting for mining tool...")
+      self:updateGenerators()
+      os.sleep(2.0)
     end
     
     xassert(icontroller.suckFromSlot(inputSide, bestToolSlot))
@@ -957,8 +960,9 @@ function Miner:fullResupply(inputSide, outputSide)
       break
     end
     
-    os.sleep(2.0)
     dlog.out("fullResupply", "waiting for more items...")
+    self:updateGenerators()
+    os.sleep(2.0)
   end
   dlog.out("fullResupply", "self.currentStockSlots:", self.currentStockSlots)
   
