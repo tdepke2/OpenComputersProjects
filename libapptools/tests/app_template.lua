@@ -24,15 +24,17 @@ local serialization = require("serialization")
 local text = require("text")
 local thread = require("thread")
 
--- User libraries.
+-- Setup for include and dlog.
 local include = require("include")
 local dlog = include("dlog")
--- Setting dlog mode to debug enables message output to stdout and file logging.
--- Other dlog modes are available to disable logging and optimize some features when testing is done.
-dlog.mode("debug")
+-- Setting dlog mode to env allows user to select dlog mode from the `DLOG_MODE` environment variable.
+dlog.mode("env", "/tmp/app_template.log")
+
+-- User libraries.
 local app = include("app"):new()
 -- This is used to assert new global variables do not get defined (generally a good practice to avoid the use of globals).
 -- It runs in a cleanup task to undo the globals blocking right before the application stops.
+-- Note that this function does nothing in the default dlog mode, try enabling debug mode to test it.
 app:pushCleanupTask(dlog.osBlockNewGlobals, true, false)
 local dstructs = include("dstructs")
 local mnet = include("mnet")
@@ -122,8 +124,12 @@ function MyApp:setupThreadFunc()
   -- Send a message to any active servers.
   mrpc_server.async.test_message("*", "hello! anyone there?")
   
+  dlog.subsystems()["setup"] = true
+  dlog.out("setup", "Enabled logging for setup subsystem.")
+  
   dlog.out("setup", "Setup done! Enter commands at the prompt for more options, or press Ctrl + C to exit.")
-  dlog.out("setup", "Take a look in \"/tmp/messages\" to see all dlog messages.")
+  dlog.out("setup", "Try changing the dlog mode to \"debug\" to enable file logging (stop this program, and run \"set DLOG_MODE=debug\").")
+  dlog.out("setup", "When debug mode is enabled, take a look in \"/tmp/app_template.log\" to see all dlog messages.")
   
   app:threadDone()
 end

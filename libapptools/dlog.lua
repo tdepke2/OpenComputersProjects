@@ -30,10 +30,10 @@ dlog.maxMessageLength = nil
 
 -- Private data members, no touchy:
 local dlogFileOutput = nil
-local dlogStandardOutput = true
-local dlogSubsystems = {["error"] = true}
+local dlogStandardOutput = false
+local dlogSubsystems = {}
 local dlogEnv2 = nil
-local dlogMode = 2
+local dlogMode = 0
 local dlogFunctionBackups = {}
 
 
@@ -45,29 +45,52 @@ local dlogFunctionBackups = {}
 -- provided, the mode is set to this value. The valid modes are:
 -- 
 -- * `debug` (all subsystems on, logging enabled for stdout and `/tmp/messages`)
--- * `release` (default mode, only error logging to stdout)
--- * `optimize1` (function `dlog.osBlockNewGlobals()` is disabled)
+-- * `release` (only error logging to stdout)
+-- * `optimize1` (default mode, function `dlog.osBlockNewGlobals()` is disabled)
 -- * `optimize2` (function `dlog.checkArgs()` is disabled)
 -- * `optimize3` (functions `dlog.out()` and `dlog.fileOutput()` are disabled)
 -- * `optimize4` (functions `xassert()` and `dlog.xassert()` are disabled)
+-- * `env` (sets the mode from an environment variable, or uses the default)
+-- 
+-- For mode `env`, the environment variable `DLOG_MODE` can be assigned a string
+-- value containing the desired mode. This allows enabling/disabling debugging
+-- info without editing the program code. An additional environment variable
+-- `DLOG_SUB` can be assigned a comma-separated string of subsystems, it will
+-- default to "error=true".
 -- 
 -- Each mode includes behavior from the previous modes (`optimize4` pretty much
 -- disables everything). The mode is intended to be set once right after dlog is
--- loaded in the main program, it can be changed at any time though. Returns the
--- current mode.
+-- loaded in the main program, it can be changed at any time though. If
+-- defaultLogFile is provided, this is used as the path to the log file instead
+-- of `/tmp/messages`. This function returns the current mode.
 -- 
 -- Note: when using debug mode with multiple threads, be careful to call this
 -- function in the right place (see warnings in `dlog.fileOutput()`).
 -- 
 ---@param newMode string|nil
+---@param defaultLogFile string|nil
 ---@return string
-function dlog.mode(newMode)
+function dlog.mode(newMode, defaultLogFile)
+  defaultLogFile = defaultLogFile or "/tmp/messages"
   local modes = {"debug", "release", "optimize1", "optimize2", "optimize3", "optimize4"}
   if not newMode then
     return modes[dlogMode]
   end
   local doNothing = function() end
   dlogMode = 0
+  
+  -- env
+  local subsystemsSetFromEnv = false
+  if newMode == "env" then
+    newMode = os.getenv("DLOG_MODE") or "optimize1"
+    if os.getenv("DLOG_SUB") then
+      dlogSubsystems = {}
+      for k, v in string.gmatch(os.getenv("DLOG_SUB"), "([^,]+)=([^,]+)") do
+        dlogSubsystems[k] = (v ~= "false" and v ~= "0")
+      end
+      subsystemsSetFromEnv = true
+    end
+  end
   
   -- debug
   for k, v in pairs(dlogFunctionBackups) do
@@ -79,22 +102,24 @@ function dlog.mode(newMode)
   end
   dlogMode = dlogMode + 1
   if newMode == modes[dlogMode] then
-    if dlog.subsystems()["*"] == nil then
-      dlog.subsystems()["*"] = true
+    if dlogSubsystems["*"] == nil then
+      dlogSubsystems["*"] = true
     end
     if not dlog.fileOutput() then
-      dlog.fileOutput("/tmp/messages", "w")
+      dlog.fileOutput(defaultLogFile, "w")
     end
-    dlog.standardOutput(true)
+    dlogStandardOutput = true
     return newMode
   end
   
   -- release
-  dlog.subsystems({["error"] = true})
+  if not subsystemsSetFromEnv then
+    dlogSubsystems = {["error"] = true}
+  end
   dlog.fileOutput("")
   dlogMode = dlogMode + 1
   if newMode == modes[dlogMode] then
-    dlog.standardOutput(true)
+    dlogStandardOutput = true
     return newMode
   end
   
@@ -163,9 +188,6 @@ function dlog.xassert(v, ...)
     end
   end
   return v, ...
-end
-if dlog.defineGlobalXassert then
-  xassert = dlog.xassert
 end
 
 
@@ -476,5 +498,8 @@ function dlog.out(subsystem, ...)
     end
   end
 end
+
+-- Set the default mode.
+dlog.mode("optimize1")
 
 return dlog
