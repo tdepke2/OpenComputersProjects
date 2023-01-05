@@ -1,6 +1,6 @@
 --[[
 todo:
-  
+  track data for number of blocks mined? pickaxes used?
 
 done:
   * convert the coroutine checks to a function? maybe nah
@@ -45,11 +45,13 @@ local keyboard = require("keyboard")
 local serialization = require("serialization")
 local shell = require("shell")
 local sides = require("sides")
+local term = require("term")
 
 local include = require("include")
 local dlog = include("dlog")
-dlog.mode("debug")
+dlog.mode("env", "/tmp/tquarry.log")
 dlog.osBlockNewGlobals(true)
+
 local config = include("config")
 local enum = include("enum")
 local miner = include("miner")
@@ -427,13 +429,23 @@ function Quarry:resupply()
     end
   end
   
+  io.write("Restocking items and equipment...\n")
   self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
+  if not dlog.standardOutput() then
+    term.setCursor(1, select(2, term.getCursor()) - 1)
+    term.clearLine()
+  end
   
   -- Wait until fully recharged.
+  io.write("Waiting for battery to charge...\n")
   while computer.energy() < self.energyStartLevel do
     dlog.out("resupply", "waiting for energy...")
     self.miner:updateGenerators()
     os.sleep(2.0)
+  end
+  if not dlog.standardOutput() then
+    term.setCursor(1, select(2, term.getCursor()) - 1)
+    term.clearLine()
   end
   return true
 end
@@ -500,14 +512,8 @@ function Quarry:run()
       error("no valid output inventory found, config[\"inventoryOutput\"] is set to side " .. sides[self.inventoryOutput])
     end
     
-    self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
-    
-    -- Wait until fully recharged.
-    while computer.energy() < self.energyStartLevel do
-      dlog.out("run", "waiting for energy...")
-      self.miner:updateGenerators()
-      os.sleep(2.0)
-    end
+    self.lastReturnReason = 0
+    self:resupply()
     
     self.quarryStatus = QuarryStatus.working
     return self:run()
@@ -530,6 +536,7 @@ function Quarry:run()
     
   elseif self.quarryStatus == QuarryStatus.resupply then
     crobot.setLightColor(0x00FFFF)  -- Cyan
+    io.write("Returning to resupply point: ", self.miner.ReturnReasons[self.lastReturnReason], "\n")
     if not self:resupply() then
       return
     end
