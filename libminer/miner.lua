@@ -1,3 +1,12 @@
+--------------------------------------------------------------------------------
+-- Flexible interface for robotic miners. Includes management of items in
+-- inventory, safe robot actions that are guaranteed to succeed or throw an
+-- exception, integration with robnav for navigation, and more. This is used
+-- extensively in the code for tquarry.
+-- 
+-- @author tdepke2
+--------------------------------------------------------------------------------
+
 
 local component = require("component")
 local computer = require("computer")
@@ -55,7 +64,7 @@ function Miner.makeConfigTemplate()
   local cfgTypes = {
     Integer = {
       verify = function(v)
-        xassert(type(v) == "number" and math.floor(v) == v, "provided Integer must not be a fractional number.")
+        xassert(type(v) == "number" and math.floor(v) == v, "provided value must be an integer type.")
       end
     },
   }

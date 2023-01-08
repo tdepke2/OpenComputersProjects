@@ -1,3 +1,10 @@
+--------------------------------------------------------------------------------
+-- Automated quarry system. Digs a specified rectangular area using a robot.
+-- 
+-- @see file://tquarry/README.md
+-- @author tdepke2
+--------------------------------------------------------------------------------
+
 --[[
 todo:
   track data for number of blocks mined? pickaxes used?
@@ -431,7 +438,7 @@ function Quarry:resupply()
   
   io.write("Restocking items and equipment...\n")
   self.miner:fullResupply(self.inventoryInput, self.inventoryOutput)
-  if not dlog.standardOutput() then
+  if dlog.mode() ~= "debug" then
     term.setCursor(1, select(2, term.getCursor()) - 1)
     term.clearLine()
   end
@@ -443,7 +450,7 @@ function Quarry:resupply()
     self.miner:updateGenerators()
     os.sleep(2.0)
   end
-  if not dlog.standardOutput() then
+  if dlog.mode() ~= "debug" then
     term.setCursor(1, select(2, term.getCursor()) - 1)
     term.clearLine()
   end

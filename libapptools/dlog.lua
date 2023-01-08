@@ -29,6 +29,7 @@ dlog.maxMessageLength = nil
 
 
 -- Private data members, no touchy:
+local DLOG_MODES = {"debug", "release", "optimize1", "optimize2", "optimize3", "optimize4"}
 local dlogFileOutput = nil
 local dlogStandardOutput = false
 local dlogSubsystems = {}
@@ -72,9 +73,8 @@ local dlogFunctionBackups = {}
 ---@return string
 function dlog.mode(newMode, defaultLogFile)
   defaultLogFile = defaultLogFile or "/tmp/messages"
-  local modes = {"debug", "release", "optimize1", "optimize2", "optimize3", "optimize4"}
   if not newMode then
-    return modes[dlogMode]
+    return DLOG_MODES[dlogMode]
   end
   local doNothing = function() end
   dlogMode = 0
@@ -100,15 +100,15 @@ function dlog.mode(newMode, defaultLogFile)
   if dlog.defineGlobalXassert then
     xassert = dlog.xassert
   end
+  dlogStandardOutput = true
   dlogMode = dlogMode + 1
-  if newMode == modes[dlogMode] then
+  if newMode == DLOG_MODES[dlogMode] then
     if dlogSubsystems["*"] == nil then
       dlogSubsystems["*"] = true
     end
     if not dlog.fileOutput() then
       dlog.fileOutput(defaultLogFile, "w")
     end
-    dlogStandardOutput = true
     return newMode
   end
   
@@ -118,8 +118,7 @@ function dlog.mode(newMode, defaultLogFile)
   end
   dlog.fileOutput("")
   dlogMode = dlogMode + 1
-  if newMode == modes[dlogMode] then
-    dlogStandardOutput = true
+  if newMode == DLOG_MODES[dlogMode] then
     return newMode
   end
   
@@ -127,7 +126,7 @@ function dlog.mode(newMode, defaultLogFile)
   dlogFunctionBackups["osBlockNewGlobals"] = dlog.osBlockNewGlobals
   dlog.osBlockNewGlobals = doNothing
   dlogMode = dlogMode + 1
-  if newMode == modes[dlogMode] then
+  if newMode == DLOG_MODES[dlogMode] then
     return newMode
   end
   
@@ -135,7 +134,7 @@ function dlog.mode(newMode, defaultLogFile)
   dlogFunctionBackups["checkArgs"] = dlog.checkArgs
   dlog.checkArgs = doNothing
   dlogMode = dlogMode + 1
-  if newMode == modes[dlogMode] then
+  if newMode == DLOG_MODES[dlogMode] then
     return newMode
   end
   
@@ -145,18 +144,18 @@ function dlog.mode(newMode, defaultLogFile)
   dlogFunctionBackups["out"] = dlog.out
   dlog.out = doNothing
   dlogMode = dlogMode + 1
-  if newMode == modes[dlogMode] then
+  if newMode == DLOG_MODES[dlogMode] then
     return newMode
   end
   
   -- optimize4
   dlogFunctionBackups["xassert"] = dlog.xassert
-  dlog.xassert = doNothing
+  dlog.xassert = function(v, ...) return v, ... end
   if dlog.defineGlobalXassert then
-    xassert = doNothing
+    xassert = dlog.xassert
   end
   dlogMode = dlogMode + 1
-  if newMode == modes[dlogMode] then
+  if newMode == DLOG_MODES[dlogMode] then
     return newMode
   end
   
@@ -205,12 +204,17 @@ end
 function dlog.handleError(status, ...)
   if not status and dlog.logErrorsToOutput then
     local message = select(1, ...)
-    -- Format tabs to spaces created from debug.traceback().
-    if type(message) == "string" then
-      message = string.gsub(message, "\t", "  ")
-    end
+    
     -- Avoid sending an error message for an exit code (os.exit() throws an error with table message).
     if type(message) ~= "table" or message.reason == nil then
+      if type(message) == "string" then
+        -- Outside of debug mode, only keep the first line in the message to discard any traceback info.
+        if dlogMode > 1 then
+          message = (string.match(message, "[^\n]+") or "")
+        end
+        -- Format tabs to spaces created from debug.traceback().
+        message = string.gsub(message, "\t", "  ")
+      end
       dlog.out("error", "\27[31m", message, "\27[0m")
     end
   end
