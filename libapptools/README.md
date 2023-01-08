@@ -119,7 +119,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   exceeds this size will be trimmed to fit. Set this value to nil for unlimited
   size messages.
 
-* `dlog.mode(newMode: string|nil) -> string`
+* `dlog.mode(newMode: string|nil, defaultLogFile: string|nil) -> string`
   
   Configure mode of operation for dlog. This should get called only in the main
   application, not in library code. The mode sets defaults for logging and can
@@ -127,16 +127,24 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   provided, the mode is set to this value. The valid modes are:
   
   * `debug` (all subsystems on, logging enabled for stdout and `/tmp/messages`)
-  * `release` (default mode, only error logging to stdout)
-  * `optimize1` (function `dlog.osBlockNewGlobals()` is disabled)
+  * `release` (only error logging to stdout)
+  * `optimize1` (default mode, function `dlog.osBlockNewGlobals()` is disabled)
   * `optimize2` (function `dlog.checkArgs()` is disabled)
   * `optimize3` (functions `dlog.out()` and `dlog.fileOutput()` are disabled)
   * `optimize4` (functions `xassert()` and `dlog.xassert()` are disabled)
+  * `env` (sets the mode from an environment variable, or uses the default)
+  
+  For mode `env`, the environment variable `DLOG_MODE` can be assigned a string
+  value containing the desired mode. This allows enabling/disabling debugging
+  info without editing the program code. An additional environment variable
+  `DLOG_SUB` can be assigned a comma-separated string of subsystems, it will
+  default to "error=true".
   
   Each mode includes behavior from the previous modes (`optimize4` pretty much
   disables everything). The mode is intended to be set once right after dlog is
-  loaded in the main program, it can be changed at any time though. Returns the
-  current mode.
+  loaded in the main program, it can be changed at any time though. If
+  defaultLogFile is provided, this is used as the path to the log file instead
+  of `/tmp/messages`. This function returns the current mode.
   
   Note: when using debug mode with multiple threads, be careful to call this
   function in the right place (see warnings in `dlog.fileOutput()`).
