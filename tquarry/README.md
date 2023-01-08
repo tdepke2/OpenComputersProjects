@@ -52,7 +52,7 @@
   With the robot at the restock point, running the program will mine out the rectangular area immediately below the robot defined by LENGTH, WIDTH, and DEPTH. From the robot's perspective, these dimensions correspond to the number of blocks to the left-side (minus 1), in front of (minus 1), and below the robot.
 
 ## CONFIGURATION
-  The first time the program is run, it will create a configuration file in `/etc/tquarry.cfg`. Edit this file to tweak various settings, such as what type of quarry is dug, which sides the input/output inventories are located, what items the robot considers as digging tools, whether to build a staircase when finished, etc. The default configuration can be restored by deleting/renaming this file.
+  The first time the program is run, it will create a configuration file in `/etc/tquarry.cfg`. A copy of the default configuration is also available on the GitHub page [here](default_config.lua). Edit this file to tweak various settings, such as what type of quarry is dug, which sides the input/output inventories are located, what items the robot considers as digging tools, whether to build a staircase when finished, etc. The default configuration can be restored by deleting/renaming this file.
 
 ## OPTIONS
   `-h`, `--help`  display help message and exit
