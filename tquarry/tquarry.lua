@@ -766,7 +766,11 @@ end
 -- performance, etc.
 local MoveTestQuarry = Quarry:new()
 function MoveTestQuarry:quarryStart()
+  if self.quarryWorkingStage ~= 0 then
+    return
+  end
   self.miner:forceMove(sides.bottom)
+  self.quarryWorkingStage = 1
 end
 function MoveTestQuarry:quarryMain()
   if self.quarryWorkingStage ~= 1 then
