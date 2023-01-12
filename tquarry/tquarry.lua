@@ -424,7 +424,8 @@ function Quarry:resupply()
         self.miner.stockLevels[self.miner.StockTypes.stairBlock][1] = 3
       end
       
-      self.xLast, self.yLast, self.zLast, self.rLast = 0, 0, 0, sides.front
+      -- Set the last working position to just below the resupply point (last position must be inside the working area).
+      self.xLast, self.yLast, self.zLast, self.rLast = 0, -1, 0, sides.front
       self.buildStairsStage = 1
     else
       -- Operations finished, dump inventory and return.
