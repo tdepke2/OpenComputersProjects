@@ -1,3 +1,5 @@
+![](quarry_demo.mp4)
+
 <!-- MARKDOWN-AUTO-DOCS:START (FILE:src=./tquarry.man) -->
 <!-- The below content is automatically added from ./tquarry.man -->
 ## NAME
