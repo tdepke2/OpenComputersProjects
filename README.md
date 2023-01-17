@@ -98,3 +98,8 @@ See the [programs.cfg](programs.cfg) file for specific package names (usually th
 
 ## Development
 
+Most of these programs have been designed around Lua 5.3 but a few are also compatible with Lua 5.2. OpenComputers supports both architectures in the CPU item, but defaults to different ones depending on the mod version (shift-right-click the CPU to cycle the architecture).
+
+Programs have been tested with `OpenComputers-MC1.12.2-1.7.5.192`, but newer versions of the mod should be compatible.
+
+Notes related to pending development tasks, bugs, and future program ideas are on the [wiki](https://github.com/tdepke2/OpenComputersProjects/wiki).

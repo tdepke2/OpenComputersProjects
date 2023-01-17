@@ -5,42 +5,6 @@
 -- @author tdepke2
 --------------------------------------------------------------------------------
 
---[[
-todo:
-  track data for number of blocks mined? pickaxes used?
-
-done:
-  * convert the coroutine checks to a function? maybe nah
-  * move iterators and item rearrange logic into separate module.
-  * need to build staircase and walls if enabled.
-  * load data from config file (and generate one if not found).
-  * dynamically compute energyLevelMin?
-  * support for generators?
-  * do not stock building blocks if we are not building anything
-  * cache state to file and prompt to pick up at that point so some state is remembered during sudden program halt.
-  * config option to use generators only, ignore any chargers. also should have robot wait for energy to fill completely at start.
-  * show robot status with setLightColor().
-
-to test:
-  * 
-
-issues:
-  * 
-
-potential problems:
-  * Items that the robot is instructed to keep in inventory (blocks for building, tools, etc) that have unique NBT tags. Items with NBT are not handled well in general, because OC provides only limited support for these.
-  * Tools that have durability values but don't record this in the damage metadata (for example, the tool may store durability in NBT tags).
-  * Tools must all be strong enough to mine blocks in the way.
-  * Tinker's tools? These show durability values where a zero means the tool is broken. To handle them, just set toolHealthMin to zero.
-    * Small correction: a wooden pickaxe (and possibly other self-healing tools) sometimes breaks at 1 durability. To be safe, set toolHealthMin a bit above zero.
-
-future work:
-  * option for 3 x 3 mining tools? this could be tricky to make sure all of the blocks get mined, might require a geolyzer to scan area.
-  * currently all mining tools are considered the same, but we could use specific tools depending on the material to dig (shovels and axes). an easy solution is to always use multi-purpose tools like a paxel or AIOT, but these are provided by other mods. other options could be predicting the tool to use based on a geolyzer hardness scan, or measure the time taken to mine a block and decide if another tool should be attempted.
-  * we could get a bit more speed by suppressing some of the durability checks done in Miner:forceSwing(). for example, if lastToolDurability > toolDurabilityReturn * 2.0 then count every toolHealthReturn ticks before sampling the durability.
-  * the CrashHandler is far from perfect, and has required that a lot of functionality be replaced with ugly state machines. maybe there is a better way to implement this? it seems like a general problem of caching the current program state (call stack and everything) and returning to this later.
---]]
-
 
 local component = require("component")
 local computer = require("computer")
