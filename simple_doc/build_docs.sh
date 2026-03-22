@@ -15,6 +15,8 @@ declare -a outputs=(
     "../libapptools/README.md"
     "../libapptools/README.md"
     "../libapptools/README.md"
+    "../libapptools/README.md"
+    "../libapptools/README.md"
     "../libmnet/README.md"
     "../libmnet/README.md"
     "../libconfig/README.md"
