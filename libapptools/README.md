@@ -119,7 +119,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   exceeds this size will be trimmed to fit. Set this value to nil for unlimited
   size messages.
 
-* `dlog.mode(newMode: string|nil, defaultLogFile: string|nil) -> string`
+* `dlog.mode(newMode: string|nil, defaultLogFile: string|nil): string`
   
   Configure mode of operation for dlog. This should get called only in the main
   application, not in library code. The mode sets defaults for logging and can
@@ -149,8 +149,8 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   Note: when using debug mode with multiple threads, be careful to call this
   function in the right place (see warnings in `dlog.fileOutput()`).
 
-* `dlog.xassert(v: boolean, ...: any) -> boolean, ...`<br>
-  `xassert(v: boolean, ...: any) -> boolean, ...`
+* `dlog.xassert(v: boolean, ...: any): boolean, ...`<br>
+  `xassert(v: boolean, ...: any): boolean, ...`
   
   Extended assert, a global replacement for the standard `assert()` function.
   This improves performance by delaying the concatenation of strings to form
@@ -159,7 +159,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   all other arguments.
   Original idea from: <http://lua.space/general/assert-usage-caveat>
 
-* `dlog.handleError(status: boolean, ...: any) -> boolean, ...`
+* `dlog.handleError(status: boolean, ...: any): boolean, ...`
   
   Logs an error message/object if status is false and `dlog.logErrorsToOutput`
   is enabled. This is designed to be called with the results of `pcall()` or
@@ -189,13 +189,13 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   Note: this function uses some extreme fuckery and modifies the system
   behavior, use at your own risk!
 
-* `dlog.osGetGlobalsList() -> table`
+* `dlog.osGetGlobalsList(): table`
   
   Collects a table of all global variables currently defined. Specifically,
   this shows the contents of `_G` and any globals accessible by the running
   process. This function is designed for debugging purposes only.
 
-* `dlog.fileOutput(filename: string|nil, mode: string|nil) -> file*|nil`
+* `dlog.fileOutput(filename: string|nil, mode: string|nil): file*|nil`
   
   Open/close a file to output logging data to. If filename is provided then
   this file is opened (an empty string will close any opened one instead).
@@ -206,14 +206,14 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   collection. If working with detached threads or processes, make sure your log
   file is open in the correct thread/process or it might close suddenly!
 
-* `dlog.standardOutput(state: boolean|nil) -> boolean`
+* `dlog.standardOutput(state: boolean|nil): boolean`
   
   Set output of logging data to standard output. This can be used in
   conjunction with file output. If state is provided, logging to standard
   output is enabled/disabled based on the value. Returns true if logging to
   standard output is enabled and false otherwise.
 
-* `dlog.subsystems(subsystems: table|nil) -> table`
+* `dlog.subsystems(subsystems: table|nil): table`
   
   Set the subsystems to log from the provided table. The table keys are the
   subsystem names (strings, case sensitive) and the values should be true or
@@ -222,7 +222,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   subsystems are provided, these overwrite the old table contents. Returns the
   current subsystems table.
 
-* `dlog.tableToString(t: table) -> string`
+* `dlog.tableToString(t: table): string`
   
   Serializes a table to a string using a user-facing format. String keys/values
   in the table are escaped and enclosed in double quotes. Handles nested tables
@@ -250,6 +250,14 @@ Just a simple helper function for enumerated types, enough said.
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libapptools/enum.lua) -->
+
+* `enum(t: table<integer,): Enum`
+  
+  Creates a new enumeration from a given table (matches keys to values and vice
+  versa). The given table is intended to use numeric keys and string values,
+  but doesn't have to be a sequence. An error is thrown if there are duplicate
+  values in the table.
+  Based on: https://unendli.ch/posts/2016-07-22-enumerations-in-lua.html
 <!-- SIMPLE-DOC:END -->
 
 # include.lua
@@ -287,7 +295,7 @@ Also "included" here is a source tree dependency solver. It's useful for uploadi
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libapptools/include.lua) -->
-* `include.mode(newMode: string|nil) -> string`
+* `include.mode(newMode: string|nil): string`
   
   Configure mode of operation for include. Usually the mode can be left as is,
   but other modes allow silencing output and disabling some features for
@@ -302,14 +310,14 @@ Also "included" here is a source tree dependency solver. It's useful for uploadi
   `include.requireWithMemCheck()`. After setting the mode, the current mode is
   returned.
 
-* `include.requireWithMemCheck(moduleName: string) -> module: any`
+* `include.requireWithMemCheck(moduleName: string): module: any`
   
   Simple wrapper for the `require()` function that suppresses errors about
   memory allocation while loading a module. Memory allocation errors can happen
   occasionally even if a given system has sufficient RAM. Up to three attempts
   are made, then the error is just passed along.
 
-* `include.load(moduleName: string, properties: string|nil) -> module: any`
+* `include.load(moduleName: string, properties: string|nil): module: any`
   
   Loads a module just like `require()` does. The difference is that the module
   will be removed from the internal cache and loaded again if the file
@@ -324,11 +332,11 @@ Also "included" here is a source tree dependency solver. It's useful for uploadi
   only the string `optional` is supported which allows this function to return
   nil if the module is not found in the search path.
 
-* `include.isLoaded(moduleName: string) -> boolean`
+* `include.isLoaded(moduleName: string): boolean`
   
   Check if a module is currently loaded (already in cache).
 
-* `include.reload(moduleName: string) -> module: any`
+* `include.reload(moduleName: string): module: any`
   
   Forces a module to load/reload, regardless of the file modification
   timestamp. Be careful not to use this with system libraries!
@@ -373,13 +381,13 @@ For details about rc, see here: https://ocdoc.cil.li/api:rc
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libapptools/systemd_utils.lua) -->
-* `RcInterface:new(name: string, description: string, programPath: string) -> table`
+* `systemd_utils.RcInterface:new(name: string, description: string, programPath: string): table`
   
   Creates a new RcInterface context. The programPath must point to a file that
   defines and returns a class for the rc program. This class must at least
   implement `new()`, `start()`, and `stop()` members.
 
-* `RcInterface:startAfterBootFinished(...: any)`
+* `systemd_utils.RcInterface:startAfterBootFinished(...: any)`
   
   Queue the rc program to start once the boot process has finished. The program
   will be initialized and started. This runs within a thread so that pulling
@@ -390,13 +398,13 @@ For details about rc, see here: https://ocdoc.cil.li/api:rc
   the config) if no arguments were provided. These will be passed along when
   calling `new()` on the rc program.
 
-* `RcInterface:requestStop()`
+* `systemd_utils.RcInterface:requestStop()`
   
   Gracefully shuts down the rc program by joining on the thread. If it doesn't
   join after some time, the process is assumed to be hung and the thread will
   be killed.
 
-* `RcInterface:status()`
+* `systemd_utils.RcInterface:status()`
   
   Prints the current status of the rc program (is it running, is it enabled,
   recent logs, etc).
