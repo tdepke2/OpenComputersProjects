@@ -4,7 +4,9 @@
 declare -a inputs=(
     "../libapptools/app.lua"
     "../libapptools/dlog.lua"
+    "../libapptools/enum.lua"
     "../libapptools/include.lua"
+    "../libapptools/systemd_utils.lua"
     "../libmnet/mnet_src.lua"
     "../libmnet/mrpc.lua"
     "../libconfig/config.lua"
