@@ -8,6 +8,8 @@
 
 ---@alias Enum table<integer|string, string|integer>
 
+---@docdef
+-- 
 -- Creates a new enumeration from a given table (matches keys to values and vice
 -- versa). The given table is intended to use numeric keys and string values,
 -- but doesn't have to be a sequence. An error is thrown if there are duplicate

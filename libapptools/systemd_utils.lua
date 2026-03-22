@@ -30,7 +30,7 @@ setmetatable(RcInterface, {
 })
 
 
----@docdef
+---@docdef `systemd_utils.RcInterface:new(name, description, programPath)`
 -- 
 -- Creates a new RcInterface context. The programPath must point to a file that
 -- defines and returns a class for the rc program. This class must at least
@@ -59,7 +59,7 @@ function RcInterface:new(name, description, programPath)
 end
 
 
----@docdef
+---@docdef `systemd_utils.RcInterface:startAfterBootFinished(...)`
 -- 
 -- Queue the rc program to start once the boot process has finished. The program
 -- will be initialized and started. This runs within a thread so that pulling
@@ -101,7 +101,7 @@ function RcInterface:startAfterBootFinished(...)
 end
 
 
----@docdef
+---@docdef `systemd_utils.RcInterface:requestStop()`
 -- 
 -- Gracefully shuts down the rc program by joining on the thread. If it doesn't
 -- join after some time, the process is assumed to be hung and the thread will
@@ -125,7 +125,7 @@ function RcInterface:requestStop()
 end
 
 
----@docdef
+---@docdef `systemd_utils.RcInterface:status()`
 -- 
 -- Prints the current status of the rc program (is it running, is it enabled,
 -- recent logs, etc).
