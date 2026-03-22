@@ -373,6 +373,33 @@ For details about rc, see here: https://ocdoc.cil.li/api:rc
 ### API
 
 <!-- SIMPLE-DOC:START (FILE:../libapptools/systemd_utils.lua) -->
+* `RcInterface:new(name: string, description: string, programPath: string) -> table`
+  
+  Creates a new RcInterface context. The programPath must point to a file that
+  defines and returns a class for the rc program. This class must at least
+  implement `new()`, `start()`, and `stop()` members.
+
+* `RcInterface:startAfterBootFinished(...: any)`
+  
+  Queue the rc program to start once the boot process has finished. The program
+  will be initialized and started. This runs within a thread so that pulling
+  events can be done safely without blocking the system thread.
+  
+  Ideally the arguments passed should come from the `start()` function called
+  by rc, or the global variable `args` (defined by rc if there is an entry in
+  the config) if no arguments were provided. These will be passed along when
+  calling `new()` on the rc program.
+
+* `RcInterface:requestStop()`
+  
+  Gracefully shuts down the rc program by joining on the thread. If it doesn't
+  join after some time, the process is assumed to be hung and the thread will
+  be killed.
+
+* `RcInterface:status()`
+  
+  Prints the current status of the rc program (is it running, is it enabled,
+  recent logs, etc).
 <!-- SIMPLE-DOC:END -->
 
 ### Example usage
