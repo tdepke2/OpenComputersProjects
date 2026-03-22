@@ -131,7 +131,8 @@ local function formatAnnotations(contextLine, docSection)
         else
           trailingChars = ""
         end
-        docSection[index] = docSection[index] .. " -> " .. string.sub(annotatedReturns, 1, -3) .. trailingChars
+        local returnValSeparator = opts["ocdoc"] and ": " or " -> "
+        docSection[index] = docSection[index] .. returnValSeparator .. string.sub(annotatedReturns, 1, -3) .. trailingChars
       end
     end
   end
