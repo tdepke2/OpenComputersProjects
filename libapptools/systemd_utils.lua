@@ -64,7 +64,14 @@ end
 -- Queue the rc program to start once the boot process has finished. The program
 -- will be initialized and started. This runs within a thread so that pulling
 -- events can be done safely without blocking the system thread.
-function RcInterface:startAfterBootFinished()
+-- 
+-- Ideally the arguments passed should come from the `start()` function called
+-- by rc, or the global variable `args` (defined by rc if there is an entry in
+-- the config) if no arguments were provided. These will be passed along when
+-- calling `new()` on the rc program.
+-- 
+---@param ... any
+function RcInterface:startAfterBootFinished(...)
   if self.mainThread and self.mainThread:status() ~= "dead" then
     io.write(self.name, " already running\n")
     return
@@ -76,6 +83,7 @@ function RcInterface:startAfterBootFinished()
   local currentSerial = priv.serviceSerial
   priv.serviceSerial = priv.serviceSerial + 1
 
+  local args = table.pack(...)
   self.mainThread = thread.create(function()
     -- Wait for system to finish booting before attempting to start server.
     while currentSerial ~= priv.serviceStartCounter or computer.runlevel() == "S" do
@@ -85,7 +93,7 @@ function RcInterface:startAfterBootFinished()
 
     local ProgramClass = dofile(self.programPath)
 
-    self.serviceInstance = ProgramClass:new()
+    self.serviceInstance = ProgramClass:new(table.unpack(args, 1, args.n))
     self.isStarting = false
     self.lastStatusDate, self.lastStatusRealTime = os.date("%c"), computer.uptime()
     self.serviceInstance:start()
