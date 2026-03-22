@@ -16,7 +16,7 @@ local shell = require("shell")
 local text = require("text")
 
 -- Time in seconds to pause if a warning shows up and not running in silent mode.
-local WARNING_PAUSE_TIME = 2
+local WARNING_PAUSE_TIME = 4
 
 local numWarnings = 0
 
@@ -81,11 +81,11 @@ local function readPackageConfig(options, repoPath, installPath)
   end
   local file, errMessage = io.open(filename, "rb")
   assert(file, "failed to open file \"" .. filename .. "\": " .. tostring(errMessage))
-  
+
   local pkgTable = serialization.unserialize(file:read("*a"))
   file:close()
   assert(pkgTable, "failed to deserialize programs list \"" .. filename .. "\"")
-  
+
   -- The programs.cfg file just gives a table with package names, where each one defines files in the repo and their install path.
   for pkgName, pkgDat in pairs(pkgTable) do
     -- Special case since the oppm_linker files need to be persistent on the system and we don't want to try to create symlinks to replace them.
@@ -96,14 +96,14 @@ local function readPackageConfig(options, repoPath, installPath)
       -- A colon at start of srcPath means all of the contents in that directory. A question mark has another meaning at start of srcPath but we ignore it.
       local addContents = string.find(srcPath, "^:")
       srcPath = fs.concat(repoPath, string.match(srcPath, "[^:?](/.*)"))
-      
+
       -- Double slash at start of destPath indicates an absolute path, otherwise we use the installPath.
       if string.find(destPath, "^//") then
         destPath = string.sub(destPath, 2)
       else
         destPath = fs.concat(installPath, destPath)
       end
-      
+
       if addContents then
         local pathIter, errMessage = fs.list(srcPath)
         assert(pathIter, "failed to list directory \"" .. srcPath .. "\": " .. tostring(errMessage))
@@ -118,21 +118,24 @@ local function readPackageConfig(options, repoPath, installPath)
 end
 
 
--- Search for all of the repositories in "/repository" and process the OPPM
--- packages file in each one.
+-- Search for all of the repositories in "/repository" or "/repo" and process
+-- the OPPM packages file in each one.
 local function main(options)
   local installPath = readOppmConfig().path or "/usr"
-  
-  local pathIter, errMessage = fs.list("/repository")
-  if not pathIter then
-    if not options.silent then
-      io.write("\27[33mWarning: failed to list directory \"/repository\": ", tostring(errMessage), "\27[0m\n")
-      numWarnings = numWarnings + 1
-    end
-    return
+
+  local repoRoot
+  if fs.exists("/repository") then
+    repoRoot = "/repository"
+  elseif fs.exists("/repo") then
+    repoRoot = "/repo"
+  else
+    assert(false, "no directory \"/repository\" or \"/repo\" found.")
   end
+
+  local pathIter, errMessage = fs.list(repoRoot)
+  assert(pathIter, "failed to list directory \"" .. repoRoot .. "\": " .. tostring(errMessage))
   for filename in pathIter do
-    readPackageConfig(options, fs.concat("/repository", filename), installPath)
+    readPackageConfig(options, fs.concat(repoRoot, filename), installPath)
   end
 end
 
@@ -151,11 +154,11 @@ function start(...)
     force = options.f,
     silent = options.s
   }
-  
+
   if not options.silent then
     require("term").clear()
   end
-  
+
   -- Run main function in a protected call. Pause system and print errors if something went wrong.
   local status, err = pcall(main, options)
   if not status then
@@ -168,7 +171,11 @@ function start(...)
       io.write("\27[0m\n(press enter to continue)\n")
       io.read()
     end
-  elseif isStarting and numWarnings > 0 and WARNING_PAUSE_TIME > 0 then
-    os.sleep(WARNING_PAUSE_TIME)
+  elseif numWarnings > 0 then
+    io.write("\27[33moppm_linker: ", numWarnings, " warning(s) generated.\27[0m\n")
+    if isStarting and WARNING_PAUSE_TIME > 0 then
+      os.sleep(WARNING_PAUSE_TIME)
+    end
+    numWarnings = 0
   end
 end
