@@ -22,11 +22,15 @@ See the man page below for details:
   The oppm_linker aims to solve the problem with keeping in-development programs on an OpenComputers machine synchronized with files in a Git repository. This is done by having the user clone a Git repository into the OC machine, adding a `programs.cfg` file to define packages and their install locations, then oppm_linker creates symbolic links from the original files in the places where they would be installed. This simulates what would happen if the packages were all installed with OPPM, but keeps the original files in the Git repo without duplicating them. Since symlinks in OC do not persist across a reboot, oppm_linker runs once at startup to create the symlinks.
 
 ### Setup instructions:
-  1. First consider setting `bufferChanges=false` and increasing the value of `hddSizes` for the hard disk you want to use in the OpenComputers configuration. The `bufferChanges` setting prevents the in-game file systems from writing their contents to disk until the world is saved, and this is a problem if using an external editor to write programs. The default hard disk sizes are also quite small and may not fit the whole Git repo.
+  1. First consider setting `bufferChanges=false` and increasing the value of `hddSizes` for the hard disk you want to use in the OpenComputers configuration. The `bufferChanges` setting prevents the in-game file systems from writing their contents to disk until the world is saved, and this is a problem if using an external editor to write programs. The default hard disk sizes are also quite small and may not fit the whole Git repo (however a shallow clone of the repo may work).
   
   2. Get OpenOS and OPPM installed on the OC machine (you can craft the floppy disk to install OPPM).
   
-  3. Run `mkdir /repository` in-game, then copy the Git repo into here outside of the game or `git clone` one from GitHub. The root of the repo should be at `/repository/<your-repo-name>/.git`. You can add as many repos in `/repository` as you want and they will all get loaded by oppm_linker. Other options may be to use the OPPM package called `gitrepo` to clone a repo from within the game, or just download a zip archive from the internet with `wget`.
+  3. Run `mkdir /repository` (or `mkdir /repo`, either one works) in-game, then copy the Git repo into here outside of the game or `git clone` one from GitHub (use `--depth 1` for a shallow clone to save disk space). The root of the repo should be at `/repository/<your-repo-name>/.git`. You can add as many repos in `/repository` as you want and they will all get loaded by oppm_linker.
+  
+      - Another option is the OPPM package called `gitrepo` to clone a repo from within the game, or just download a zip archive from the internet with `wget`.
+      
+      - If using a third-party launcher for the game (such as Prism Launcher) on Windows, you may run into MAX_PATH issues when cloning. In the Prism settings I moved my instances folder into my home directory and this reduced the filename lengths enough for the clone to succeed.
   
   4. The Git repo should have a valid `programs.cfg` file to define the packages. See https://ocdoc.cil.li/tutorial:program:oppm for details.
   
