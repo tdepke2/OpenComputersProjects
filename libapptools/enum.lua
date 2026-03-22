@@ -29,8 +29,4 @@ local function enum(t)
   return result
 end
 
--- FIXME should enum protect against indexing an invalid key? maybe nah #######################################################################
--- FIXME this should replace other places in code where enum has been defined ###################
--- FIXME update README #####################################################
-
 return enum

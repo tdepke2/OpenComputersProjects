@@ -243,6 +243,15 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
      execution if logging is not enabled.
 <!-- SIMPLE-DOC:END -->
 
+# enum.lua
+
+Just a simple helper function for enumerated types, enough said.
+
+### API
+
+<!-- SIMPLE-DOC:START (FILE:../libapptools/enum.lua) -->
+<!-- SIMPLE-DOC:END -->
+
 # include.lua
 
 Module loader (improved version of `require()` function).
@@ -354,3 +363,18 @@ local wnet = include("wnet", "optional")  -- This module is optionally loaded.
 ### Future work
 
 Just like `require()`, the include module does not handle circular dependencies. This seems to me like a design problem to need to use a circular dependency, but there could be some legit use cases.
+
+# systemd_utils.lua
+
+Utility for rc programs that want a systemd style interface.
+
+For details about rc, see here: https://ocdoc.cil.li/api:rc
+
+### API
+
+<!-- SIMPLE-DOC:START (FILE:../libapptools/systemd_utils.lua) -->
+<!-- SIMPLE-DOC:END -->
+
+### Example usage
+
+See [systemd_testd.lua](tests/systemd_testd.lua) and [systemd_test_daemon.lua](tests/systemd_test_daemon.lua) for an example.
