@@ -228,7 +228,8 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   in the table are escaped and enclosed in double quotes. Handles nested tables
   and tables with cycles. This is just a helper function for `dlog.out()`.
 
-* `dlog.out(subsystem: string, ...: any)`
+* `dlog.out(subsystem: string, ...: any)`<br>
+  `dlog(subsystem: string, ...: any)`
   
   Writes a string to active logging outputs (the output is suppressed if the
   subsystem is not currently being monitored). To enable monitoring of a
