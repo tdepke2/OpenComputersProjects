@@ -357,7 +357,8 @@ end
 -- 
 ---@param filename string|nil
 ---@param mode string|nil
----@return file*|nil, string|nil
+---@return file*|nil
+---@return string|nil
 function dlog.fileOutput(filename, mode)
   if dlogFileOutput ~= nil and io.type(dlogFileOutput) == "closed file" then
     -- File may have been closed by an external method, so delete our copy of the file descriptor.
