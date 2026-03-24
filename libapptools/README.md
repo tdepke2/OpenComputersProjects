@@ -122,9 +122,11 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
 * `dlog.mode(newMode: string|nil, defaultLogFile: string|nil): string`
   
   Configure mode of operation for dlog. This should get called only in the main
-  application, not in library code. The mode sets defaults for logging and can
-  disable some dlog features completely to increase performance. If newMode is
-  provided, the mode is set to this value. The valid modes are:
+  application, not in library code. It must be called (or call the
+  `dlog.fileOutput()` function) if file logging is desired. The mode sets
+  defaults for logging and can disable some dlog features completely to
+  increase performance. If newMode is provided, the mode is set to this value.
+  The valid modes are:
   
   * `debug` (all subsystems on, logging enabled for stdout and `/tmp/messages`)
   * `release` (only error logging to stdout)
@@ -195,12 +197,12 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   this shows the contents of `_G` and any globals accessible by the running
   process. This function is designed for debugging purposes only.
 
-* `dlog.fileOutput(filename: string|nil, mode: string|nil): file*|nil`
+* `dlog.fileOutput(filename: string|nil, mode: string|nil): string|nil: file*|nil,`
   
   Open/close a file to output logging data to. If filename is provided then
-  this file is opened (an empty string will close any opened one instead).
-  Default mode is `a` to append to end of file. Returns the currently open file
-  (or nil if closed).
+  this file is opened if it isn't open already (an empty string will close any
+  opened one instead). Default mode is `a` to append to end of file. Returns
+  the currently open file and filename (or nil if closed).
   
   Note: keep in mind that Lua will close files automatically as part of garbage
   collection. If working with detached threads or processes, make sure your log
