@@ -197,7 +197,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   this shows the contents of `_G` and any globals accessible by the running
   process. This function is designed for debugging purposes only.
 
-* `dlog.fileOutput(filename: string|nil, mode: string|nil): string|nil: file*|nil,`
+* `dlog.fileOutput(filename: string|nil, mode: string|nil): file*|nil, string|nil`
   
   Open/close a file to output logging data to. If filename is provided then
   this file is opened if it isn't open already (an empty string will close any
