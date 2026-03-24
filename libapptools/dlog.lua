@@ -31,6 +31,7 @@ dlog.maxMessageLength = nil
 -- Private data members, no touchy:
 local DLOG_MODES = {"debug", "release", "optimize1", "optimize2", "optimize3", "optimize4"}
 local dlogFileOutput = nil
+local dlogFileOutputName = nil
 local dlogStandardOutput = false
 local dlogSubsystems = {}
 local dlogEnv2 = nil
@@ -41,9 +42,11 @@ local dlogFunctionBackups = {}
 ---@docdef
 -- 
 -- Configure mode of operation for dlog. This should get called only in the main
--- application, not in library code. The mode sets defaults for logging and can
--- disable some dlog features completely to increase performance. If newMode is
--- provided, the mode is set to this value. The valid modes are:
+-- application, not in library code. It must be called (or call the
+-- `dlog.fileOutput()` function) if file logging is desired. The mode sets
+-- defaults for logging and can disable some dlog features completely to
+-- increase performance. If newMode is provided, the mode is set to this value.
+-- The valid modes are:
 -- 
 -- * `debug` (all subsystems on, logging enabled for stdout and `/tmp/messages`)
 -- * `release` (only error logging to stdout)
@@ -83,9 +86,10 @@ function dlog.mode(newMode, defaultLogFile)
   local subsystemsSetFromEnv = false
   if newMode == "env" then
     newMode = os.getenv("DLOG_MODE") or "optimize1"
-    if os.getenv("DLOG_SUB") then
+    local subsystems = os.getenv("DLOG_SUB")
+    if subsystems then
       dlogSubsystems = {}
-      for k, v in string.gmatch(os.getenv("DLOG_SUB"), "([^,]+)=([^,]+)") do
+      for k, v in string.gmatch(subsystems, "([^,]+)=([^,]+)") do
         dlogSubsystems[k] = (v ~= "false" and v ~= "0")
       end
       subsystemsSetFromEnv = true
@@ -106,9 +110,7 @@ function dlog.mode(newMode, defaultLogFile)
     if dlogSubsystems["*"] == nil then
       dlogSubsystems["*"] = true
     end
-    if not dlog.fileOutput() then
-      dlog.fileOutput(defaultLogFile, "w")
-    end
+    dlog.fileOutput(defaultLogFile)
     return newMode
   end
   
@@ -345,9 +347,9 @@ end
 ---@docdef
 -- 
 -- Open/close a file to output logging data to. If filename is provided then
--- this file is opened (an empty string will close any opened one instead).
--- Default mode is `a` to append to end of file. Returns the currently open file
--- (or nil if closed).
+-- this file is opened if it isn't open already (an empty string will close any
+-- opened one instead). Default mode is `a` to append to end of file. Returns
+-- the currently open file and filename (or nil if closed).
 -- 
 -- Note: keep in mind that Lua will close files automatically as part of garbage
 -- collection. If working with detached threads or processes, make sure your log
@@ -355,21 +357,28 @@ end
 -- 
 ---@param filename string|nil
 ---@param mode string|nil
----@return file*|nil
+---@return file*|nil, string|nil
 function dlog.fileOutput(filename, mode)
+  if dlogFileOutput ~= nil and io.type(dlogFileOutput) == "closed file" then
+    -- File may have been closed by an external method, so delete our copy of the file descriptor.
+    dlogFileOutput = nil
+    dlogFileOutputName = nil
+  end
   if filename ~= nil then
     if dlogFileOutput then
+      if filename == dlogFileOutputName then
+        return dlogFileOutput, dlogFileOutputName
+      end
       dlogFileOutput:close()
       dlogFileOutput = nil
+      dlogFileOutputName = nil
     end
     if filename ~= "" then
       dlogFileOutput = io.open(filename, mode or "a")
+      dlogFileOutputName = filename
     end
-  elseif io.type(dlogFileOutput) == "closed file" then
-    -- File may have been closed by an external method, so delete our copy of the file descriptor.
-    dlogFileOutput = nil
   end
-  return dlogFileOutput
+  return dlogFileOutput, dlogFileOutputName
 end
 
 

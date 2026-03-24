@@ -244,6 +244,36 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
      execution if logging is not enabled.
 <!-- SIMPLE-DOC:END -->
 
+### Example usage
+
+```lua
+-- NOTE: This line really should use include() instead since it's a user library, see the corresponding section about the include() function.
+local dlog = require("dlog")
+
+dlog.mode("debug")
+
+local function example(name, items, value)
+  dlog.checkArgs(name, "string", items, "table,nil", value, "any")
+
+  dlog("prog", "name = ", name, ", items = ", items)
+end
+
+example("alice", nil, 42)
+example("bob", {x=123, y=456}, "life")
+
+--[[
+Output from the program (it will also show in /tmp/messages with timestamps):
+
+dlog:prog name = alice, items = nil
+dlog:prog name = bob, items = 
+table: 000002ba44355ba0 {
+  "y" = 456
+  "x" = 123
+}
+
+--]]
+```
+
 # enum.lua
 
 Just a simple helper function for enumerated types, enough said.
@@ -290,8 +320,6 @@ Some side notes:
 > 2. Similar to the first point, we could instead use `moveTableReference()` operation to swap table content. Now there is no performance penalty for indexing with proxy. Downside is that it requires modules to be tables.
 > 
 > 3. Use a function call at start and end of each module to define it, and always use `require()` for loading. This fixes issue with accidentally calling `require()` on a user module, but dependency tracking and error handling is more complex. The function call at the start of the module would also need to identify the name of the module that is loading (maybe passed in as a hard-coded value).
-
-Also "included" here is a source tree dependency solver. It's useful for uploading code to a device via network or other medium. This allows the user to send software with multiple dependencies to robots/drones/microcontrollers that only have a small EEPROM storage.
 
 ### API
 
