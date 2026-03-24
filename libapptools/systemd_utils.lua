@@ -171,10 +171,10 @@ function RcInterface:status()
   end
 
   -- Show recent logs if they are found.
-  local filename = "/tmp/messages"
+  local filename = "/tmp/event.log"
   local file = io.open(filename, "r")
   if not file then
-    filename = "/tmp/event.log"
+    filename = "/tmp/messages"
     file = io.open(filename, "r")
     if not file then
       io.write("\nNo logs to show.\n")

@@ -222,9 +222,6 @@ function dlog.handleError(status, ...)
 end
 
 
-
--- FIXME the below should be used everywhere and same for the block globals stuff #############################################################################################################
-
 local checkArgsHelper
 ---@docdef
 -- 
@@ -461,7 +458,8 @@ tableToStringHelper = function(tableData, t, spacing)
 end
 
 
----@docdef
+---@docdef `dlog.out(subsystem, ...)`<br>
+---@docdef `dlog(subsystem, ...)`
 -- 
 -- Writes a string to active logging outputs (the output is suppressed if the
 -- subsystem is not currently being monitored). To enable monitoring of a
@@ -502,6 +500,13 @@ function dlog.out(subsystem, ...)
     end
   end
 end
+
+-- Enables dlog() function call as a shortcut to dlog.out().
+setmetatable(dlog, {
+  __call = function(func, ...)
+    return dlog.out(...)
+  end
+})
 
 -- Set the default mode.
 dlog.mode("optimize1")
