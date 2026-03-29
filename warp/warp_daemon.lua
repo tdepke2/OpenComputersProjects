@@ -103,20 +103,20 @@ function WarpDaemon.verifyAndSaveConfig(existingCfg)
   -- Validate the destinations.
   local ids, names = {}, {}
   if cfg.settings.fuelSlot then
-    ids[cfg.settings.fuelSlot] = true
+    ids[cfg.settings.fuelSlot] = "settings.fuelSlot"
   end
   if cfg.settings.emptyFuelSlot then
-    ids[cfg.settings.emptyFuelSlot] = true
+    ids[cfg.settings.emptyFuelSlot] = "settings.emptyFuelSlot"
   end
   for _, v in ipairs(cfg.destinations) do
     local id, name, _ = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
     if ids[id] then
-      return false, cfgPath .. ": destination id \"" .. id .. "\" appears more than once."
+      return false, cfgPath .. ": slot id for \"" .. v .. "\" is already used for \"" .. ids[id] .. "\"."
     elseif names[name] then
-      return false, cfgPath .. ": destination name \"" .. name .. "\" appears more than once."
+      return false, cfgPath .. ": destination name for \"" .. v .. "\" is already used for \"" .. names[name] .. "\"."
     end
-    ids[id] = true
-    names[name] = true
+    ids[id] = v
+    names[name] = v
   end
 
   if loadedDefaults then
@@ -252,7 +252,7 @@ function WarpDaemon:main()
   end
 
   --while self.running do
-    self:doStuff()
+    self:mainLoop()
     --os.sleep(20)
   --end
 end
@@ -301,13 +301,6 @@ end
 
 function WarpDaemon:updateConfig(configPrefix, configEntry)
   dlog("d", "Update config ", configPrefix, " with entry [", configEntry, "]")
-  local subConfig
-  if configPrefix == "se:" then
-    subConfig = self.cfg.settings
-  elseif configPrefix == "de:" then
-    subConfig = self.cfg.destinations
-  end
-
   local key, value = string.match(configEntry, "^([^=]+)=(.+)$")
   if not key then
     dlog("warn", "\27[33m", "Config update [", configPrefix, configEntry, "] is not a key/value form.\27[0m")
@@ -325,15 +318,45 @@ function WarpDaemon:updateConfig(configPrefix, configEntry)
   end
   value = ret
 
-  dlog("d", "update ", key, " -> ", value)
+  local subConfig
+  if configPrefix == "se:" then
+    subConfig = self.cfg.settings
+  elseif configPrefix == "de:" then
+    -- For a destination, we will change the "slotId=value" form into "index=slotId;value" so it works with the config format.
+    subConfig = self.cfg.destinations
+    if type(value) == "string" then
+      value = key .. ";" .. value
+    end
+
+    local existingKey = false
+    for i, v in ipairs(subConfig) do
+      if key == string.match(v, "^([^;]+);") then
+        key = i
+        existingKey = true
+      end
+    end
+    if not existingKey then
+      key = #subConfig + 1
+    end
+  end
+
+  if subConfig[key] == value then
+    return
+  end
+
+  dlog("d", "Update ", key, " -> ", value)
   local oldValue = subConfig[key]
   subConfig[key] = value
-
-  --FIXME: we really only need to do this if the value changed, verify and save config next
+  local status2, result = WarpDaemon.verifyAndSaveConfig(self.cfg)
+  if not status2 then
+    dlog("warn", "\27[33m", "Config update [", configPrefix, configEntry, "] failed: ", result, "\27[0m")
+    subConfig[key] = oldValue
+    return
+  end
 end
 
 
-function WarpDaemon:doStuff()
+function WarpDaemon:mainLoop()
   local settings = self.cfg.settings
 
   -- Scan each of the inventories for items and cache them. The transposer calls take one tick to run, so doing a pre-pass like this is more performant.
@@ -342,8 +365,10 @@ function WarpDaemon:doStuff()
     local worldSide = self:getWorldSide(relativeSide)
     local stacks = transposer.getAllStacks(worldSide)
     local stacksCopy = {}
+    local lastSlot = 0
     if stacks then
       for slot, item in itemutil.invIterator(stacks) do
+        lastSlot = slot
         stacksCopy[slot] = {
           fullName = itemutil.getItemFullName(item),
           label = item.label,
@@ -351,14 +376,32 @@ function WarpDaemon:doStuff()
         }
       end
     end
+    stacksCopy.n = lastSlot
     eachSideStacks[relativeSide] = stacksCopy
+  end
+
+  -- The stacks tables are not sequences, but we need a way to iterate the items in slot order.
+  local function iterateStacks(stacks)
+    local function iter(stacks, slot)
+      local n = stacks.n
+      slot = slot + 1
+      while slot <= n do
+        local item = stacks[slot]
+        if item then
+          return slot, item
+        end
+        slot = slot + 1
+      end
+    end
+
+    return iter, stacks, 0
   end
 
   -- Make a second pass through the items to check for fuel, config updates, warp requests, etc.
   local inventoryNames = {}
   local configPrefix, configEntry
   for relativeSide, stacks in pairs(eachSideStacks) do
-    for slot, item in pairs(stacks) do
+    for slot, item in iterateStacks(stacks) do
       if settings.fuelSlot and string.match(item.fullName, settings.emptyFuelItem) then
         dlog("d", "Empty fuel at ", sides[relativeSide], " slot ", slot)
         self:refuelGenerator(eachSideStacks, inventoryNames, relativeSide, slot, item)

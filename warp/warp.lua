@@ -2,8 +2,9 @@
 Cross dimensional player teleportation using AE2.
 
 One enderchest slot per destination, need to support multiple ender chests.
-Can update config by placing a named item like `cfg:"d3;mars;suit,oxyge` and `cfg:n,thermal"` into any consecutive slots.
+Can update config by placing a named item like `de:d3="mars;suit,oxyge` and `cfg:n,thermal"` into any consecutive slots.
   Item names are too short, in above case the name is broken up into multiple items for the config entry.
+  Use `se:` to change a setting, or `de:` to change a destination. The `de:` format looks like `de:slotId="name;requirements"` which is different from the config format. Assign the value nil to clear a destination.
 Still need to copy the config file onto a new teleporter instance before hand.
 Make sure to test config before leaving (teleport to the current teleporter should say you are already here)!
 Spatial chamber size should have equal x and z dimensions, otherwise it will be directional.
