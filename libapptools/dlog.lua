@@ -49,7 +49,7 @@ local dlogFunctionBackups = {}
 -- The valid modes are:
 -- 
 -- * `debug` (all subsystems on, logging enabled for stdout and `/tmp/messages`)
--- * `release` (only error logging to stdout)
+-- * `release` (only warn and error logging to stdout)
 -- * `optimize1` (default mode, function `dlog.osBlockNewGlobals()` is disabled)
 -- * `optimize2` (function `dlog.checkArgs()` is disabled)
 -- * `optimize3` (functions `dlog.out()` and `dlog.fileOutput()` are disabled)
@@ -116,7 +116,7 @@ function dlog.mode(newMode, defaultLogFile)
   
   -- release
   if not subsystemsSetFromEnv then
-    dlogSubsystems = {["error"] = true}
+    dlogSubsystems = {["warn"] = true, ["error"] = true}
   end
   dlog.fileOutput("")
   dlogMode = dlogMode + 1
@@ -175,9 +175,10 @@ end
 -- all other arguments.
 -- Original idea from: <http://lua.space/general/assert-usage-caveat>
 -- 
----@param v boolean
+---@generic T
+---@param v T
 ---@param ... any
----@return boolean
+---@return T
 ---@return ...
 function dlog.xassert(v, ...)
   if not v then

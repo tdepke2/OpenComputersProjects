@@ -20,7 +20,7 @@ setmetatable(include, {
 
 -- Private data members:
 -- When enabled, status messages are printed to standard output.
-local includeVerboseOutput = true
+local includeVerboseOutput = false
 -- When enabled, file timestamp checking and dependency tracking are disabled for performance.
 local includeOptimizeMode = false
 -- Tracks loaded module metadata, each entry is a null-character separated list. Format is: requiresReload, modulePath, modifiedTime, and dependencies.
@@ -42,9 +42,9 @@ include.scannedModules = nil
 -- performance. If newMode is provided, the mode is set to this value. The valid
 -- modes are:
 -- 
--- * `debug` (default mode, timestamp checking and status messages are enabled)
--- * `release` (timestamp checking enabled, status messages disabled)
--- * `optimize1` (timestamp checking disabled)
+-- * `debug` (timestamp checking and status messages are enabled)
+-- * `release` (default mode, timestamp checking but no status messages)
+-- * `optimize1` (no timestamp checking or status messages)
 -- 
 -- Using `optimize1` will basically make `include.load()` function the same as
 -- `include.requireWithMemCheck()`. After setting the mode, the current mode is
