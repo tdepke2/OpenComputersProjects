@@ -129,7 +129,7 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   The valid modes are:
   
   * `debug` (all subsystems on, logging enabled for stdout and `/tmp/messages`)
-  * `release` (only error logging to stdout)
+  * `release` (only warn and error logging to stdout)
   * `optimize1` (default mode, function `dlog.osBlockNewGlobals()` is disabled)
   * `optimize2` (function `dlog.checkArgs()` is disabled)
   * `optimize3` (functions `dlog.out()` and `dlog.fileOutput()` are disabled)
@@ -151,8 +151,8 @@ Subsystem names can be any strings like "storage", "command:info", "main():debug
   Note: when using debug mode with multiple threads, be careful to call this
   function in the right place (see warnings in `dlog.fileOutput()`).
 
-* `dlog.xassert(v: boolean, ...: any): boolean, ...`<br>
-  `xassert(v: boolean, ...: any): boolean, ...`
+* `dlog.xassert(v: T, ...: any): T, ...`<br>
+  `xassert(v: T, ...: any): T, ...`
   
   Extended assert, a global replacement for the standard `assert()` function.
   This improves performance by delaying the concatenation of strings to form
@@ -333,9 +333,9 @@ Some side notes:
   performance. If newMode is provided, the mode is set to this value. The valid
   modes are:
   
-  * `debug` (default mode, timestamp checking and status messages are enabled)
-  * `release` (timestamp checking enabled, status messages disabled)
-  * `optimize1` (timestamp checking disabled)
+  * `debug` (timestamp checking and status messages are enabled)
+  * `release` (default mode, timestamp checking but no status messages)
+  * `optimize1` (no timestamp checking or status messages)
   
   Using `optimize1` will basically make `include.load()` function the same as
   `include.requireWithMemCheck()`. After setting the mode, the current mode is
