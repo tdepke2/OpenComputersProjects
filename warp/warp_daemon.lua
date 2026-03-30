@@ -2,6 +2,9 @@
 
 -- OS libraries.
 local component = require("component")
+local computer = require("computer")
+local filesystem = require("filesystem")
+local redstone = component.redstone
 local sides = require("sides")
 local transposer = component.transposer
 
@@ -15,6 +18,7 @@ local config = include("config")
 local itemutil = include("itemutil")
 
 -- WarpDaemon class definition.
+---@class WarpDaemon
 local WarpDaemon = {}
 
 -- Hook up errors to throw on access to nil class members (usually a programming
@@ -85,7 +89,13 @@ FIXME: comments needed about tilename/itemname and that lua patterns are allowed
 end
 
 
-function WarpDaemon.verifyAndSaveConfig(existingCfg)
+-- If existingCfg is provided, it is used instead of loading the config from a
+-- file. Returns true if successful, or false and an error message.
+-- 
+---@param existingCfg table|nil
+---@return boolean
+---@return string|nil
+function WarpDaemon:verifyAndSaveConfig(existingCfg)
   local cfgPath = "/etc/warp.cfg"
   local cfgTypes, cfgFormat = WarpDaemon.makeConfigTemplate()
   local cfg, loadedDefaults
@@ -100,6 +110,12 @@ function WarpDaemon.verifyAndSaveConfig(existingCfg)
     return false, cfgPath .. ": " .. result
   end
 
+  local hostname = os.getenv("HOSTNAME")
+  local thisDestinationSlotId
+  if not hostname or #hostname == 0 then
+    return false, cfgPath .. ": hostname is not set, please set it using `hostname <name>` with the name of this destination."
+  end
+
   -- Validate the destinations.
   local ids, names = {}, {}
   if cfg.settings.fuelSlot then
@@ -110,6 +126,9 @@ function WarpDaemon.verifyAndSaveConfig(existingCfg)
   end
   for _, v in ipairs(cfg.destinations) do
     local id, name, _ = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
+    if name == hostname then
+      thisDestinationSlotId = id
+    end
     if ids[id] then
       return false, cfgPath .. ": slot id for \"" .. v .. "\" is already used for \"" .. ids[id] .. "\"."
     elseif names[name] then
@@ -118,23 +137,35 @@ function WarpDaemon.verifyAndSaveConfig(existingCfg)
     ids[id] = v
     names[name] = v
   end
+  if not thisDestinationSlotId then
+    return false, cfgPath .. ": hostname \"" .. hostname .. "\" for this destination was not found in the list of destinations."
+  end
 
+  -- Only save and update member variables at the end once verification passed.
   if loadedDefaults then
     dlog("warpd", "Configuration not found, saving defaults to ", cfgPath, "\n")
     config.saveFile(cfgPath, cfg, cfgFormat, cfgTypes)
   elseif existingCfg then
     config.saveFile(cfgPath, cfg, cfgFormat, cfgTypes)
   end
+  self.cfg = cfg
+  self.thisDestinationSlotId = thisDestinationSlotId
 
-  return true, cfg
+  return true
 end
 
 
+-- Create a new daemon instance.
+-- 
+---@param ... any
+---@return WarpDaemon
+---@nodiscard
 function WarpDaemon:new(...)
   self.__index = self
   self = setmetatable({}, self)
 
   self.cfg = {}
+  self.thisDestinationSlotId = ""
   self.spatialIoPortSide = -1
 
   -- Only four sides are scanned for ender chests and generators, right side (relative) is the spatial IO port.
@@ -146,6 +177,7 @@ function WarpDaemon:new(...)
 end
 
 
+-- Entry point, called by `warpd` after initialization.
 function WarpDaemon:start()
   io.write("WarpDaemon:start() called\n")
   dlog.handleError(xpcall(WarpDaemon.main, debug.traceback, self))
@@ -167,14 +199,14 @@ function WarpDaemon:start()
 end
 
 
+-- Reads configuration, checks setup for errors, then runs the main loop.
 function WarpDaemon:main()
   -- Load config file, or use default config if not found.
-  local status, result = WarpDaemon.verifyAndSaveConfig()
+  local status, result = self:verifyAndSaveConfig()
   if not status then
     dlog("error", "\27[31m", result, "\27[0m")
     return
   end
-  self.cfg = result
 
   dlog("warpd", "config: ", self.cfg)
 
@@ -258,6 +290,11 @@ function WarpDaemon:main()
 end
 
 
+-- Convert a side (relative to the spatial IO port) to the real side in the
+-- world. The transposer will need this result.
+-- 
+---@param relativeSide Sides
+---@return Sides
 function WarpDaemon:getWorldSide(relativeSide)
   if relativeSide < 2 then
     -- Either up or down.
@@ -274,11 +311,23 @@ function WarpDaemon:getWorldSide(relativeSide)
 end
 
 
+-- Unpack a slot id (character representing a side, and slot number).
+-- 
+---@param slotId string
+---@return Sides
+---@return integer
 function WarpDaemon:getSideAndSlot(slotId)
-  return self.scanSides[string.sub(slotId, 1, 1)], tonumber(string.sub(slotId, 2))
+  return self.scanSides[string.sub(slotId, 1, 1)], tonumber(string.sub(slotId, 2)) --[[@as integer]]
 end
 
 
+-- Attempt to move empty fuel out of the generator and put new fuel in.
+-- 
+---@param eachSideStacks table
+---@param inventoryNames table
+---@param relativeSide Sides
+---@param slot integer
+---@param item Item
 function WarpDaemon:refuelGenerator(eachSideStacks, inventoryNames, relativeSide, slot, item)
   local settings = self.cfg.settings
   local worldSide = self:getWorldSide(relativeSide)
@@ -299,6 +348,12 @@ function WarpDaemon:refuelGenerator(eachSideStacks, inventoryNames, relativeSide
 end
 
 
+-- Attempt to modify the configuration with a new entry, and save the config if
+-- successful. The configPrefix indicates if the entry corresponds to settings
+-- or destinations.
+-- 
+---@param configPrefix string
+---@param configEntry string
 function WarpDaemon:updateConfig(configPrefix, configEntry)
   dlog("d", "Update config ", configPrefix, " with entry [", configEntry, "]")
   local key, value = string.match(configEntry, "^([^=]+)=(.+)$")
@@ -347,7 +402,7 @@ function WarpDaemon:updateConfig(configPrefix, configEntry)
   dlog("d", "Update ", key, " -> ", value)
   local oldValue = subConfig[key]
   subConfig[key] = value
-  local status2, result = WarpDaemon.verifyAndSaveConfig(self.cfg)
+  local status2, result = self:verifyAndSaveConfig(self.cfg)
   if not status2 then
     dlog("warn", "\27[33m", "Config update [", configPrefix, configEntry, "] failed: ", result, "\27[0m")
     subConfig[key] = oldValue
@@ -356,10 +411,64 @@ function WarpDaemon:updateConfig(configPrefix, configEntry)
 end
 
 
+function WarpDaemon:warpReceive(relativeSide, slot, item)
+  -- Ensure that `warp` program is not in the middle of sending.
+  local lockFilename = "/tmp/warp.lock"
+  local lockFile = io.open(lockFilename, "r")
+  if lockFile then
+    local lastTime = lockFile:read("n")
+    lockFile:close()
+    if computer.uptime() - lastTime > 30.0 then    -- FIXME: what value to set this to? ##################################################################
+      dlog("warn", "\27[33m", "Lock file ", lockFilename, " is stale, removing it. Did a previous warp attempt fail?\27[0m")
+      filesystem.remove(lockFilename)
+    else
+      return
+    end
+  end
+
+  if transposer.transferItem(self:getWorldSide(relativeSide), self.spatialIoPortSide, 1, slot, 1) ~= 1 then
+    dlog("warn", "\27[33m", "Warp arrival failed, unable to move storage cell into spatial IO port.\27[0m")
+    return
+  end
+
+  local arrivalName
+  for _, v in ipairs(self.cfg.destinations) do
+    local id, name, _ = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
+    if id == item.label then
+      arrivalName = name
+    end
+  end
+  io.write("Incoming warp from \"", arrivalName or "unknown", "\", please stand clear!\n")
+
+  --computer.beep(400, 0.4)
+  --computer.beep(607, 0.4)
+  --computer.beep(925, 0.4)
+
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  os.sleep(0.4)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  os.sleep(0.4)
+
+  redstone.setOutput(sides.back, 15)
+  os.sleep(0.1)
+  redstone.setOutput(sides.back, 0)
+
+
+end
+
+
+-- Check items in surrounding inventories and determine if there is work to do.
 function WarpDaemon:mainLoop()
   local settings = self.cfg.settings
 
-  -- Scan each of the inventories for items and cache them. The transposer calls take one tick to run, so doing a pre-pass like this is more performant.
+  -- Scan each of the inventories for items and cache them.
+  -- The transposer calls take one tick to run, so doing a pre-pass like this is more performant.
   local eachSideStacks = {}
   for _, relativeSide in pairs(self.scanSides) do
     local worldSide = self:getWorldSide(relativeSide)
@@ -400,6 +509,7 @@ function WarpDaemon:mainLoop()
   -- Make a second pass through the items to check for fuel, config updates, warp requests, etc.
   local inventoryNames = {}
   local configPrefix, configEntry
+  local thisDestinationSide, thisDestinationSlot = self:getSideAndSlot(self.thisDestinationSlotId)
   for relativeSide, stacks in pairs(eachSideStacks) do
     for slot, item in iterateStacks(stacks) do
       if settings.fuelSlot and string.match(item.fullName, settings.emptyFuelItem) then
@@ -417,6 +527,8 @@ function WarpDaemon:mainLoop()
           self:updateConfig(configPrefix, configEntry)
           configPrefix, configEntry = nil, nil
         end
+      elseif relativeSide == thisDestinationSide and slot == thisDestinationSlot and item.label ~= self.thisDestinationSlotId then
+        self:warpReceive(relativeSide, slot, item)    -- FIXME: instead of doing this, maybe wait until after the loop. locate this destination's cell and pass that in. #######################
       end
     end
     configPrefix, configEntry = nil, nil
@@ -424,6 +536,7 @@ function WarpDaemon:mainLoop()
 end
 
 
+-- Called by `warpd` when the daemon is requested to stop.
 function WarpDaemon:stop()
   io.write("WarpDaemon:stop() called\n")
   self.running = false
