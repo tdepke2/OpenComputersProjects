@@ -48,8 +48,8 @@ Warpd process:
   3. If we see a config entry, update the config and save it if it's a new value and it's a valid form.
     a. If it's new, check sides again. If it corresponds to a destination we don't have available then warn.   FIXME: forgot about this, should we actually do this though?
     b. If it's not a valid form then warn.
-  4. If remote cell in my slot and no lock file (or lock file is stale), put remote cell in IO port, alert anyone nearby of the arrival, then pulse after a moment.
+  4. If remote cell in my slot and no lock file (or lock file is stale) and IO port empty, put remote cell in IO port, alert anyone nearby of the arrival, then pulse after a moment.
     a. If lock file was stale, remove it and warn.
-  5. Put my cell back in my slot (retry a few times if failure, then warn), put remote cell in remote slot (try forever until it works or cell taken out of IO port by user, error each time it fails).
+  5. Put my cell back in my slot (retry a few times if failure, then log error), put remote cell in remote slot (retry a few times if failure, then log error).
 
 ]]
