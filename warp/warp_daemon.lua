@@ -338,7 +338,7 @@ function WarpDaemon:updateConfig(configPrefix, configEntry)
 end
 
 
-function WarpDaemon:warpReceive(relativeSide, slot, item)
+function WarpDaemon:receiveWarp(relativeSide, slot, item)
   -- Ensure that `warp` program is not in the middle of sending.
   local lockFilename = "/tmp/warp.lock"
   local lockFile = io.open(lockFilename, "r")
@@ -520,7 +520,7 @@ function WarpDaemon:mainLoop()
   local itemInMySlot = eachSideStacks[mySide][mySlot]
   if itemInMySlot and string.match(itemInMySlot.fullName, settings.spatialCellItem) and itemInMySlot.label ~= self.thisDestinationSlotId then
     dlog("d", "remote cell in my slot, receive the warp")
-    self:warpReceive(mySide, mySlot, itemInMySlot)
+    self:receiveWarp(mySide, mySlot, itemInMySlot)
   end
 end
 

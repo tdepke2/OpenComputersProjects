@@ -8,6 +8,7 @@ Can update config by placing a named item like `de:d3="mars;suit,oxyge` and `cfg
 Still need to copy the config file onto a new teleporter instance before hand.
 Make sure to test config before leaving (teleport to the current teleporter should say you are already here)!
 Spatial chamber size should have equal x and z dimensions, otherwise it will be directional.
+Note that ender chests can be obtained through quest rewards, you do not need to reach the end of platline to get them.
 
 Some slots are special:
   * Fuel slot (optional)
@@ -53,3 +54,131 @@ Warpd process:
   5. Put my cell back in my slot (retry a few times if failure, then log error), put remote cell in remote slot (retry a few times if failure, then log error).
 
 ]]
+
+-- OS libraries.
+local component = require("component")
+local computer = require("computer")
+local redstone = component.redstone
+local shell = require("shell")
+local sides = require("sides")
+local transposer = component.transposer
+
+-- User libraries.
+local include = require("include")
+include.mode("debug")
+local dlog = include("dlog")
+dlog.mode("debug")
+
+local config = include("config")
+local itemutil = include("itemutil")
+local warp_common = include("warp_common")
+
+-- WarpClient class definition.
+---@class WarpClient
+local WarpClient = {}
+
+-- Hook up errors to throw on access to nil class members (usually a programming
+-- error or typo).
+setmetatable(WarpClient, {
+  __index = function(t, k)
+    error("attempt to read undefined member " .. tostring(k) .. " in WarpClient class.", 2)
+  end
+})
+
+
+function WarpClient:new()
+    self.__index = self
+    self = setmetatable({}, self)
+
+    -- Note that `warpd` is much more strict about verifying config and hardware setup, so we just stick with basic checks here.
+
+    local cfgPath = "/etc/warp.cfg"
+    local cfgTypes, cfgFormat = warp_common.makeConfigTemplate()
+    local cfg = config.loadFile(cfgPath, cfgFormat, false)
+
+    if not cfg then
+        io.write("error: config ", cfgPath, " not found, please enable and start `warpd` to create it.\n")
+        os.exit(1)
+    end
+    config.verify(cfg, cfgFormat, cfgTypes)
+    self.cfg = cfg
+
+    ---@type Sides
+    self.spatialIoPortSide = sides.down
+
+    return self
+end
+
+
+function WarpClient:startWarp(destination)
+    local hostname = os.getenv("HOSTNAME") or ""
+    if hostname == destination then
+        io.write("Already at this destination.\n")
+        return    -- FIXME: exit success? ########################################
+    end
+
+    -- Find spatial IO port.
+    local spatialIoPortSide
+    for i = 0, 5 do
+      if string.match(transposer.getInventoryName(i) or "", self.cfg.settings.spatialIoPort) then
+        spatialIoPortSide = i
+      end
+    end
+    if not spatialIoPortSide then
+      io.write("error: transposer cannot see spatial IO port.\n")
+      return
+    end
+    self.spatialIoPortSide = spatialIoPortSide --[[@as Sides]]
+
+    -- Verify source and destination.
+    local thisDestinationSlotId, remoteSlotId
+    for _, v in ipairs(self.cfg.destinations) do
+        local id, name, _ = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
+        if name == hostname then
+            thisDestinationSlotId = id
+        elseif name == destination then
+            remoteSlotId = id
+        end
+    end
+    if not thisDestinationSlotId then
+        io.write("error: hostname \"", hostname, "\" for this destination was not found in the list of destinations.\n")
+        return
+    elseif not remoteSlotId then
+        io.write("error: destination \"", destination, "\" was not found in the list of destinations.\n")
+        return
+    end
+
+    -- Ensure spatial IO port empty.
+    for slot, _ in itemutil.invIterator(transposer.getAllStacks(self.spatialIoPortSide)) do
+      io.write("error: spatial IO port has item in slot ", slot, ", please put it back in its place in the ender chests.\n")
+      return
+    end
+
+    -- Verify storage cells.
+    local mySide, mySlot = warp_common.getSideAndSlot(thisDestinationSlotId)
+    local itemInMySlot = transposer.getStackInSlot(warp_common.getWorldSide(self.spatialIoPortSide, mySide), mySlot)
+    if not itemInMySlot or itemInMySlot.label ~= thisDestinationSlotId then
+        io.write("error: source is busy, someone may be arriving at this teleporter (storage cell ", thisDestinationSlotId, " is not in its slot).\n")
+        return
+    end
+
+    local remoteSide, remoteSlot = warp_common.getSideAndSlot(remoteSlotId)
+    local itemInRemoteSlot = transposer.getStackInSlot(warp_common.getWorldSide(self.spatialIoPortSide, remoteSide), remoteSlot)
+    if not itemInRemoteSlot or itemInRemoteSlot.label ~= remoteSlotId then
+        io.write("error: destination is busy serving another request (storage cell ", remoteSlotId, " is not in its slot).\n")
+        return
+    end
+
+    io.write("ready to warp to ", destination, "\n")
+end
+
+
+local function main(...)
+  -- Get command-line arguments.
+  local args, opts = shell.parse(...)
+
+  local warpClient = WarpClient:new()
+  warpClient:startWarp(args[1])
+end
+
+main(...)
