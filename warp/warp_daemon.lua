@@ -16,6 +16,7 @@ dlog.mode("debug")
 
 local config = include("config")
 local itemutil = include("itemutil")
+local warp_common = include("warp_common")
 
 -- WarpDaemon class definition.
 ---@class WarpDaemon
@@ -30,62 +31,45 @@ setmetatable(WarpDaemon, {
 })
 
 
--- Create tables to describe the configuration format. This is used in
--- conjunction with the config module to save/load/verify the configuration.
+-- Create a new daemon instance.
 -- 
----@return table cfgTypes
----@return table cfgFormat
+---@param ... any
+---@return WarpDaemon
 ---@nodiscard
-function WarpDaemon.makeConfigTemplate()
-  local cfgTypes = {
-    SlotId = {
-      verify = function(v)
-        if type(v) ~= "string" or not string.match(v, "^[dubl][1-9]%d*$") then
-          error("provided SlotId must be a side (d, u, b, l) and slot number greater than zero.")
-        end
-      end
-    },
-    Destination = {
-      verify = function(v)
-        if type(v) ~= "string" then
-          error("provided Destination must be a string.")
-        end
-        local id, name, _ = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
-        if not id then
-          error("provided Destination has invalid format.")
-        elseif not string.match(id, "^[dubl][1-9]%d*$") then
-          error("provided Destination id must be a side (d, u, b, l) and slot number greater than zero.")
-        elseif not string.match(name, "^[%w_-]+$") then
-          error("provided Destination name must only contain alphanumeric characters and dashes/underscores.")
-        end
-      end
-    },
-  }
+function WarpDaemon:new(...)
+  self.__index = self
+  self = setmetatable({}, self)
 
-  local cfgFormat = {
-    settings = {
-      _order_ = 1,
-      spatialIoPort = {_order_ = 1, "string", "tile%.appliedenergistics2%.BlockSpatialIOPort", [[
+  self.cfg = {}
+  self.thisDestinationSlotId = ""
+  ---@type Sides
+  self.spatialIoPortSide = sides.down
 
-FIXME: comments needed about tilename/itemname and that lua patterns are allowed.]],
-      },
-      enderChest = {_order_ = 2, "string", "tile%.enderchest"},
-      generator = {_order_ = 3, "string", "gt%.blockmachines"},
-      spatialCellItem = {_order_ = 4, "string", "appliedenergistics2:item%.ItemSpatialStorageCell.*"},
-      emptyFuelItem = {_order_ = 5, "string", "IC2:itemCellEmpty/0"},    -- When empty fuel is removed, more fuel is added. There must be some empty or full fuel in the generator for this to work.
-      fuelSlot = {_order_ = 6, "SlotId|nil", "d1"},
-      emptyFuelSlot = {_order_ = 7, "SlotId|nil", "d2"},
-    },
-    destinations = {
-      _order_ = 2,
-      _comment_ = "\nDestinations I guess.",
-      _ipairs_ = {"Destination",
-        "d3;home;",
-      },
-    },
-  }
+  self.running = true
 
-  return cfgTypes, cfgFormat
+  return self
+end
+
+
+-- Entry point, called by `warpd` after initialization.
+function WarpDaemon:start()
+  io.write("WarpDaemon:start() called\n")
+  dlog.handleError(xpcall(WarpDaemon.main, debug.traceback, self))
+
+  --[[self.myCounter = self.myCounter + 1
+  dlog("warpd", "WarpDaemon:start(), myCounter = ", self.myCounter)
+
+  for i = 0, 5 do
+    dlog("warpd", sides[i], " -> ", transposer.getInventoryName(i))
+  end
+
+  io.write("it worked?\n")]]
+
+
+
+  --while self.running do
+    --os.sleep(1)
+  --end
 end
 
 
@@ -97,7 +81,7 @@ end
 ---@return string|nil
 function WarpDaemon:verifyAndSaveConfig(existingCfg)
   local cfgPath = "/etc/warp.cfg"
-  local cfgTypes, cfgFormat = WarpDaemon.makeConfigTemplate()
+  local cfgTypes, cfgFormat = warp_common.makeConfigTemplate()
   local cfg, loadedDefaults
   if not existingCfg then
     cfg, loadedDefaults = config.loadFile(cfgPath, cfgFormat, true)
@@ -152,50 +136,6 @@ function WarpDaemon:verifyAndSaveConfig(existingCfg)
   self.thisDestinationSlotId = thisDestinationSlotId
 
   return true
-end
-
-
--- Create a new daemon instance.
--- 
----@param ... any
----@return WarpDaemon
----@nodiscard
-function WarpDaemon:new(...)
-  self.__index = self
-  self = setmetatable({}, self)
-
-  self.cfg = {}
-  self.thisDestinationSlotId = ""
-  self.spatialIoPortSide = -1
-
-  -- Only four sides are scanned for ender chests and generators, right side (relative) is the spatial IO port.
-  self.scanSides = {d = sides.down, u = sides.up, b = sides.back, l = sides.left}
-
-  self.running = true
-
-  return self
-end
-
-
--- Entry point, called by `warpd` after initialization.
-function WarpDaemon:start()
-  io.write("WarpDaemon:start() called\n")
-  dlog.handleError(xpcall(WarpDaemon.main, debug.traceback, self))
-
-  --[[self.myCounter = self.myCounter + 1
-  dlog("warpd", "WarpDaemon:start(), myCounter = ", self.myCounter)
-
-  for i = 0, 5 do
-    dlog("warpd", sides[i], " -> ", transposer.getInventoryName(i))
-  end
-
-  io.write("it worked?\n")]]
-
-
-
-  --while self.running do
-    --os.sleep(1)
-  --end
 end
 
 
@@ -277,7 +217,7 @@ function WarpDaemon:main()
   local unreachableDestinations = ""
   for _, v in ipairs(self.cfg.destinations) do
     local id, name, _ = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
-    if not enderChestSides[self.scanSides[string.sub(id, 1, 1)]] then
+    if not enderChestSides[warp_common.scanSides[string.sub(id, 1, 1)]] then
       unreachableDestinations = unreachableDestinations .. name .. ", "
     end
   end
@@ -308,37 +248,6 @@ function WarpDaemon:main()
 end
 
 
--- Convert a side (relative to the spatial IO port) to the real side in the
--- world. The transposer will need this result.
--- 
----@param relativeSide Sides
----@return Sides
-function WarpDaemon:getWorldSide(relativeSide)
-  if relativeSide < 2 then
-    -- Either up or down.
-    return relativeSide
-  else
-    -- Adjust the sides to put them in clockwise order (back = 2, right = 4, front = 6, left = 8).
-    local adjustedSpatialIoSide = self.spatialIoPortSide % 2 == 0 and self.spatialIoPortSide or self.spatialIoPortSide + 3
-    local adjustedRelativeSide = relativeSide % 2 == 0 and relativeSide or relativeSide + 3
-    local adjustedWorldSide = (adjustedSpatialIoSide + 2 + adjustedRelativeSide) % 8 + 2
-
-    -- Undo the adjustment on the world side.
-    return adjustedWorldSide <= 4 and adjustedWorldSide or adjustedWorldSide - 3
-  end
-end
-
-
--- Unpack a slot id (character representing a side, and slot number).
--- 
----@param slotId string
----@return Sides
----@return integer
-function WarpDaemon:getSideAndSlot(slotId)
-  return self.scanSides[string.sub(slotId, 1, 1)], tonumber(string.sub(slotId, 2)) --[[@as integer]]
-end
-
-
 -- Attempt to move empty fuel out of the generator and put new fuel in.
 -- 
 ---@param eachSideStacks table
@@ -348,15 +257,15 @@ end
 ---@param item Item
 function WarpDaemon:refuelGenerator(eachSideStacks, inventoryNames, relativeSide, slot, item)
   local settings = self.cfg.settings
-  local worldSide = self:getWorldSide(relativeSide)
+  local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
   if not inventoryNames[relativeSide] then
     inventoryNames[relativeSide] = transposer.getInventoryName(worldSide)
   end
 
-  local fuelSide, fuelSlot = self:getSideAndSlot(settings.fuelSlot)
+  local fuelSide, fuelSlot = warp_common.getSideAndSlot(settings.fuelSlot)
   if string.match(inventoryNames[relativeSide], settings.generator) and eachSideStacks[fuelSide][fuelSlot] then
     dlog("d", "its a generator and we have fuel available.")
-    local emptyFuelSide, emptyFuelSlot = self:getSideAndSlot(settings.emptyFuelSlot)
+    local emptyFuelSide, emptyFuelSlot = warp_common.getSideAndSlot(settings.emptyFuelSlot)
     local itemsMoved = transposer.transferItem(worldSide, emptyFuelSide, item.size, slot, emptyFuelSlot)
     if itemsMoved == item.size then
       dlog("d", "all items moved, put fuel in.")
@@ -454,14 +363,14 @@ function WarpDaemon:warpReceive(relativeSide, slot, item)
   end
 
   -- Verify the side and slot of the remote cell is known.
-  local remoteSide, remoteSlot = self:getSideAndSlot(item.label)
+  local remoteSide, remoteSlot = warp_common.getSideAndSlot(item.label)
   if not remoteSide or not remoteSlot then
     dlog("warn", "\27[33m", "unable to determine slot id for storage cell in spatial IO port with label \"", item.label, "\" (label is invalid).\27[0m")
     return
   end
 
   -- Move the cell into spatial IO port and trigger it.
-  local worldSide = self:getWorldSide(relativeSide)
+  local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
   if transposer.transferItem(worldSide, self.spatialIoPortSide, 1, slot, 1) ~= 1 then
     dlog("warn", "\27[33m", "warp arrival failed, unable to move storage cell into spatial IO port.\27[0m")
     return
@@ -496,7 +405,7 @@ function WarpDaemon:warpReceive(relativeSide, slot, item)
   redstone.setOutput(sides.back, 0)
 
   -- Move cell in remote slot back into my slot.
-  local remoteWorldSide = self:getWorldSide(remoteSide)
+  local remoteWorldSide = warp_common.getWorldSide(self.spatialIoPortSide, remoteSide)
   local itemInRemoteSlot = transposer.getStackInSlot(remoteWorldSide, remoteSlot)
   if itemInRemoteSlot and itemInRemoteSlot.label == self.thisDestinationSlotId then
     local putMyCellBack = false
@@ -534,8 +443,8 @@ end
 
 function WarpDaemon:scanInventories()
   local eachSideStacks = {}
-  for _, relativeSide in pairs(self.scanSides) do
-    local worldSide = self:getWorldSide(relativeSide)
+  for _, relativeSide in pairs(warp_common.scanSides) do
+    local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
     local stacks = transposer.getAllStacks(worldSide)
     local stacksCopy = {}
     local lastSlot = 0
@@ -607,7 +516,7 @@ function WarpDaemon:mainLoop()
   end
 
   -- Check for incoming warp.
-  local mySide, mySlot = self:getSideAndSlot(self.thisDestinationSlotId)
+  local mySide, mySlot = warp_common.getSideAndSlot(self.thisDestinationSlotId)
   local itemInMySlot = eachSideStacks[mySide][mySlot]
   if itemInMySlot and string.match(itemInMySlot.fullName, settings.spatialCellItem) and itemInMySlot.label ~= self.thisDestinationSlotId then
     dlog("d", "remote cell in my slot, receive the warp")
