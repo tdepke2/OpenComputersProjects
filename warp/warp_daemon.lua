@@ -12,11 +12,12 @@ local transposer = component.transposer
 local include = require("include")
 include.mode("debug")
 local dlog = include("dlog")
-dlog.mode("debug")
+dlog.mode("debug")    -- FIXME: something odd is going on with file logging, maybe running dlog in multiple programs isn't so functional after all #######################################
 
 local config = include("config")
 local itemutil = include("itemutil")
 local warp_common = include("warp_common")
+
 
 -- WarpDaemon class definition.
 ---@class WarpDaemon
@@ -241,10 +242,10 @@ function WarpDaemon:main()
     dlog("warn", "\27[33m", "no storage cells found in ender chests (looking for ", settings.spatialCellItem, ").\27[0m")
   end
 
-  --while self.running do
+  while self.running do
     self:mainLoop()
-    --os.sleep(20)
-  --end
+    os.sleep(5.0)
+  end
 end
 
 
@@ -384,22 +385,7 @@ function WarpDaemon:receiveWarp(relativeSide, slot, item)
     end
   end
   io.write("Incoming warp from \"", arrivalName or "unknown", "\", please stand clear!\n")
-
-  --computer.beep(400, 0.4)
-  --computer.beep(607, 0.4)
-  --computer.beep(925, 0.4)
-
-  computer.beep(600, 0.2)
-  computer.beep(400, 0.2)
-  computer.beep(600, 0.2)
-  computer.beep(400, 0.2)
-  os.sleep(0.4)
-  computer.beep(600, 0.2)
-  computer.beep(400, 0.2)
-  computer.beep(600, 0.2)
-  computer.beep(400, 0.2)
-  os.sleep(0.4)
-
+  warp_common.playWarningSound()
   redstone.setOutput(sides.back, 15)
   os.sleep(0.1)
   redstone.setOutput(sides.back, 0)

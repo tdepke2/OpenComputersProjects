@@ -1,4 +1,5 @@
 
+local computer = require("computer")
 local sides = require("sides")
 
 local warp_common = {}
@@ -101,6 +102,25 @@ function warp_common.getWorldSide(spatialIoPortSide, relativeSide)
     -- Undo the adjustment on the world side.
     return adjustedWorldSide <= 4 and adjustedWorldSide or adjustedWorldSide - 3
   end
+end
+
+
+-- Make a noise to alert any nearby players to get out of the way.
+function warp_common.playWarningSound()
+  --computer.beep(400, 0.4)
+  --computer.beep(607, 0.4)
+  --computer.beep(925, 0.4)
+
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  os.sleep(0.4)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  os.sleep(0.4)
 end
 
 return warp_common

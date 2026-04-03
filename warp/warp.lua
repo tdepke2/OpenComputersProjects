@@ -9,6 +9,7 @@ Still need to copy the config file onto a new teleporter instance before hand.
 Make sure to test config before leaving (teleport to the current teleporter should say you are already here)!
 Spatial chamber size should have equal x and z dimensions, otherwise it will be directional.
 Note that ender chests can be obtained through quest rewards, you do not need to reach the end of platline to get them.
+Options to escape the storage dimension: death, /dimensiontp, or a trustworthy friend.
 
 Some slots are special:
   * Fuel slot (optional)
@@ -58,6 +59,7 @@ Warpd process:
 -- OS libraries.
 local component = require("component")
 local computer = require("computer")
+local filesystem = require("filesystem")
 local redstone = component.redstone
 local shell = require("shell")
 local sides = require("sides")
@@ -73,6 +75,7 @@ local config = include("config")
 local itemutil = include("itemutil")
 local warp_common = include("warp_common")
 
+
 -- WarpClient class definition.
 ---@class WarpClient
 local WarpClient = {}
@@ -87,89 +90,188 @@ setmetatable(WarpClient, {
 
 
 function WarpClient:new()
-    self.__index = self
-    self = setmetatable({}, self)
+  self.__index = self
+  self = setmetatable({}, self)
 
-    -- Note that `warpd` is much more strict about verifying config and hardware setup, so we just stick with basic checks here.
+  -- Note that `warpd` is much more strict about verifying config and hardware setup, so we just stick with basic checks here.
 
-    local cfgPath = "/etc/warp.cfg"
-    local cfgTypes, cfgFormat = warp_common.makeConfigTemplate()
-    local cfg = config.loadFile(cfgPath, cfgFormat, false)
+  local cfgPath = "/etc/warp.cfg"
+  local cfgTypes, cfgFormat = warp_common.makeConfigTemplate()
+  local cfg = config.loadFile(cfgPath, cfgFormat, false)
 
-    if not cfg then
-        io.write("error: config ", cfgPath, " not found, please enable and start `warpd` to create it.\n")
-        os.exit(1)
-    end
-    config.verify(cfg, cfgFormat, cfgTypes)
-    self.cfg = cfg
+  if not cfg then
+    io.write("error: config ", cfgPath, " not found, please enable and start `warpd` to create it.\n")
+    os.exit(1)
+  end
+  config.verify(cfg, cfgFormat, cfgTypes)
+  self.cfg = cfg
 
-    ---@type Sides
-    self.spatialIoPortSide = sides.down
+  ---@type Sides
+  self.spatialIoPortSide = sides.down
 
-    return self
+  return self
 end
 
 
-function WarpClient:startWarp(destination)
-    local hostname = os.getenv("HOSTNAME") or ""
-    if hostname == destination then
-        io.write("Already at this destination.\n")
-        return    -- FIXME: exit success? ########################################
-    end
+function WarpClient:prepareWarp(destination)
+  local hostname = os.getenv("HOSTNAME") or ""
+  if hostname == destination then
+    io.write("Already at this destination.\n")
+    return    -- FIXME: exit success? ########################################
+  end
 
-    -- Find spatial IO port.
-    local spatialIoPortSide
-    for i = 0, 5 do
-      if string.match(transposer.getInventoryName(i) or "", self.cfg.settings.spatialIoPort) then
-        spatialIoPortSide = i
+  -- Find spatial IO port.
+  local spatialIoPortSide
+  for i = 0, 5 do
+    if string.match(transposer.getInventoryName(i) or "", self.cfg.settings.spatialIoPort) then
+      spatialIoPortSide = i
+    end
+  end
+  if not spatialIoPortSide then
+    io.write("error: transposer cannot see spatial IO port.\n")
+    return
+  end
+  self.spatialIoPortSide = spatialIoPortSide --[[@as Sides]]
+
+  -- Verify source and destination.
+  local thisDestinationSlotId, remoteSlotId, thisDestinationRequirements
+  for _, v in ipairs(self.cfg.destinations) do
+    local id, name, requirements = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
+    if name == hostname then
+      thisDestinationSlotId = id
+      thisDestinationRequirements = requirements
+    elseif name == destination then
+      remoteSlotId = id
+    end
+  end
+  if not thisDestinationSlotId then
+    io.write("error: hostname \"", hostname, "\" for this destination was not found in the list of destinations.\n")
+    return
+  elseif not remoteSlotId then
+    io.write("error: destination \"", destination, "\" was not found in the list of destinations.\n")
+    return
+  end
+
+  -- Ensure spatial IO port empty.
+  for slot, _ in itemutil.invIterator(transposer.getAllStacks(self.spatialIoPortSide)) do
+    io.write("error: spatial IO port has item in slot ", slot, ", please put it back in its place in the ender chests.\n")
+    return
+  end
+
+  --FIXME: need to allow a --force option, the requirements text is also backwards (should be for destination, not source)
+  if #thisDestinationRequirements > 0 then
+    io.write("This destination requires: ", thisDestinationRequirements, "\n")
+    io.write("Do you wish to proceed? (Y/n): ")
+    local input = io.read()
+    if type(input) ~= "string" or string.lower(input) == "n" or string.lower(input) == "no" then
+      io.write("Exiting...\n")
+      return
+    end
+  end
+
+  -- Verify storage cells.
+  local remoteSide, remoteSlot = warp_common.getSideAndSlot(remoteSlotId)
+  local itemInRemoteSlot = transposer.getStackInSlot(warp_common.getWorldSide(self.spatialIoPortSide, remoteSide), remoteSlot)
+  if not itemInRemoteSlot or itemInRemoteSlot.label ~= remoteSlotId then
+    io.write("error: destination is busy serving another request (storage cell ", remoteSlotId, " is not in its slot).\n")
+    return
+  end
+
+  local mySide, mySlot = warp_common.getSideAndSlot(thisDestinationSlotId)
+  local itemInMySlot = transposer.getStackInSlot(warp_common.getWorldSide(self.spatialIoPortSide, mySide), mySlot)
+  if not itemInMySlot or itemInMySlot.label ~= thisDestinationSlotId then
+    io.write("error: source is busy, someone may be arriving at this teleporter (storage cell ", thisDestinationSlotId, " is not in its slot).\n")
+    return
+  end
+
+  self:startWarp(destination, thisDestinationSlotId, remoteSlotId)
+end
+
+
+function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
+  local mySide, mySlot = warp_common.getSideAndSlot(thisDestinationSlotId)
+  local myWorldSide = warp_common.getWorldSide(self.spatialIoPortSide, mySide)
+
+  local remoteSide, remoteSlot = warp_common.getSideAndSlot(remoteSlotId)
+  local remoteWorldSide = warp_common.getWorldSide(self.spatialIoPortSide, remoteSide)
+
+  -- Move my cell into spatial IO port and trigger it.
+  if transposer.transferItem(myWorldSide, self.spatialIoPortSide, 1, mySlot, 1) ~= 1 then
+    io.write("error: source is busy, someone may be arriving at this teleporter (failed to move my storage cell into spatial IO port).\n")
+    return
+  end
+  local lockFilename = "/tmp/warp.lock"
+  local lockFile = io.open(lockFilename, "w")
+  if not lockFile then
+    io.write("error: unable to open lock file ", lockFilename, " for writing.\n")
+    return
+  end
+  lockFile:write(computer.uptime())
+  lockFile:close()
+
+  io.write("Warping to \"", destination, "\"...\n")
+  os.sleep(1.0)
+  redstone.setOutput(sides.back, 15)
+  os.sleep(0.1)
+  redstone.setOutput(sides.back, 0)
+
+  -- Move remote cell into my slot.
+  local remoteCellTransferred = false
+  for _ = 1, 3 do    -- FIXME: make this a setting ############################
+    local itemInRemoteSlot = transposer.getStackInSlot(remoteWorldSide, remoteSlot)
+    if itemInRemoteSlot and itemInRemoteSlot.label == remoteSlotId then
+      if transposer.transferItem(remoteWorldSide, myWorldSide, 1, remoteSlot, mySlot) == 1 then
+        remoteCellTransferred = true
+        break
       end
     end
-    if not spatialIoPortSide then
-      io.write("error: transposer cannot see spatial IO port.\n")
-      return
-    end
-    self.spatialIoPortSide = spatialIoPortSide --[[@as Sides]]
+    os.sleep(1.0)
+  end
+  if not remoteCellTransferred then
+    io.write("error: unable to move destination storage cell into my slot, aborting warp.\n")
+    xassert(transposer.transferItem(self.spatialIoPortSide, self.spatialIoPortSide, 1, 2, 1) == 1)
 
-    -- Verify source and destination.
-    local thisDestinationSlotId, remoteSlotId
-    for _, v in ipairs(self.cfg.destinations) do
-        local id, name, _ = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
-        if name == hostname then
-            thisDestinationSlotId = id
-        elseif name == destination then
-            remoteSlotId = id
-        end
-    end
-    if not thisDestinationSlotId then
-        io.write("error: hostname \"", hostname, "\" for this destination was not found in the list of destinations.\n")
-        return
-    elseif not remoteSlotId then
-        io.write("error: destination \"", destination, "\" was not found in the list of destinations.\n")
-        return
-    end
+    warp_common.playWarningSound()
+    redstone.setOutput(sides.back, 15)
+    os.sleep(0.1)
+    redstone.setOutput(sides.back, 0)
 
-    -- Ensure spatial IO port empty.
-    for slot, _ in itemutil.invIterator(transposer.getAllStacks(self.spatialIoPortSide)) do
-      io.write("error: spatial IO port has item in slot ", slot, ", please put it back in its place in the ender chests.\n")
-      return
-    end
+    xassert(transposer.transferItem(self.spatialIoPortSide, myWorldSide, 1, 2, mySlot) == 1)
+    return
+  end
 
-    -- Verify storage cells.
-    local mySide, mySlot = warp_common.getSideAndSlot(thisDestinationSlotId)
-    local itemInMySlot = transposer.getStackInSlot(warp_common.getWorldSide(self.spatialIoPortSide, mySide), mySlot)
-    if not itemInMySlot or itemInMySlot.label ~= thisDestinationSlotId then
-        io.write("error: source is busy, someone may be arriving at this teleporter (storage cell ", thisDestinationSlotId, " is not in its slot).\n")
-        return
+  -- Move my cell in spatial IO port into remote slot.
+  local warpSuccess = false
+  if transposer.transferItem(self.spatialIoPortSide, remoteWorldSide, 1, 2, remoteSlot) == 1 then
+    for _ = 1, 5 do    -- FIXME: another setting ########################################
+      os.sleep(2.5)    -- FIXME: this is a setting too, make it half the loop time in warpd?
+      local itemInMySlot = transposer.getStackInSlot(myWorldSide, mySlot)
+      if itemInMySlot and itemInMySlot.label == thisDestinationSlotId then
+        warpSuccess = true
+        break
+      end
     end
-
-    local remoteSide, remoteSlot = warp_common.getSideAndSlot(remoteSlotId)
-    local itemInRemoteSlot = transposer.getStackInSlot(warp_common.getWorldSide(self.spatialIoPortSide, remoteSide), remoteSlot)
-    if not itemInRemoteSlot or itemInRemoteSlot.label ~= remoteSlotId then
-        io.write("error: destination is busy serving another request (storage cell ", remoteSlotId, " is not in its slot).\n")
-        return
+    if not warpSuccess then
+      io.write("error: destination is not responding to request, aborting warp.\n")
+      xassert(transposer.transferItem(remoteWorldSide, self.spatialIoPortSide, 1, remoteSlot, 1) == 1)
     end
+  else
+    io.write("error: unable to move my storage cell into destination slot, aborting warp.\n")
+    xassert(transposer.transferItem(self.spatialIoPortSide, self.spatialIoPortSide, 1, 2, 1) == 1)
+  end
 
-    io.write("ready to warp to ", destination, "\n")
+  if not warpSuccess then
+    warp_common.playWarningSound()
+    redstone.setOutput(sides.back, 15)
+    os.sleep(0.1)
+    redstone.setOutput(sides.back, 0)
+
+    xassert(transposer.transferItem(myWorldSide, remoteWorldSide, 1, mySlot, remoteSlot) == 1)
+    xassert(transposer.transferItem(self.spatialIoPortSide, myWorldSide, 1, 2, mySlot) == 1)
+    return
+  end
+
+  filesystem.remove(lockFilename)    -- FIXME: we should remove the lock file even if earlier (non-fatal) error occurred.
 end
 
 
@@ -178,7 +280,7 @@ local function main(...)
   local args, opts = shell.parse(...)
 
   local warpClient = WarpClient:new()
-  warpClient:startWarp(args[1])
+  warpClient:prepareWarp(args[1])
 end
 
 main(...)
