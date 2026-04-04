@@ -13,6 +13,12 @@ warp_common.scanSides = {
   l = sides.left
 }
 
+-- Path to the configuration file.
+warp_common.configFilename = "/etc/warp.cfg"
+
+-- Path to the lock file created by warp program when initiating the teleport.
+warp_common.lockFilename = "/tmp/warp.lock"
+
 
 -- Create tables to describe the configuration format. This is used in
 -- conjunction with the config module to save/load/verify the configuration.

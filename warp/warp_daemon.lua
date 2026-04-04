@@ -12,7 +12,7 @@ local transposer = component.transposer
 local include = require("include")
 include.mode("debug")
 local dlog = include("dlog")
-dlog.mode("debug")    -- FIXME: something odd is going on with file logging, maybe running dlog in multiple programs isn't so functional after all #######################################
+--dlog.mode("debug")    -- FIXME: something odd is going on with file logging, maybe running dlog in multiple programs isn't so functional after all #######################################
 
 local config = include("config")
 local itemutil = include("itemutil")
@@ -81,7 +81,7 @@ end
 ---@return boolean
 ---@return string|nil
 function WarpDaemon:verifyAndSaveConfig(existingCfg)
-  local cfgPath = "/etc/warp.cfg"
+  local cfgPath = warp_common.configFilename
   local cfgTypes, cfgFormat = warp_common.makeConfigTemplate()
   local cfg, loadedDefaults
   if not existingCfg then
@@ -341,14 +341,13 @@ end
 
 function WarpDaemon:receiveWarp(relativeSide, slot, item)
   -- Ensure that `warp` program is not in the middle of sending.
-  local lockFilename = "/tmp/warp.lock"
-  local lockFile = io.open(lockFilename, "r")
+  local lockFile = io.open(warp_common.lockFilename, "r")
   if lockFile then
     local lastTime = lockFile:read("n")
     lockFile:close()
     if computer.uptime() - lastTime > 30.0 then    -- FIXME: what value to set this to? ##################################################################
-      dlog("warn", "\27[33m", "lock file ", lockFilename, " is stale, removing it. Did a previous warp attempt fail?\27[0m")
-      filesystem.remove(lockFilename)
+      dlog("warn", "\27[33m", "lock file ", warp_common.lockFilename, " is stale, removing it. Did a previous warp attempt fail?\27[0m")
+      filesystem.remove(warp_common.lockFilename)
     else
       return
     end
