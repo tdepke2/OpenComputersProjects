@@ -499,15 +499,29 @@ function dlog.out(subsystem, ...)
         varargs[i] = tostring(varargs[i])
       end
     end
-    local message = "dlog:" .. subsystem .. " " .. table.concat(varargs, "", 1, varargs.n)
-    if dlog.maxMessageLength and #message > dlog.maxMessageLength then
-      message = string.sub(message, 1, dlog.maxMessageLength - 3) .. "..."
-    end
-    if dlogFileOutput then
-      dlogFileOutput:write(os.date(), " ", message, "\n")
-    end
-    if dlogStandardOutput then
-      io.write(message, "\n")
+    local message = "dlog:" .. subsystem .. " "
+    if dlog.maxMessageLength then
+      message = message .. table.concat(varargs, "", 1, varargs.n)
+      if #message > dlog.maxMessageLength then
+        message = string.sub(message, 1, dlog.maxMessageLength - 3) .. "..."
+      end
+      if dlogFileOutput then
+        dlogFileOutput:write(os.date(), " ", message, "\n")
+        dlogFileOutput:flush()
+      end
+      if dlogStandardOutput then
+        io.write(message, "\n")
+      end
+    else
+      if dlogFileOutput then
+        dlogFileOutput:write(os.date(), " ", message, table.unpack(varargs, 1, varargs.n))
+        dlogFileOutput:write("\n")
+        dlogFileOutput:flush()
+      end
+      if dlogStandardOutput then
+        io.write(message, table.unpack(varargs, 1, varargs.n))
+        io.write("\n")
+      end
     end
   end
 end
