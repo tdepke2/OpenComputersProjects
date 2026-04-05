@@ -12,7 +12,7 @@ local transposer = component.transposer
 local include = require("include")
 include.mode("debug")
 local dlog = include("dlog")
---dlog.mode("debug")    -- FIXME: something odd is going on with file logging, maybe running dlog in multiple programs isn't so functional after all #######################################
+--dlog.mode("debug")
 
 local config = include("config")
 local itemutil = include("itemutil")
@@ -54,23 +54,8 @@ end
 
 -- Entry point, called by `warpd` after initialization.
 function WarpDaemon:start()
-  io.write("WarpDaemon:start() called\n")
+  dlog("d", "WarpDaemon:start() called")
   dlog.handleError(xpcall(WarpDaemon.main, debug.traceback, self))
-
-  --[[self.myCounter = self.myCounter + 1
-  dlog("warpd", "WarpDaemon:start(), myCounter = ", self.myCounter)
-
-  for i = 0, 5 do
-    dlog("warpd", sides[i], " -> ", transposer.getInventoryName(i))
-  end
-
-  io.write("it worked?\n")]]
-
-
-
-  --while self.running do
-    --os.sleep(1)
-  --end
 end
 
 
@@ -83,9 +68,14 @@ end
 function WarpDaemon:verifyAndSaveConfig(existingCfg)
   local cfgPath = warp_common.configFilename
   local cfgTypes, cfgFormat = warp_common.makeConfigTemplate()
-  local cfg, loadedDefaults
+  local cfg
   if not existingCfg then
+    local loadedDefaults
     cfg, loadedDefaults = config.loadFile(cfgPath, cfgFormat, true)
+    if loadedDefaults then
+      dlog("warpd", "configuration not found, saving defaults to ", cfgPath)
+      config.saveFile(cfgPath, cfg, cfgFormat, cfgTypes)
+    end
   else
     cfg = existingCfg
   end
@@ -127,10 +117,7 @@ function WarpDaemon:verifyAndSaveConfig(existingCfg)
   end
 
   -- Only save and update member variables at the end once verification passed.
-  if loadedDefaults then
-    dlog("warpd", "configuration not found, saving defaults to ", cfgPath, "\n")
-    config.saveFile(cfgPath, cfg, cfgFormat, cfgTypes)
-  elseif existingCfg then
+  if existingCfg then
     config.saveFile(cfgPath, cfg, cfgFormat, cfgTypes)
   end
   self.cfg = cfg
@@ -353,12 +340,11 @@ function WarpDaemon:receiveWarp(relativeSide, slot, item)
     end
   end
 
+  dlog("d", "remote cell in my slot, receive the warp")
+
   -- Verify spatial IO port is empty.
-  local spatialIoPortEmpty = true
-  for _, _ in itemutil.invIterator(transposer.getAllStacks(self.spatialIoPortSide)) do
-    spatialIoPortEmpty = false
-  end
-  if not spatialIoPortEmpty then
+  for s, _ in itemutil.invIterator(transposer.getAllStacks(self.spatialIoPortSide)) do
+    dlog("warn", "\27[33m", "warp arrival failed, spatial IO port has item in slot ", s, ", please put it back in its place in the ender chests.\27[0m")
     return
   end
 
@@ -504,7 +490,6 @@ function WarpDaemon:mainLoop()
   local mySide, mySlot = warp_common.getSideAndSlot(self.thisDestinationSlotId)
   local itemInMySlot = eachSideStacks[mySide][mySlot]
   if itemInMySlot and string.match(itemInMySlot.fullName, settings.spatialCellItem) and itemInMySlot.label ~= self.thisDestinationSlotId then
-    dlog("d", "remote cell in my slot, receive the warp")
     self:receiveWarp(mySide, mySlot, itemInMySlot)
   end
 end
@@ -512,7 +497,7 @@ end
 
 -- Called by `warpd` when the daemon is requested to stop.
 function WarpDaemon:stop()
-  io.write("WarpDaemon:stop() called\n")
+  dlog("d", "WarpDaemon:stop() called")
   self.running = false
 end
 
