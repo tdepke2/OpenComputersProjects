@@ -231,7 +231,7 @@ function WarpDaemon:main()
 
   while self.running do
     self:mainLoop()
-    os.sleep(5.0)
+    os.sleep(settings.scanDelaySeconds)
   end
 end
 
@@ -326,13 +326,21 @@ function WarpDaemon:updateConfig(configPrefix, configEntry)
 end
 
 
+-- Attempt to complete a warp request using the storage cell at the given side
+-- and slot. Any error that occurs is outside the normal operating conditions,
+-- so just log the error and return instead of trying to reset everything to a
+-- good state.
+-- 
+---@param relativeSide Sides
+---@param slot integer
+---@param item table
 function WarpDaemon:receiveWarp(relativeSide, slot, item)
   -- Ensure that `warp` program is not in the middle of sending.
   local lockFile = io.open(warp_common.lockFilename, "r")
   if lockFile then
     local lastTime = lockFile:read("n")
     lockFile:close()
-    if computer.uptime() - lastTime > 30.0 then    -- FIXME: what value to set this to? ##################################################################
+    if computer.uptime() - lastTime > self.cfg.settings.scanDelaySeconds * self.cfg.settings.warpWaitAttempts then
       dlog("warn", "\27[33m", "lock file ", warp_common.lockFilename, " is stale, removing it. Did a previous warp attempt fail?\27[0m")
       filesystem.remove(warp_common.lockFilename)
     else
@@ -344,21 +352,21 @@ function WarpDaemon:receiveWarp(relativeSide, slot, item)
 
   -- Verify spatial IO port is empty.
   for s, _ in itemutil.invIterator(transposer.getAllStacks(self.spatialIoPortSide)) do
-    dlog("warn", "\27[33m", "warp arrival failed, spatial IO port has item in slot ", s, ", please put it back in its place in the ender chests.\27[0m")
+    dlog("error", "\27[31m", "warp arrival failed, spatial IO port has item in slot ", s, ", please put it back in its place in the ender chests.\27[0m")
     return
   end
 
   -- Verify the side and slot of the remote cell is known.
   local remoteSide, remoteSlot = warp_common.getSideAndSlot(item.label)
   if not remoteSide or not remoteSlot then
-    dlog("warn", "\27[33m", "unable to determine slot id for storage cell in spatial IO port with label \"", item.label, "\" (label is invalid).\27[0m")
+    dlog("error", "\27[31m", "warp arrival failed, unable to determine slot id for storage cell in my slot with label \"", item.label, "\" (label is invalid).\27[0m")
     return
   end
 
   -- Move the cell into spatial IO port and trigger it.
   local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
   if transposer.transferItem(worldSide, self.spatialIoPortSide, 1, slot, 1) ~= 1 then
-    dlog("warn", "\27[33m", "warp arrival failed, unable to move storage cell into spatial IO port.\27[0m")
+    dlog("warn", "\27[33m", "warp arrival aborted, unable to move storage cell \"", item.label, "\" into spatial IO port.\27[0m")
     return
   end
 
@@ -412,6 +420,13 @@ function WarpDaemon:receiveWarp(relativeSide, slot, item)
 end
 
 
+-- Scan the inventory on each scan side for items, copying only the relevant
+-- data from the item stack information that we need. Returns a table that maps
+-- the relative side to the stacks, and an iterator for iterating those stacks
+-- in slot order.
+-- 
+---@return table
+---@return function
 function WarpDaemon:scanInventories()
   local eachSideStacks = {}
   for _, relativeSide in pairs(warp_common.scanSides) do

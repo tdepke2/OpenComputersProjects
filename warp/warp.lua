@@ -48,8 +48,7 @@ Warpd process:
   1. Init: assert no cell in IO port. Check sides once for generator and ender chests, if any destination not available then warn.
   2. If fuel slots defined, generator available, and has empty fuel, put all empty fuel in return slot (try once) and put one fuel in first slot (try once).
   3. If we see a config entry, update the config and save it if it's a new value and it's a valid form.
-    a. If it's new, check sides again. If it corresponds to a destination we don't have available then warn.   FIXME: forgot about this, should we actually do this though?
-    b. If it's not a valid form then warn.
+    a. If it's not a valid form then warn.
   4. If remote cell in my slot and no lock file (or lock file is stale) and IO port empty, put remote cell in IO port, alert anyone nearby of the arrival, then pulse after a moment.
     a. If lock file was stale, remove it and warn.
   5. Put my cell back in my slot (retry a few times if failure, then log error), put remote cell in remote slot (retry a few times if failure, then log error).
@@ -222,7 +221,7 @@ function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
 
   -- Move remote cell into my slot.
   local remoteCellTransferred = false
-  for _ = 1, 3 do    -- FIXME: make this a setting ############################
+  for _ = 1, 3 do
     local itemInRemoteSlot = transposer.getStackInSlot(remoteWorldSide, remoteSlot)
     if itemInRemoteSlot and itemInRemoteSlot.label == remoteSlotId then
       if transposer.transferItem(remoteWorldSide, myWorldSide, 1, remoteSlot, mySlot) == 1 then
@@ -246,10 +245,12 @@ function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
   end
 
   -- Move my cell in spatial IO port into remote slot.
+  local settings = self.cfg.settings
   local warpSuccess = false
   if transposer.transferItem(self.spatialIoPortSide, remoteWorldSide, 1, 2, remoteSlot) == 1 then
-    for _ = 1, 5 do    -- FIXME: another setting ########################################
-      os.sleep(2.5)    -- FIXME: this is a setting too, make it half the loop time in warpd?
+    -- Wait for my cell to arrive back in my slot, if it takes too long then we need to rescue the player stuck in the storage cell.
+    for _ = 1, settings.warpWaitAttempts do
+      os.sleep(settings.scanDelaySeconds / 2.0)
       local itemInMySlot = transposer.getStackInSlot(myWorldSide, mySlot)
       if itemInMySlot and itemInMySlot.label == thisDestinationSlotId then
         warpSuccess = true

@@ -28,6 +28,13 @@ warp_common.lockFilename = "/tmp/warp.lock"
 ---@nodiscard
 function warp_common.makeConfigTemplate()
   local cfgTypes = {
+    Integer = {
+      verify = function(v)
+        if type(v) ~= "number" or math.floor(v) ~= v then
+          error("provided value must be an integer type.")
+        end
+      end
+    },
     SlotId = {
       verify = function(v)
         if type(v) ~= "string" or not string.match(v, "^[dubl][1-9]%d*$") then
@@ -55,20 +62,43 @@ function warp_common.makeConfigTemplate()
   local cfgFormat = {
     settings = {
       _order_ = 1,
-      spatialIoPort = {_order_ = 1, "string", "tile%.appliedenergistics2%.BlockSpatialIOPort", [[
+      _comment_ = [[
+General settings. Note that in the following entries about block/item names,
+there is a difference between a block name versus an item name (a block name
+tends to be different than its name in item form). Also, block/item names are
+interpreted as Lua patterns (similar to regex).]],
+      spatialIoPort = {_order_ = 1, "string", "tile%.appliedenergistics2%.BlockSpatialIOPort"},
+      enderChest = {_order_ = 2, "string", "tile%.enderchest", ""},
+      generator = {_order_ = 3, "string", "gt%.blockmachines", ""},
+      spatialCellItem = {_order_ = 4, "string", "appliedenergistics2:item%.ItemSpatialStorageCell.*", ""},
+      emptyFuelItem = {_order_ = 5, "string", "IC2:itemCellEmpty/0", [[
 
-FIXME: comments needed about tilename/itemname and that lua patterns are allowed.]],
-      },
-      enderChest = {_order_ = 2, "string", "tile%.enderchest"},
-      generator = {_order_ = 3, "string", "gt%.blockmachines"},
-      spatialCellItem = {_order_ = 4, "string", "appliedenergistics2:item%.ItemSpatialStorageCell.*"},
-      emptyFuelItem = {_order_ = 5, "string", "IC2:itemCellEmpty/0"},    -- When empty fuel is removed, more fuel is added. There must be some empty or full fuel in the generator for this to work.
-      fuelSlot = {_order_ = 6, "SlotId|nil", "d1"},
-      emptyFuelSlot = {_order_ = 7, "SlotId|nil", "d2"},
+Empty fuel in the generator will trigger new fuel to be added. The
+generator must start with some empty or full fuel for refueling to work.]]},
+      scanDelaySeconds = {_order_ = 6, "number", 4.0, [[
+
+Time between scan attempts for fuel, config updates, and incoming warps.]]},
+      warpWaitAttempts = {_order_ = 7, "Integer", 6, [[
+
+Number of times warp program will wait for an outgoing warp to succeed
+before aborting the warp and rescuing a player stuck in the storage cell.]]},
+      fuelSlot = {_order_ = 8, "SlotId|nil", "d1", [[
+
+The slot ids where fuel will be found and empty fuel can be returned. If
+you are powering the teleporter using a different method, then these can be
+set to nil.]]},
+      emptyFuelSlot = {_order_ = 9, "SlotId|nil", "d2"},
     },
     destinations = {
       _order_ = 2,
-      _comment_ = "\nDestinations I guess.",
+      _comment_ = [[
+
+Array of destinations. Each has the form "<slot id>;<name>;<requirements>".
+The slot id is a single character (d, u, b, l) corresponding to down, up,
+back, and left of the transposer, and an integer slot number (slot 1 is the
+first slot in an inventory). The name must consist of only alphanumeric
+characters and dashes/underscores, requirements can be any text or be left
+empty.]],
       _ipairs_ = {"Destination",
         "d3;home;",
       },
@@ -121,12 +151,12 @@ function warp_common.playWarningSound()
   computer.beep(400, 0.2)
   computer.beep(600, 0.2)
   computer.beep(400, 0.2)
-  os.sleep(0.4)
+  os.sleep(0.3)
   computer.beep(600, 0.2)
   computer.beep(400, 0.2)
   computer.beep(600, 0.2)
   computer.beep(400, 0.2)
-  os.sleep(0.4)
+  os.sleep(0.3)
 end
 
 return warp_common
