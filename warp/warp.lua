@@ -51,8 +51,13 @@ Warpd process:
     a. If it's not a valid form then warn.
   4. If remote cell in my slot and no lock file (or lock file is stale) and IO port empty, put remote cell in IO port, alert anyone nearby of the arrival, then pulse after a moment.
     a. If lock file was stale, remove it and warn.
-  5. Put my cell back in my slot (retry a few times if failure, then log error), put remote cell in remote slot (retry a few times if failure, then log error).
+  5. Put my cell back in my slot (try once, if failure then log error), put remote cell in remote slot (try once, if failure then log error).
 
+
+FIXME: temp notes
+Warp mini idea: have a button on microcontroller that warps to fixed destination (could add option for manually dialing? put my cell in IO port then remote cell in my slot, in that order)
+Remove FIXMEs in lib code
+Can we set up new dest by mirroring a hard drive?
 ]]
 
 -- OS libraries.
@@ -167,15 +172,15 @@ function WarpClient:prepareWarp(destination, opts)
   end
 
   -- Verify storage cells.
-  local remoteSide, remoteSlot = warp_common.getSideAndSlot(remoteSlotId)
-  local itemInRemoteSlot = transposer.getStackInSlot(warp_common.getWorldSide(self.spatialIoPortSide, remoteSide), remoteSlot)
+  local remoteSide, remoteSlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, remoteSlotId)
+  local itemInRemoteSlot = transposer.getStackInSlot(remoteSide, remoteSlot)
   if not itemInRemoteSlot or itemInRemoteSlot.label ~= remoteSlotId then
     io.stderr:write("warp: destination is busy serving another request (storage cell ", remoteSlotId, " is not in its slot).\n")
     return 2
   end
 
-  local mySide, mySlot = warp_common.getSideAndSlot(thisDestinationSlotId)
-  local itemInMySlot = transposer.getStackInSlot(warp_common.getWorldSide(self.spatialIoPortSide, mySide), mySlot)
+  local mySide, mySlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, thisDestinationSlotId)
+  local itemInMySlot = transposer.getStackInSlot(mySide, mySlot)
   if not itemInMySlot or itemInMySlot.label ~= thisDestinationSlotId then
     io.stderr:write("warp: source is busy, someone may be arriving at this teleporter (storage cell ", thisDestinationSlotId, " is not in its slot).\n")
     return 2
@@ -194,14 +199,12 @@ end
 ---@param remoteSlotId string
 ---@return number
 function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
-  local mySide, mySlot = warp_common.getSideAndSlot(thisDestinationSlotId)
-  local myWorldSide = warp_common.getWorldSide(self.spatialIoPortSide, mySide)
+  local mySide, mySlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, thisDestinationSlotId)
 
-  local remoteSide, remoteSlot = warp_common.getSideAndSlot(remoteSlotId)
-  local remoteWorldSide = warp_common.getWorldSide(self.spatialIoPortSide, remoteSide)
+  local remoteSide, remoteSlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, remoteSlotId)
 
   -- Move my cell into spatial IO port and trigger it.
-  if transposer.transferItem(myWorldSide, self.spatialIoPortSide, 1, mySlot, 1) ~= 1 then
+  if transposer.transferItem(mySide, self.spatialIoPortSide, 1, mySlot, 1) ~= 1 then
     io.stderr:write("warp: source is busy, someone may be arriving at this teleporter (failed to move my storage cell into spatial IO port).\n")
     return 2
   end
@@ -222,9 +225,9 @@ function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
   -- Move remote cell into my slot.
   local remoteCellTransferred = false
   for _ = 1, 3 do
-    local itemInRemoteSlot = transposer.getStackInSlot(remoteWorldSide, remoteSlot)
+    local itemInRemoteSlot = transposer.getStackInSlot(remoteSide, remoteSlot)
     if itemInRemoteSlot and itemInRemoteSlot.label == remoteSlotId then
-      if transposer.transferItem(remoteWorldSide, myWorldSide, 1, remoteSlot, mySlot) == 1 then
+      if transposer.transferItem(remoteSide, mySide, 1, remoteSlot, mySlot) == 1 then
         remoteCellTransferred = true
         break
       end
@@ -240,18 +243,18 @@ function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
     os.sleep(0.1)
     redstone.setOutput(sides.back, 0)
 
-    xassert(transposer.transferItem(self.spatialIoPortSide, myWorldSide, 1, 2, mySlot) == 1)
+    xassert(transposer.transferItem(self.spatialIoPortSide, mySide, 1, 2, mySlot) == 1)
     return 2
   end
 
   -- Move my cell in spatial IO port into remote slot.
   local settings = self.cfg.settings
   local warpSuccess = false
-  if transposer.transferItem(self.spatialIoPortSide, remoteWorldSide, 1, 2, remoteSlot) == 1 then
+  if transposer.transferItem(self.spatialIoPortSide, remoteSide, 1, 2, remoteSlot) == 1 then
     -- Wait for my cell to arrive back in my slot, if it takes too long then we need to rescue the player stuck in the storage cell.
     for _ = 1, settings.warpWaitAttempts do
       os.sleep(settings.scanDelaySeconds / 2.0)
-      local itemInMySlot = transposer.getStackInSlot(myWorldSide, mySlot)
+      local itemInMySlot = transposer.getStackInSlot(mySide, mySlot)
       if itemInMySlot and itemInMySlot.label == thisDestinationSlotId then
         warpSuccess = true
         break
@@ -259,7 +262,7 @@ function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
     end
     if not warpSuccess then
       io.stderr:write("warp: destination is not responding to request, aborting warp.\n")
-      xassert(transposer.transferItem(remoteWorldSide, self.spatialIoPortSide, 1, remoteSlot, 1) == 1)
+      xassert(transposer.transferItem(remoteSide, self.spatialIoPortSide, 1, remoteSlot, 1) == 1)
     end
   else
     io.stderr:write("warp: unable to move my storage cell into destination slot, aborting warp.\n")
@@ -272,8 +275,8 @@ function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
     os.sleep(0.1)
     redstone.setOutput(sides.back, 0)
 
-    xassert(transposer.transferItem(myWorldSide, remoteWorldSide, 1, mySlot, remoteSlot) == 1)
-    xassert(transposer.transferItem(self.spatialIoPortSide, myWorldSide, 1, 2, mySlot) == 1)
+    xassert(transposer.transferItem(mySide, remoteSide, 1, mySlot, remoteSlot) == 1)
+    xassert(transposer.transferItem(self.spatialIoPortSide, mySide, 1, 2, mySlot) == 1)
     return 2
   end
 

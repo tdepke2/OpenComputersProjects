@@ -205,7 +205,7 @@ function WarpDaemon:main()
   local unreachableDestinations = ""
   for _, v in ipairs(self.cfg.destinations) do
     local id, name, _ = string.match(v, "^([^;]+);([^;]+);([^;]*)$")
-    if not enderChestSides[warp_common.scanSides[string.sub(id, 1, 1)]] then
+    if not enderChestSides[warp_common.getWorldSide(spatialIoPortSide, string.sub(id, 1, 1))] then
       unreachableDestinations = unreachableDestinations .. name .. ", "
     end
   end
@@ -215,11 +215,11 @@ function WarpDaemon:main()
   end
 
   -- Check spatial storage cells.
-  local eachSideStacks, iterateStacks = self:scanInventories()
   local foundStorageCell = false
-  for _, stacks in pairs(eachSideStacks) do
-    for _, item in iterateStacks(stacks) do
-      if string.match(item.fullName, settings.spatialCellItem) then
+  for relativeSide in string.gmatch(warp_common.scanRelativeSides, "(.)") do
+    local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
+    for _, item in itemutil.invIterator(transposer.getAllStacks(worldSide)) do
+      if string.match(itemutil.getItemFullName(item), settings.spatialCellItem) then
         foundStorageCell = true
         break
       end
@@ -238,26 +238,24 @@ end
 
 -- Attempt to move empty fuel out of the generator and put new fuel in.
 -- 
----@param eachSideStacks table
 ---@param inventoryNames table
----@param relativeSide Sides
+---@param side Sides
 ---@param slot integer
 ---@param item Item
-function WarpDaemon:refuelGenerator(eachSideStacks, inventoryNames, relativeSide, slot, item)
+function WarpDaemon:refuelGenerator(inventoryNames, side, slot, item)
   local settings = self.cfg.settings
-  local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
-  if not inventoryNames[relativeSide] then
-    inventoryNames[relativeSide] = transposer.getInventoryName(worldSide)
+  if not inventoryNames[side] then
+    inventoryNames[side] = transposer.getInventoryName(side)
   end
 
-  local fuelSide, fuelSlot = warp_common.getSideAndSlot(settings.fuelSlot)
-  if string.match(inventoryNames[relativeSide], settings.generator) and eachSideStacks[fuelSide][fuelSlot] then
+  local fuelSide, fuelSlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, settings.fuelSlot)
+  if string.match(inventoryNames[side], settings.generator) and (transposer.getSlotStackSize(fuelSide, fuelSlot) or 0) > 0 then
     dlog("d", "its a generator and we have fuel available.")
-    local emptyFuelSide, emptyFuelSlot = warp_common.getSideAndSlot(settings.emptyFuelSlot)
-    local itemsMoved = transposer.transferItem(worldSide, emptyFuelSide, item.size, slot, emptyFuelSlot)
+    local emptyFuelSide, emptyFuelSlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, settings.emptyFuelSlot)
+    local itemsMoved = transposer.transferItem(side, emptyFuelSide, item.size, slot, emptyFuelSlot)
     if itemsMoved == item.size then
-      dlog("d", "all items moved, put fuel in.")
-      transposer.transferItem(fuelSide, worldSide, 1, fuelSlot, 1)
+      dlog("d", "all items moved, put one fuel into first slot.")
+      transposer.transferItem(fuelSide, side, 1, fuelSlot, 1)
     end
   end
 end
@@ -331,10 +329,10 @@ end
 -- so just log the error and return instead of trying to reset everything to a
 -- good state.
 -- 
----@param relativeSide Sides
+---@param side Sides
 ---@param slot integer
 ---@param item table
-function WarpDaemon:receiveWarp(relativeSide, slot, item)
+function WarpDaemon:receiveWarp(side, slot, item)
   -- Ensure that `warp` program is not in the middle of sending.
   local lockFile = io.open(warp_common.lockFilename, "r")
   if lockFile then
@@ -357,15 +355,14 @@ function WarpDaemon:receiveWarp(relativeSide, slot, item)
   end
 
   -- Verify the side and slot of the remote cell is known.
-  local remoteSide, remoteSlot = warp_common.getSideAndSlot(item.label)
+  local remoteSide, remoteSlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, item.label)
   if not remoteSide or not remoteSlot then
     dlog("error", "\27[31m", "warp arrival failed, unable to determine slot id for storage cell in my slot with label \"", item.label, "\" (label is invalid).\27[0m")
     return
   end
 
   -- Move the cell into spatial IO port and trigger it.
-  local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
-  if transposer.transferItem(worldSide, self.spatialIoPortSide, 1, slot, 1) ~= 1 then
+  if transposer.transferItem(side, self.spatialIoPortSide, 1, slot, 1) ~= 1 then
     dlog("warn", "\27[33m", "warp arrival aborted, unable to move storage cell \"", item.label, "\" into spatial IO port.\27[0m")
     return
   end
@@ -384,87 +381,21 @@ function WarpDaemon:receiveWarp(relativeSide, slot, item)
   redstone.setOutput(sides.back, 0)
 
   -- Move cell in remote slot back into my slot.
-  local remoteWorldSide = warp_common.getWorldSide(self.spatialIoPortSide, remoteSide)
-  local itemInRemoteSlot = transposer.getStackInSlot(remoteWorldSide, remoteSlot)
-  if itemInRemoteSlot and itemInRemoteSlot.label == self.thisDestinationSlotId then
-    local putMyCellBack = false
-    for _ = 1, 3 do
-      if transposer.transferItem(remoteWorldSide, worldSide, 1, remoteSlot, slot) == 1 then
-        putMyCellBack = true
-        break
-      end
-      os.sleep(0.2)
-    end
-    if not putMyCellBack then
-      dlog("error", "\27[31m", "failed to move storage cell \"", itemInRemoteSlot.label, "\" into my slot.\27[0m")
-      return
-    end
-  else
+  local itemInRemoteSlot = transposer.getStackInSlot(remoteSide, remoteSlot)
+  if not itemInRemoteSlot or itemInRemoteSlot.label ~= self.thisDestinationSlotId then
     dlog("error", "\27[31m", "expected storage cell \"", self.thisDestinationSlotId, "\" in remote slot (found ", itemInRemoteSlot and ("\"" .. itemInRemoteSlot.label .. "\"") or "no item", ").\27[0m")
+    return
+  end
+  if transposer.transferItem(remoteSide, side, 1, remoteSlot, slot) ~= 1 then
+    dlog("error", "\27[31m", "failed to move storage cell \"", itemInRemoteSlot.label, "\" into my slot.\27[0m")
     return
   end
 
   -- Move cell in spatial IO port into remote slot.
-  local putRemoteCellBack = false
-  for _ = 1, 3 do
-    if transposer.transferItem(self.spatialIoPortSide, remoteWorldSide, 1, 2, remoteSlot) == 1 then
-      putRemoteCellBack = true
-      break
-    end
-    os.sleep(0.2)
-  end
-  if not putRemoteCellBack then
+  if transposer.transferItem(self.spatialIoPortSide, remoteSide, 1, 2, remoteSlot) ~= 1 then
     dlog("error", "\27[31m", "failed to move storage cell \"", itemInRemoteSlot.label, "\" in spatial IO port into remote slot.\27[0m")
     return
   end
-end
-
-
--- Scan the inventory on each scan side for items, copying only the relevant
--- data from the item stack information that we need. Returns a table that maps
--- the relative side to the stacks, and an iterator for iterating those stacks
--- in slot order.
--- 
----@return table
----@return function
-function WarpDaemon:scanInventories()
-  local eachSideStacks = {}
-  for _, relativeSide in pairs(warp_common.scanSides) do
-    local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
-    local stacks = transposer.getAllStacks(worldSide)
-    local stacksCopy = {}
-    local lastSlot = 0
-    if stacks then
-      for slot, item in itemutil.invIterator(stacks) do
-        lastSlot = slot
-        stacksCopy[slot] = {
-          fullName = itemutil.getItemFullName(item),
-          label = item.label,
-          size = item.size,
-        }
-      end
-    end
-    stacksCopy.n = lastSlot
-    eachSideStacks[relativeSide] = stacksCopy
-  end
-
-  -- The stacks tables are not sequences, but we need a way to iterate the items in slot order.
-  local function iterateStacks(stacks)
-    local function iter(stacks, slot)
-      local n = stacks.n
-      slot = slot + 1
-      while slot <= n do
-        local item = stacks[slot]
-        if item then
-          return slot, item
-        end
-        slot = slot + 1
-      end
-    end
-    return iter, stacks, 0
-  end
-
-  return eachSideStacks, iterateStacks
 end
 
 
@@ -472,18 +403,19 @@ end
 function WarpDaemon:mainLoop()
   local settings = self.cfg.settings
 
-  -- Scan each of the inventories for items and cache them.
-  -- The transposer calls take one tick to run, so doing a pre-pass like this is more performant.
-  local eachSideStacks, iterateStacks = self:scanInventories()
-
-  -- Make a second pass through the items to check for fuel, config updates, warp requests, etc.
+  -- Scan each of the inventories for items and check for fuel, config updates, warp requests, etc.
   local inventoryNames = {}
   local configPrefix, configEntry
-  for relativeSide, stacks in pairs(eachSideStacks) do
-    for slot, item in iterateStacks(stacks) do
-      if settings.fuelSlot and string.match(item.fullName, settings.emptyFuelItem) then
-        dlog("d", "empty fuel at ", sides[relativeSide], " slot ", slot)
-        self:refuelGenerator(eachSideStacks, inventoryNames, relativeSide, slot, item)
+  local mySide, mySlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, self.thisDestinationSlotId)
+  local itemInMySlot
+
+  for relativeSide in string.gmatch(warp_common.scanRelativeSides, "(.)") do
+    local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
+    for slot, item in itemutil.invIterator(transposer.getAllStacks(worldSide)) do
+
+      if settings.fuelSlot and string.match(itemutil.getItemFullName(item), settings.emptyFuelItem) then
+        dlog("d", "empty fuel at ", sides[worldSide], " slot ", slot)
+        self:refuelGenerator(inventoryNames, worldSide, slot, item)
       elseif string.match(item.label, "^[sd]e:") then
         if string.sub(item.label, 1, 3) ~= configPrefix then
           configEntry = nil
@@ -497,14 +429,16 @@ function WarpDaemon:mainLoop()
           configPrefix, configEntry = nil, nil
         end
       end
+
+      if worldSide == mySide and slot == mySlot then
+        itemInMySlot = item
+      end
     end
     configPrefix, configEntry = nil, nil
   end
 
   -- Check for incoming warp.
-  local mySide, mySlot = warp_common.getSideAndSlot(self.thisDestinationSlotId)
-  local itemInMySlot = eachSideStacks[mySide][mySlot]
-  if itemInMySlot and string.match(itemInMySlot.fullName, settings.spatialCellItem) and itemInMySlot.label ~= self.thisDestinationSlotId then
+  if itemInMySlot and string.match(itemutil.getItemFullName(itemInMySlot), settings.spatialCellItem) and itemInMySlot.label ~= self.thisDestinationSlotId then
     self:receiveWarp(mySide, mySlot, itemInMySlot)
   end
 end

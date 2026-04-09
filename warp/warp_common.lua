@@ -1,17 +1,11 @@
 
 local computer = require("computer")
-local sides = require("sides")
 
 local warp_common = {}
 
 
--- Only four sides are scanned for ender chests and generators, right side (relative) is the spatial IO port.
-warp_common.scanSides = {
-  d = sides.down,
-  u = sides.up,
-  b = sides.back,
-  l = sides.left
-}
+-- Only the down, up, back, and left sides (relative) are scanned for ender chests and generators, right side is the spatial IO port.
+warp_common.scanRelativeSides = "dubl"
 
 -- Path to the configuration file.
 warp_common.configFilename = "/etc/warp.cfg"
@@ -109,23 +103,15 @@ empty.]],
 end
 
 
--- Unpack a slot id (character representing a side, and slot number).
--- 
----@param slotId string
----@return Sides
----@return integer
-function warp_common.getSideAndSlot(slotId)
-  return warp_common.scanSides[string.sub(slotId, 1, 1)], tonumber(string.sub(slotId, 2)) --[[@as integer]]
-end
-
-
 -- Convert a side (relative to the spatial IO port) to the real side in the
 -- world. The transposer will need this result.
 -- 
 ---@param spatialIoPortSide Sides
----@param relativeSide Sides
+---@param relativeSideChar string
 ---@return Sides
-function warp_common.getWorldSide(spatialIoPortSide, relativeSide)
+function warp_common.getWorldSide(spatialIoPortSide, relativeSideChar)
+  local relativeSide = string.find("dubfrl", relativeSideChar, 1, true) - 1 --[[@as Sides]]
+
   if relativeSide < 2 then
     -- Either up or down.
     return relativeSide
@@ -138,6 +124,17 @@ function warp_common.getWorldSide(spatialIoPortSide, relativeSide)
     -- Undo the adjustment on the world side.
     return adjustedWorldSide <= 4 and adjustedWorldSide or adjustedWorldSide - 3
   end
+end
+
+
+-- Unpack a slot id (character representing a side, and slot number).
+-- 
+---@param spatialIoPortSide Sides
+---@param slotId string
+---@return Sides
+---@return integer
+function warp_common.getWorldSideAndSlot(spatialIoPortSide, slotId)
+  return warp_common.getWorldSide(spatialIoPortSide, string.sub(slotId, 1, 1)), tonumber(string.sub(slotId, 2)) --[[@as integer]]
 end
 
 
