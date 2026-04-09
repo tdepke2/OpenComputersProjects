@@ -30,16 +30,14 @@ function itemutil.getItemFullName(item)
   return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
 end
 
--- FIXME getItemFullName() used elsewhere should be replaced with this one ##########################################
--- FIXME these are the real iterators that should be used in storage.lua and related! still need to check if skipping empty is valid in the use cases there, and also the item/slot are swapped around. ####################################################################################################
 
--- Iterator wrapper for the itemIter returned from `icontroller.getAllStacks()`.
--- Returns the current slot number and item with each call, skipping over empty
--- slots.
+-- Iterator wrapper for the result returned from `icontroller.getAllStacks()`
+-- and `transposer.getAllStacks()`. Returns the current slot number and item
+-- with each call, skipping over empty slots.
 -- 
----@param itemIter fun():Item
+---@param itemIter fun():Item|nil
 ---@return fun(itemIter: function, slot: integer):integer, Item
----@return fun():Item
+---@return fun():Item|nil
 ---@return integer
 ---@nodiscard
 function itemutil.invIterator(itemIter)
@@ -54,7 +52,10 @@ function itemutil.invIterator(itemIter)
       item = itemIter()
     end
   end
-  
+
+  if itemIter == nil then
+    itemIter = function() end
+  end
   return iter, itemIter, 0
 end
 
@@ -62,9 +63,9 @@ end
 -- Iterator wrapper similar to invIterator(), but does not skip empty slots.
 -- Returns the current slot number and item with each call.
 -- 
----@param itemIter fun():Item
+---@param itemIter fun():Item|nil
 ---@return fun(itemIter: function, slot: integer):integer, Item
----@return fun():Item
+---@return fun():Item|nil
 ---@return integer
 ---@nodiscard
 function itemutil.invIteratorNoSkip(itemIter)
@@ -75,7 +76,10 @@ function itemutil.invIteratorNoSkip(itemIter)
       return slot, item
     end
   end
-  
+
+  if itemIter == nil then
+    itemIter = function() end
+  end
   return iter, itemIter, 0
 end
 
@@ -103,7 +107,7 @@ function itemutil.internalInvIterator(invSize)
       end
     end
   end
-  
+
   return iter, invSize, 0
 end
 
