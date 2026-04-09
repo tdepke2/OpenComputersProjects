@@ -1,3 +1,10 @@
+--------------------------------------------------------------------------------
+-- Shared code for teleportation network system.
+-- 
+-- @see file://warp/README.md
+-- @author tdepke2
+--------------------------------------------------------------------------------
+
 
 local computer = require("computer")
 

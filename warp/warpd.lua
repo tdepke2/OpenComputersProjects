@@ -1,3 +1,9 @@
+--------------------------------------------------------------------------------
+-- Teleportation network daemon rc script.
+-- 
+-- @see file://warp/README.md
+-- @author tdepke2
+--------------------------------------------------------------------------------
 
 
 -- OS libraries.
@@ -6,6 +12,7 @@ local text = require("text")
 -- User libraries.
 local include = require("include")
 local systemd_utils = include("systemd_utils")
+
 
 local rcInterface = systemd_utils.RcInterface:new(
   "warpd",

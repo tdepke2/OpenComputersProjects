@@ -1,3 +1,21 @@
+--------------------------------------------------------------------------------
+-- Teleportation network daemon. Run by `warpd` to handle teleport requests.
+-- 
+-- @see file://warp/README.md
+-- @author tdepke2
+--------------------------------------------------------------------------------
+
+
+--[[
+Warpd process (see `warp.lua` for the sending side):
+  1. Init: assert no cell in IO port. Check sides once for generator and ender chests, if any destination not available then warn.
+  2. If fuel slots defined, generator available, and has empty fuel, put all empty fuel in return slot (try once) and put one fuel in first slot (try once).
+  3. If we see a config entry, update the config and save it if it's a new value and it's a valid form.
+    a. If it's not a valid form then warn.
+  4. If remote cell in my slot and no lock file (or lock file is stale) and IO port empty, put remote cell in IO port, alert anyone nearby of the arrival, then pulse after a moment.
+    a. If lock file was stale, remove it and warn.
+  5. Put my cell back in my slot (try once, if failure then log error), put remote cell in remote slot (try once, if failure then log error).
+--]]
 
 
 -- OS libraries.
