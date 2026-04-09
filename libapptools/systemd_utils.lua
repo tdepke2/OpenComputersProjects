@@ -107,7 +107,7 @@ end
 -- join after some time, the process is assumed to be hung and the thread will
 -- be killed.
 function RcInterface:requestStop()
-  if not self.mainThread or self.mainThread:status() == "dead" or not self.serviceInstance then
+  if not self:isActive() then
     io.write(self.name, " already stopped\n")
     return
   end
@@ -122,6 +122,20 @@ function RcInterface:requestStop()
   self.mainThread = false
   self.isStopping = false
   self.lastStatusDate, self.lastStatusRealTime = os.date("%c"), computer.uptime()
+end
+
+
+---@docdef `systemd_utils.RcInterface:isActive()`
+-- 
+-- Check if the rc program has finished starting and is currently running.
+-- 
+---@return boolean
+function RcInterface:isActive()
+  if self.mainThread and self.mainThread:status() ~= "dead" and self.serviceInstance then
+    return true
+  else
+    return false
+  end
 end
 
 
@@ -154,7 +168,7 @@ function RcInterface:status()
   elseif self.isStopping then
     statusColor, loadStatus, activeStatus = "\27[33m", "loaded (" .. self.programPath .. "; " .. enabledStatus .. ")", "deactivating"
     io.write(statusColor, "◯")
-  elseif self.mainThread and self.mainThread:status() ~= "dead" then
+  elseif self:isActive() then
     statusColor, loadStatus, activeStatus = "\27[32m", "loaded (" .. self.programPath .. "; " .. enabledStatus .. ")", "active (running)"
     io.write(statusColor, "⬤")
   else

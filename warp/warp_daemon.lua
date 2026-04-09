@@ -464,7 +464,7 @@ end
 
 -- Called by `warpd` when the daemon is requested to stop.
 function WarpDaemon:stop()
-  dlog("d", "WarpDaemon:stop() called")
+  io.write("Stopping warpd...\n")
   self.running = false
 end
 

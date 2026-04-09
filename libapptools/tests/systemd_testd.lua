@@ -21,6 +21,14 @@ function stop()
   rcInterface:requestStop()
 end
 
+-- Called by rc for just the "restart" command.
+function restart(...)
+  if rcInterface:isActive() then
+    stop()
+  end
+  start(...)
+end
+
 -- Called by rc for "status" command. Displays status much like the UNIX
 -- systemctl program does.
 function status()
