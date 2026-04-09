@@ -435,6 +435,10 @@ For details about rc, see here: https://ocdoc.cil.li/api:rc
   join after some time, the process is assumed to be hung and the thread will
   be killed.
 
+* `systemd_utils.RcInterface:isActive(): boolean`
+  
+  Check if the rc program has finished starting and is currently running.
+
 * `systemd_utils.RcInterface:status()`
   
   Prints the current status of the rc program (is it running, is it enabled,
