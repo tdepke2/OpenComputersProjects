@@ -1,6 +1,6 @@
 # tquarry
 
-![quarry_demo](/../media/quarry_demo.mp4?raw=true)
+https://user-images.githubusercontent.com/42951441/212527520-fe111b65-8db7-4bdd-9801-176e252bb34c.mp4
 
 *Demo: the quarry robot digs out a single chunk and builds a staircase. This process takes time, so running multiple robots in parallel is recommended.*
 
