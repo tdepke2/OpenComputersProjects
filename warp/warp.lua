@@ -36,7 +36,7 @@ local transposer = component.transposer
 
 -- User libraries.
 local include = require("include")
-include.mode("debug")
+include.mode("optimize1")
 local dlog = include("dlog")
 --dlog.mode("debug")
 
