@@ -1,3 +1,5 @@
+-- Copy of the default settings from warp_common.lua, see that file for
+-- descriptions.
 local settings = {
   spatialIoPort = "tile%.appliedenergistics2%.BlockSpatialIOPort",
   enderChest = "tile%.enderchest",
@@ -9,10 +11,16 @@ local settings = {
   fuelSlot = "d1",
   emptyFuelSlot = "d2",
 }
+
+-- Slot id in the ender chest (and the name of the storage cell) associated with
+-- the current teleporter.
 local thisDestinationSlotId = "d5"
+
+-- Slot id of the destination to warp to when the button is pressed.
 local targetDestinationSlotId = "d3"
 
-local redstone = component.proxy(component.list("redstone")())    -- FIXME: what happens if you do this for component that is not available, do we need assert?
+
+local redstone = component.proxy(component.list("redstone")())
 local transposer = component.proxy(component.list("transposer")())
 
 local sides = {
@@ -22,6 +30,9 @@ local sides = {
   front = 3,
   right = 4,
   left = 5,
+}
+local os = {
+  sleep = computer.pullSignal,
 }
 
 ##local include = require("include")
@@ -40,9 +51,16 @@ local sides = {
 --------------------------------------------------------
 
 
+---@type Sides
 local spatialIoPortSide
 
 
+-- Attempt to move empty fuel out of the generator and put new fuel in.
+-- 
+---@param inventoryNames table
+---@param side Sides
+---@param slot integer
+---@param item Item
 local function refuelGenerator(inventoryNames, side, slot, item)
   if not inventoryNames[side] then
     inventoryNames[side] = transposer.getInventoryName(side)
@@ -59,6 +77,12 @@ local function refuelGenerator(inventoryNames, side, slot, item)
 end
 
 
+-- Attempt to complete a warp request using the storage cell at the given side
+-- and slot.
+-- 
+---@param side Sides
+---@param slot integer
+---@param item Item
 local function receiveWarp(side, slot, item)
   -- Verify the side and slot of the remote cell is known.
   local remoteSide, remoteSlot = warp_common_getWorldSideAndSlot(spatialIoPortSide, item.label)
@@ -68,20 +92,18 @@ local function receiveWarp(side, slot, item)
 
   -- Move the cell into spatial IO port and trigger it.
   if transposer.transferItem(side, spatialIoPortSide, 1, slot, 1) ~= 1 then
-    return false
+    return
   end
 
   warp_common_playWarningSound()
-  redstone.setOutput(sides.back, 15)
+  redstone.setOutput(sides.right, 15)
   os.sleep(0.1)
-  redstone.setOutput(sides.back, 0)
+  redstone.setOutput(sides.right, 0)
 
   -- Move cell in remote slot back into my slot.
   local itemInRemoteSlot = transposer.getStackInSlot(remoteSide, remoteSlot)
   if not itemInRemoteSlot or itemInRemoteSlot.label ~= thisDestinationSlotId then
-
-    -- FIXME: bug in next line, operator order is wrong, need to fix here and in main code! ##########################################################################################################################
-    error("expected storage cell \"" .. thisDestinationSlotId .. "\" in remote slot (found " .. itemInRemoteSlot and ("\"" .. itemInRemoteSlot.label .. "\"") or "no item" .. ")")
+    error("expected storage cell \"" .. thisDestinationSlotId .. "\" in remote slot (found " .. (itemInRemoteSlot and ("\"" .. itemInRemoteSlot.label .. "\"") or "no item") .. ")")
   end
   if transposer.transferItem(remoteSide, side, 1, remoteSlot, slot) ~= 1 then
     error("failed to move storage cell \"" .. itemInRemoteSlot.label .. "\" into my slot")
@@ -91,11 +113,15 @@ local function receiveWarp(side, slot, item)
   if transposer.transferItem(spatialIoPortSide, remoteSide, 1, 2, remoteSlot) ~= 1 then
     error("failed to move storage cell \"" .. itemInRemoteSlot.label .. "\" in spatial IO port into remote slot")
   end
-
-  return true
 end
 
 
+-- Begin the warp process. If any problems occur then make a best effort to
+-- recover the player from the storage cell and move the cells back into their
+-- slots.
+-- 
+---@param itemInMySlot Item
+---@param useDefaultDestination boolean
 local function startWarp(itemInMySlot, useDefaultDestination)
   -- FIXME: check dest? (source should be good at this point)
 
@@ -106,21 +132,24 @@ local function startWarp(itemInMySlot, useDefaultDestination)
   if useDefaultDestination then
     -- Move my cell into spatial IO port and trigger it.
     if transposer.transferItem(mySide, spatialIoPortSide, 1, mySlot, 1) ~= 1 then
-      -- FIXME: fail noise, someone is arriving at this teleporter
+      -- Fail, someone is arriving at this teleporter.
+      computer.beep(200, 0.4)
       return
     end
   elseif not itemInMySlot or itemInMySlot.label == thisDestinationSlotId then
-    -- FIXME: fail noise, no storage cell or user put remote cell in spatialIoPort
+    -- Fail, no storage cell or user put remote cell in spatialIoPort.
+    computer.beep(200, 0.4)
     return
   else
     remoteSide, remoteSlot = warp_common_getWorldSideAndSlot(spatialIoPortSide, itemInMySlot.label)
   end
 
-  -- FIXME: success noise (single short beep?)
+  computer.beep(500, 0.1)
+  computer.beep(700, 0.1)
   os.sleep(1.0)
-  redstone.setOutput(sides.back, 15)
+  redstone.setOutput(sides.right, 15)
   os.sleep(0.1)
-  redstone.setOutput(sides.back, 0)
+  redstone.setOutput(sides.right, 0)
 
   if useDefaultDestination then
     -- Move remote cell into my slot.
@@ -139,9 +168,9 @@ local function startWarp(itemInMySlot, useDefaultDestination)
       assert(transposer.transferItem(spatialIoPortSide, spatialIoPortSide, 1, 2, 1) == 1)
 
       warp_common_playWarningSound()
-      redstone.setOutput(sides.back, 15)
+      redstone.setOutput(sides.right, 15)
       os.sleep(0.1)
-      redstone.setOutput(sides.back, 0)
+      redstone.setOutput(sides.right, 0)
 
       assert(transposer.transferItem(spatialIoPortSide, mySide, 1, 2, mySlot) == 1)
       return
@@ -154,7 +183,7 @@ local function startWarp(itemInMySlot, useDefaultDestination)
     -- Wait for my cell to arrive back in my slot, if it takes too long then we need to rescue the player stuck in the storage cell.
     for _ = 1, settings.warpWaitAttempts do
       os.sleep(settings.scanDelaySeconds / 2.0)
-      local itemInMySlot = transposer.getStackInSlot(mySide, mySlot)
+      itemInMySlot = transposer.getStackInSlot(mySide, mySlot)
       if itemInMySlot and itemInMySlot.label == thisDestinationSlotId then
         warpSuccess = true
         break
@@ -169,9 +198,9 @@ local function startWarp(itemInMySlot, useDefaultDestination)
 
   if not warpSuccess then
     warp_common_playWarningSound()
-    redstone.setOutput(sides.back, 15)
+    redstone.setOutput(sides.right, 15)
     os.sleep(0.1)
-    redstone.setOutput(sides.back, 0)
+    redstone.setOutput(sides.right, 0)
 
     assert(transposer.transferItem(mySide, remoteSide, 1, mySlot, remoteSlot) == 1)
     assert(transposer.transferItem(spatialIoPortSide, mySide, 1, 2, mySlot) == 1)
@@ -180,9 +209,10 @@ end
 
 
 
+-- Find spatial IO port.
 for i = 0, 5 do
   if string.match(transposer.getInventoryName(i) or "", settings.spatialIoPort) then
-    spatialIoPortSide = i
+    spatialIoPortSide = i --[[@as Sides]]
   end
 end
 if not spatialIoPortSide then
@@ -192,13 +222,15 @@ if spatialIoPortSide == sides.down or spatialIoPortSide == sides.up then
   error("transposer must access spatial IO port on the side, not up or down (for direction finding)")
 end
 
+-- Main loop.
 while true do
-  local ev = {computer.pullSignal(settings.scanTimeSeconds)}
+  local ev = {computer.pullSignal(settings.scanDelaySeconds)}
 
   -- Scan each side for items.
   local inventoryNames = {}
   local mySide, mySlot = warp_common_getWorldSideAndSlot(spatialIoPortSide, thisDestinationSlotId)
   local itemInMySlot
+
   for relativeSide in string.gmatch(warp_common_scanRelativeSides, "(.)") do
     local worldSide = warp_common_getWorldSide(spatialIoPortSide, relativeSide)
     for slot, item in itemutil_invIterator(transposer.getAllStacks(worldSide)) do
@@ -210,7 +242,7 @@ while true do
     end
   end
 
-  -- Check if spatial IO port is empty. If it's not, the user is likely to be manually dialing the destination.
+  -- Check if spatial IO port is empty. If it's not, the user is manually dialing the destination.
   local spatialIoPortEmpty = true
   for _, _ in itemutil_invIterator(transposer.getAllStacks(spatialIoPortSide)) do
     spatialIoPortEmpty = false

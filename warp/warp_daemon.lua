@@ -349,7 +349,7 @@ end
 -- 
 ---@param side Sides
 ---@param slot integer
----@param item table
+---@param item Item
 function WarpDaemon:receiveWarp(side, slot, item)
   -- Ensure that `warp` program is not in the middle of sending.
   local lockFile = io.open(warp_common.lockFilename, "r")
@@ -446,9 +446,7 @@ function WarpDaemon:mainLoop()
           self:updateConfig(configPrefix, configEntry)
           configPrefix, configEntry = nil, nil
         end
-      end
-
-      if worldSide == mySide and slot == mySlot then
+      elseif worldSide == mySide and slot == mySlot then
         itemInMySlot = item
       end
     end

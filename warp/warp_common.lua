@@ -116,9 +116,13 @@ end
 -- 
 ---@param spatialIoPortSide Sides
 ---@param relativeSideChar string
----@return Sides
+---@return Sides|nil
 function warp_common.getWorldSide(spatialIoPortSide, relativeSideChar)
-  local relativeSide = string.find("dubfrl", relativeSideChar, 1, true) - 1 --[[@as Sides]]
+  local relativeSide = string.find("dubfrl", relativeSideChar, 1, true) --[[@as Sides]]
+  if not relativeSide then
+    return nil
+  end
+  relativeSide = relativeSide - 1
 
   if relativeSide < 2 then
     -- Either up or down.
@@ -139,8 +143,8 @@ end
 -- 
 ---@param spatialIoPortSide Sides
 ---@param slotId string
----@return Sides
----@return integer
+---@return Sides|nil
+---@return integer|nil
 function warp_common.getWorldSideAndSlot(spatialIoPortSide, slotId)
   return warp_common.getWorldSide(spatialIoPortSide, string.sub(slotId, 1, 1)), tonumber(string.sub(slotId, 2)) --[[@as integer]]
 end
