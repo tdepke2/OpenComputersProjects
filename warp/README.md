@@ -28,11 +28,11 @@ Reference design for a teleporter with a 2 x 2 x 2 chamber. The design can be ad
 
 Materials list for the reference design:
 
-* AE2: spatial IO port, spatial storage cell 2^3, 12 spatial casing, energy acceptor, energy cell, 4 cable
+* AE2: spatial IO port, 2^3 spatial storage cell, 12 spatial pylon, energy acceptor, energy cell, 4 ME cable.
 
-* OC: computer case (tier 2), graphics card (tier 2), redstone card (tier 1), CPU (tier 1), 2 RAM (tier 1), hard drive (tier 1), 2 screen (tier 2), keyboard, transposer, cable
+* OC: computer case (tier 2), EEPROM (Lua BIOS), graphics card (tier 2), redstone card (tier 1), CPU (tier 1), 2 memory (tier 1), hard disk drive (tier 1), 2 screen (tier 2), keyboard, transposer, disk drive (or just a cable).
 
-* Other: turbo gas turbine, ender chest (with fuel in it, such as benzene cells)
+* Other: turbo gas turbine (optional), 1 to 4 ender chests (each one using a different color code), 4 lamps.
 
 It is recommended to build the teleporter within a single chunk as it will need to be chunkloaded in order to function. As with most GregTech machines, don't forget to cover the gas turbine from rain (I have forgotten to do this at least twice now). If you build the teleporter on another planet then make sure to protect it from meteors.
 
@@ -72,7 +72,7 @@ See the man page below for the full details:
 
   6. Run `rc warpd restart`, if it works there should be no warnings or errors and `rc warpd status` should indicate it's running. The `warp` command can now be used to teleport to a destination.
 
-      * If using a gas turbine or other generator next to the transposer, fill the "fuelSlot" (defined in the config, default is down slot 1) in the ender chest with fuel cells and take empty cells out of the "emptyFuelSlot" (default is down slot 2). This can be done with a Fluid Canner and robot arm that puts the fuel cells only into the fuel slot and extracts empty cells with a filter. A teleporter at a remote location will keep itself fueled by exchanging empty cells in the generator with full ones. Note that the generator must start with some empty or full fuel cells for this exchange to happen!
+      * If using a gas turbine or other generator next to the transposer, fill the "fuelSlot" (defined in the config, default is down slot 1) in the ender chest with fuel cells (such as benzene cells) and take empty cells out of the "emptyFuelSlot" (default is down slot 2). This can be done with a Fluid Canner and robot arm that puts the fuel cells only into the fuel slot and extracts empty cells with a filter. A teleporter at a remote location will keep itself fueled by exchanging empty cells in the generator with full ones. Note that the generator must start with some empty or full fuel cells for this exchange to happen!
 
       * When someone is arriving at a destination, the teleporter will make a warning noise to alert any nearby players to stand away from the chamber. Triggering the spatial IO port swaps the contents of the chamber with the contents of the storage cell. If someone happened to be standing in the way they would get sucked into the shadow realm and stranded there for eternity (not actually).
 
