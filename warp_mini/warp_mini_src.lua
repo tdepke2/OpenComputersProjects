@@ -121,27 +121,28 @@ end
 -- slots.
 -- 
 ---@param itemInMySlot Item
----@param useDefaultDestination boolean
-local function startWarp(itemInMySlot, useDefaultDestination)
-  -- FIXME: check dest? (source should be good at this point)
-
+---@param itemInSpatialIoPort Item
+local function startWarp(itemInMySlot, itemInSpatialIoPort)
   local mySide, mySlot = warp_common_getWorldSideAndSlot(spatialIoPortSide, thisDestinationSlotId)
 
   local remoteSide, remoteSlot = warp_common_getWorldSideAndSlot(spatialIoPortSide, targetDestinationSlotId)
 
-  if useDefaultDestination then
-    -- Move my cell into spatial IO port and trigger it.
-    if transposer.transferItem(mySide, spatialIoPortSide, 1, mySlot, 1) ~= 1 then
-      -- Fail, someone is arriving at this teleporter.
+  if itemInSpatialIoPort then
+    -- User is manually dialing, the item in my slot has the destination.
+    remoteSide, remoteSlot = warp_common_getWorldSideAndSlot(spatialIoPortSide, (itemInMySlot or {}).label or "")
+    if itemInSpatialIoPort.label ~= thisDestinationSlotId or not remoteSide or not remoteSlot then
+      -- Fail, no storage cell or user put wrong one in spatialIoPort.
       computer.beep(200, 0.4)
       return
     end
-  elseif not itemInMySlot or itemInMySlot.label == thisDestinationSlotId then
-    -- Fail, no storage cell or user put remote cell in spatialIoPort.
-    computer.beep(200, 0.4)
-    return
   else
-    remoteSide, remoteSlot = warp_common_getWorldSideAndSlot(spatialIoPortSide, itemInMySlot.label)
+    -- Move my cell into spatial IO port and trigger it.
+    local itemInRemoteSlot = transposer.getStackInSlot(remoteSide, remoteSlot)
+    if (itemInMySlot or {}).label ~= thisDestinationSlotId or (itemInRemoteSlot or {}).label ~= targetDestinationSlotId or transposer.transferItem(mySide, spatialIoPortSide, 1, mySlot, 1) ~= 1 then
+      -- Fail, someone is arriving at this teleporter or destination is busy.
+      computer.beep(200, 0.4)
+      return
+    end
   end
 
   computer.beep(500, 0.1)
@@ -151,7 +152,7 @@ local function startWarp(itemInMySlot, useDefaultDestination)
   os.sleep(0.1)
   redstone.setOutput(sides.right, 0)
 
-  if useDefaultDestination then
+  if not itemInSpatialIoPort then
     -- Move remote cell into my slot.
     local remoteCellTransferred = false
     for _ = 1, 3 do
@@ -243,14 +244,14 @@ while true do
   end
 
   -- Check if spatial IO port is empty. If it's not, the user is manually dialing the destination.
-  local spatialIoPortEmpty = true
-  for _, _ in itemutil_invIterator(transposer.getAllStacks(spatialIoPortSide)) do
-    spatialIoPortEmpty = false
+  local itemInSpatialIoPort
+  for _, item in itemutil_invIterator(transposer.getAllStacks(spatialIoPortSide)) do
+    itemInSpatialIoPort = item
   end
 
-  if itemInMySlot and string.match(itemutil_getItemFullName(itemInMySlot), settings.spatialCellItem) and itemInMySlot.label ~= thisDestinationSlotId and spatialIoPortEmpty then
+  if itemInMySlot and string.match(itemutil_getItemFullName(itemInMySlot), settings.spatialCellItem) and itemInMySlot.label ~= thisDestinationSlotId and not itemInSpatialIoPort then
     receiveWarp(mySide, mySlot, itemInMySlot)
   elseif ev[1] == "redstone_changed" and ev[3] == sides.front and ev[5] > 0 then
-    startWarp(itemInMySlot, spatialIoPortEmpty)
+    startWarp(itemInMySlot, itemInSpatialIoPort)
   end
 end
