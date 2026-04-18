@@ -1,3 +1,11 @@
+--------------------------------------------------------------------------------
+-- Teleportation network client, microcontroller version.
+-- 
+-- @see file://warp_mini/README.md
+-- @author tdepke2
+--------------------------------------------------------------------------------
+
+
 -- Copy of the default settings from warp_common.lua, see that file for
 -- descriptions.
 local settings = {
@@ -38,17 +46,17 @@ local os = {
 ##local include = require("include")
 ##local embedded = include("embedded")
 
-----------------  warp_common  ----------------------
+-- warp_common.lua
 
 ##for line in embedded.extractModuleSource("/usr/lib/warp_common.lua", "warp_common", true, {"scanRelativeSides", "getWorldSide", "getWorldSideAndSlot", "playWarningSound"}) do
 ##spwrite(line)
 ##end
-------------------  itemutil  --------------------------
+
+-- itemutil.lua
 
 ##for line in embedded.extractModuleSource("/usr/lib/itemutil.lua", "itemutil", true, {"getItemFullName", "invIterator"}) do
 ##spwrite(line)
 ##end
---------------------------------------------------------
 
 
 ---@type Sides
@@ -191,7 +199,8 @@ local function startWarp(itemInMySlot, itemInSpatialIoPort)
       end
     end
     if not warpSuccess then
-      assert(transposer.transferItem(remoteSide, spatialIoPortSide, 1, remoteSlot, 1) == 1)
+      -- Move my cell back into spatial IO port. We must continue aborting the warp even if this fails.
+      transposer.transferItem(remoteSide, spatialIoPortSide, 1, remoteSlot, 1)
     end
   else
     assert(transposer.transferItem(spatialIoPortSide, spatialIoPortSide, 1, 2, 1) == 1)
@@ -207,7 +216,6 @@ local function startWarp(itemInMySlot, itemInSpatialIoPort)
     assert(transposer.transferItem(spatialIoPortSide, mySide, 1, 2, mySlot) == 1)
   end
 end
-
 
 
 -- Find spatial IO port.
@@ -251,7 +259,7 @@ while true do
 
   if itemInMySlot and string.match(itemutil_getItemFullName(itemInMySlot), settings.spatialCellItem) and itemInMySlot.label ~= thisDestinationSlotId and not itemInSpatialIoPort then
     receiveWarp(mySide, mySlot, itemInMySlot)
-  elseif ev[1] == "redstone_changed" and ev[3] == sides.front and ev[5] > 0 then
+  elseif ev[1] == "redstone_changed" and ev[3] ~= sides.right and ev[5] > 0 then
     startWarp(itemInMySlot, itemInSpatialIoPort)
   end
 end
