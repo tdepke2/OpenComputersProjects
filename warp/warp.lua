@@ -227,7 +227,8 @@ function WarpClient:startWarp(destination, thisDestinationSlotId, remoteSlotId)
     end
     if not warpSuccess then
       io.stderr:write("warp: destination is not responding to request, aborting warp.\n")
-      xassert(transposer.transferItem(remoteSide, self.spatialIoPortSide, 1, remoteSlot, 1) == 1)
+      -- Move my cell back into spatial IO port. We must continue aborting the warp even if this fails.
+      transposer.transferItem(remoteSide, self.spatialIoPortSide, 1, remoteSlot, 1)
     end
   else
     io.stderr:write("warp: unable to move my storage cell into destination slot, aborting warp.\n")
