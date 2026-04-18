@@ -28,10 +28,6 @@ local thisDestinationSlotId = "d5"
 local targetDestinationSlotId = "d3"
 
 
-##if false then
--- Diagnostics don't work well in this file because of the preprocessor directives.
----@diagnostic disable
-##end
 
 local redstone = component.proxy(component.list("redstone")())
 local transposer = component.proxy(component.list("transposer")())
@@ -48,20 +44,114 @@ local os = {
   sleep = computer.pullSignal,
 }
 
-##local include = require("include")
-##local embedded = include("embedded")
 
 -- warp_common.lua
 
-##for line in embedded.extractModuleSource("/usr/lib/warp_common.lua", "warp_common", true, {"scanRelativeSides", "getWorldSide", "getWorldSideAndSlot", "playWarningSound"}) do
-##spwrite(line)
-##end
+-- Only the down, up, back, and left sides (relative) are scanned for ender chests and generators, right side is the spatial IO port.
+local warp_common_scanRelativeSides = "dubl"
+
+-- Convert a side (relative to the spatial IO port) to the real side in the
+-- world. The transposer will need this result.
+-- 
+---@param spatialIoPortSide Sides
+---@param relativeSideChar string
+---@return Sides|nil
+local function warp_common_getWorldSide(spatialIoPortSide, relativeSideChar)
+  local relativeSide = string.find("dubfrl", relativeSideChar, 1, true) --[[@as Sides]]
+  if not relativeSide then
+    return nil
+  end
+  relativeSide = relativeSide - 1
+
+  if relativeSide < 2 then
+    -- Either up or down.
+    return relativeSide
+  else
+    -- Adjust the sides to put them in clockwise order (back = 2, right = 4, front = 6, left = 8).
+    local adjustedSpatialIoSide = spatialIoPortSide % 2 == 0 and spatialIoPortSide or spatialIoPortSide + 3
+    local adjustedRelativeSide = relativeSide % 2 == 0 and relativeSide or relativeSide + 3
+    local adjustedWorldSide = (adjustedSpatialIoSide + 2 + adjustedRelativeSide) % 8 + 2
+
+    -- Undo the adjustment on the world side.
+    return adjustedWorldSide <= 4 and adjustedWorldSide or adjustedWorldSide - 3
+  end
+end
+
+-- Unpack a slot id (character representing a side, and slot number).
+-- 
+---@param spatialIoPortSide Sides
+---@param slotId string
+---@return Sides|nil
+---@return integer|nil
+local function warp_common_getWorldSideAndSlot(spatialIoPortSide, slotId)
+  return warp_common_getWorldSide(spatialIoPortSide, string.sub(slotId, 1, 1)), tonumber(string.sub(slotId, 2)) --[[@as integer]]
+end
+
+-- Make a noise to alert any nearby players to get out of the way.
+local function warp_common_playWarningSound()
+  --computer.beep(400, 0.4)
+  --computer.beep(607, 0.4)
+  --computer.beep(925, 0.4)
+
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  os.sleep(0.3)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  computer.beep(600, 0.2)
+  computer.beep(400, 0.2)
+  os.sleep(0.3)
+end
+
 
 -- itemutil.lua
 
-##for line in embedded.extractModuleSource("/usr/lib/itemutil.lua", "itemutil", true, {"getItemFullName", "invIterator"}) do
-##spwrite(line)
-##end
+-- Get the unique identifier of an item (internal name and metadata). This is
+-- used for table indexing of items and such. Note that items with different NBT
+-- can still resolve to the same identifier.
+-- 
+-- The resulting name has the pattern:
+-- `<mod name>:<item id name>/<metadata number>[n]`.
+-- For example, `minecraft:iron_pickaxe/0n` is an enchanted iron pickaxe with
+-- full durability.
+-- 
+---@param item Item
+---@return ItemFullName itemName
+---@nodiscard
+local function itemutil_getItemFullName(item)
+  return item.name .. "/" .. math.floor(item.damage) .. (item.hasTag and "n" or "")
+end
+
+-- Iterator wrapper for the result returned from `icontroller.getAllStacks()`
+-- and `transposer.getAllStacks()`. Returns the current slot number and item
+-- with each call, skipping over empty slots.
+-- 
+---@param itemIter fun():Item|nil
+---@return fun(itemIter: function, slot: integer):integer, Item
+---@return fun():Item|nil
+---@return integer
+---@nodiscard
+local function itemutil_invIterator(itemIter)
+  local function iter(itemIter, slot)
+    slot = slot + 1
+    local item = itemIter()
+    while item do
+      if next(item) ~= nil then
+        return slot, item
+      end
+      slot = slot + 1
+      item = itemIter()
+    end
+  end
+
+  if itemIter == nil then
+    itemIter = function() end
+  end
+  return iter, itemIter, 0
+end
+
 
 
 ---@type Sides
