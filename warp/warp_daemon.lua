@@ -332,11 +332,21 @@ function WarpDaemon:updateConfig(configPrefix, configEntry)
 
   dlog("d", "update ", key, " -> ", value)
   local oldValue = subConfig[key]
-  subConfig[key] = value
+  if value == nil and configPrefix == "de:" then
+    -- Special behavior for ipairs update.
+    table.remove(subConfig, key)
+  else
+    subConfig[key] = value
+  end
+
   local status2, result = self:verifyAndSaveConfig(self.cfg)
   if not status2 then
     dlog("warn", "\27[33m", "config update [", configPrefix, configEntry, "] failed: ", result, "\27[0m")
-    subConfig[key] = oldValue
+    if value == nil and configPrefix == "de:" then
+      table.insert(subConfig, key, oldValue)
+    else
+      subConfig[key] = oldValue
+    end
     return
   end
 end
@@ -426,6 +436,7 @@ function WarpDaemon:mainLoop()
   local configPrefix, configEntry
   local mySide, mySlot = warp_common.getWorldSideAndSlot(self.spatialIoPortSide, self.thisDestinationSlotId)
   local itemInMySlot
+  local thisDestinationSlotIdCopy = self.thisDestinationSlotId
 
   for relativeSide in string.gmatch(warp_common.scanRelativeSides, "(.)") do
     local worldSide = warp_common.getWorldSide(self.spatialIoPortSide, relativeSide)
@@ -451,6 +462,11 @@ function WarpDaemon:mainLoop()
       end
     end
     configPrefix, configEntry = nil, nil
+  end
+
+  -- Configuration may have changed for this destination, if it did then skip the next step.
+  if thisDestinationSlotIdCopy ~= self.thisDestinationSlotId then
+    return
   end
 
   -- Check for incoming warp.
