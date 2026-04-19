@@ -12,6 +12,16 @@ See the [programs.cfg](programs.cfg) file for specific package names (usually th
 
 ## Featured Programs
 
+### Applications
+
+[warp](warp)
+
+> Cross-dimensional teleportation network, using AE2 spatial storage and ender chests.
+
+[warp_mini](warp_mini)
+
+> Cheaper and simpler version of warp, using a microcontroller.
+
 ### Libraries
 
 [td.libapptools](libapptools)
@@ -95,10 +105,6 @@ See the [programs.cfg](programs.cfg) file for specific package names (usually th
 [tminer](tminer)
 
 > Robotic miner that uses a geolyzer to analyze locations of ore veins. The robot plans an efficient path to mine all of the ore and minimize digging up other blocks.
-
-[warp](warp)
-
-> Teleport system (currently WIP).
 
 ## Development
 
