@@ -26,6 +26,8 @@ Other things can be teleported too, like blocks, entities, and bread (warning: b
 
 Reference design for a teleporter with a 2 x 2 x 2 chamber. The design can be adjusted as needed, for example by using a larger or smaller chamber size. Just make sure that all teleporters have the same chamber size and the x and z dimensions of the chamber are the same (otherwise the teleporters will only work in specific orientations). The placement of the spatial IO port is important as it needs a redstone signal (sent from the back of the computer), and its position defines the "right" side of the transposer. From the transposer's perspective the down, up, back, and left sides will be scanned for ender chests and generators.
 
+For an alternative design, see [warp_mini](../warp_mini).
+
 Materials list for the reference design:
 
 * AE2: spatial IO port, 2^3 spatial storage cell, 12 spatial pylon, energy acceptor, energy cell, 4 ME cable.
@@ -86,7 +88,7 @@ Here are the steps to update the config on all teleporters:
 
   2. Set the name to either `se:<key>=<value>` for a setting or `de:<slot id>="<name>;<requirements>"` for a destination. Note that the destination follows a key/value form instead of how it appears in the config file itself. Names for items are limited, so you can break up a string value across multiple items if needed.
 
-      * As an example, `se:fuelSlot=nil` will disable the fuel slot, freeing up that slot for a destination to use. The items named `de:d3="mars;space suit a` and `de:nd thermal padding"` will set a destination "mars" in slot d3 with the requirements "space suit and thermal padding".
+      * As an example, `se:fuelSlot=nil` will disable the fuel slot, freeing up that slot for a destination to use. The items named `de:d5="mars;space suit a` and `de:nd thermal padding"` will set a destination "mars" in slot d5 with the requirements "space suit and thermal padding".
 
   3. Place the named item(s) in any of the ender chests (if there are multiple items, they must be ordered left to right). Wait the full scan delay (default is 4 seconds) and then you can remove the items. If it worked, the "/etc/warp.cfg" file should have the updated entry.
 

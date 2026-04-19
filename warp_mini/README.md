@@ -6,7 +6,7 @@ Simplified version of warp running on a microcontroller. This is cheaper to buil
 
 * The config update method using named items is not implemented. This isn't a big deal since warp_mini doesn't store the list of all destinations, it only cares about the slot id for itself and the preset destination.
 
-<img>
+![warp_mini](/../media/warp_mini.png?raw=true)
 
 Reference design for warp_mini. It is identical to the design for warp except that all of the OC parts now fit into the space where the transposer was.
 
@@ -14,19 +14,21 @@ Changes to the materials list:
 
 * OC: microcontroller case (tier 1), EEPROM, redstone card (tier 1), CPU (tier 1), 1 memory (tier 1), transposer.
 
+* Other: button (placed on the front of the microcontroller).
+
 ### Setup instructions:
 
 1. As in the warp setup, build the teleporter structure. You can hold off on building the microcontroller until the EEPROM is ready.
 
 2. Get warp_mini installed on a computer that will be used for flashing the EEPROM (run `oppm install warp_mini`).
 
-3. In the install directory (`cd ~/warp_mini`), edit the code with `edit warp_mini_src.lua`. Change any desired settings and update "thisDestinationSlotId" with the slot id that will be assigned to this teleporter.
+3. In the install directory (`cd /home/warp_mini`), edit the code with `edit warp_mini_src.lua`. Change any desired settings and update "thisDestinationSlotId" with the slot id that will be assigned to this teleporter.
 
-4. Run `build_image.lua` to pass the code through a preprocessing stage and compress the size to fit onto a 4KB EEPROM. It can now be flashed onto the EEPROM by running `flash warp_mini_eeprom.lua`.
+4. Run `build_image` to pass the code through a preprocessing stage and compress the size to fit onto a 4KB EEPROM. It can now be flashed onto the EEPROM by running `flash warp_mini_eeprom.lua`.
 
     * Compression is done using a great Lua code compressor called [crunch](https://github.com/OpenPrograms/mpmxyz-Programs). It does use a fair bit of memory, so the computer used to run this may need some tier 3 memory installed.
 
-5. An assembler can now be used to build the microcontroller, place the microcontroller case in first and then the rest of the components can be added.
+5. An electronics assembler can now be used to build the microcontroller, place the microcontroller case in first and then the rest of the components can be added.
 
     * If the EEPROM needs to be updated (for example to change the settings), a new EEPROM can be made (and flashed) and then crafted with the microcontroller to replace the old one.
 
