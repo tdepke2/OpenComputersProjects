@@ -88,7 +88,7 @@ Here are the steps to update the config on all teleporters:
 
   2. Set the name to either `se:<key>=<value>` for a setting or `de:<slot id>="<name>;<requirements>"` for a destination. Note that the destination follows a key/value form instead of how it appears in the config file itself. Names for items are limited, so you can break up a string value across multiple items if needed.
 
-      * As an example, `se:fuelSlot=nil` will disable the fuel slot, freeing up that slot for a destination to use. The items named `de:d3="mars;space suit a` and `de:nd thermal padding"` will set a destination "mars" in slot d3 with the requirements "space suit and thermal padding".
+      * As an example, `se:fuelSlot=nil` will disable the fuel slot, freeing up that slot for a destination to use. The items named `de:d5="mars;space suit a` and `de:nd thermal padding"` will set a destination "mars" in slot d5 with the requirements "space suit and thermal padding".
 
   3. Place the named item(s) in any of the ender chests (if there are multiple items, they must be ordered left to right). Wait the full scan delay (default is 4 seconds) and then you can remove the items. If it worked, the "/etc/warp.cfg" file should have the updated entry.
 
